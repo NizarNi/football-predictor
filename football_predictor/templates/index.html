@@ -306,30 +306,70 @@
                         <i class="fas fa-search me-2"></i> Find Matches
                     </div>
                     <div class="card-body">
-                        <div class="row">
-                            <div class="col-md-6 mb-3" style="position: relative; z-index: 10000;">
-                                <h5>Search by Team</h5>
+                        <!-- Centered Search Bar -->
+                        <div class="row mb-3">
+                            <div class="col-md-8 offset-md-2" style="position: relative; z-index: 10000;">
                                 <div style="position: relative; z-index: 10001;">
-                                    <div class="input-group">
-                                        <input type="text" id="team-search" class="form-control" placeholder="Enter team name or nickname (PSG, Barca, Bayern)..." autocomplete="off">
+                                    <div class="input-group input-group-lg">
+                                        <span class="input-group-text bg-white">
+                                            <i class="fas fa-search"></i>
+                                        </span>
+                                        <input type="text" id="team-search" class="form-control" placeholder="Search by team name or nickname (PSG, Barca, Bayern)..." autocomplete="off">
                                         <button class="btn btn-primary" id="search-btn">
-                                            <i class="fas fa-search"></i> Search
+                                            Search
                                         </button>
                                     </div>
                                     <div id="autocomplete-dropdown" class="autocomplete-dropdown" style="display: none;"></div>
                                 </div>
-                                <small class="text-muted">Press Enter or click Search to find matches</small>
                             </div>
-                            <div class="col-md-6">
-                                <h5>Browse Upcoming Matches</h5>
-                                <div class="d-flex flex-wrap">
-                                    <button class="btn btn-outline-primary m-1" data-league="PL">Premier League</button>
-                                    <button class="btn btn-outline-primary m-1" data-league="PD">La Liga</button>
-                                    <button class="btn btn-outline-primary m-1" data-league="BL1">Bundesliga</button>
-                                    <button class="btn btn-outline-primary m-1" data-league="SA">Serie A</button>
-                                    <button class="btn btn-outline-primary m-1" data-league="FL1">Ligue 1</button>
-                                    <button class="btn btn-outline-primary m-1" data-league="CL">Champions League</button>
-                                    <button class="btn btn-outline-primary m-1" data-league="EL">Europa League</button>
+                        </div>
+                        
+                        <!-- Filter Bar -->
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <div class="d-flex flex-wrap align-items-center justify-content-center gap-3">
+                                    <div class="d-flex align-items-center">
+                                        <label class="me-2 mb-0 fw-bold">
+                                            <i class="fas fa-filter me-1"></i> Filters:
+                                        </label>
+                                    </div>
+                                    
+                                    <div class="d-flex align-items-center">
+                                        <label class="me-2 mb-0">Bet Opportunities:</label>
+                                        <select id="bet-opportunities-filter" class="form-select form-select-sm" style="width: auto;">
+                                            <option value="all">All Matches</option>
+                                            <option value="88">Very Safe (≥88%)</option>
+                                            <option value="75">Safe (≥75%)</option>
+                                            <option value="60">Moderate (≥60%)</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="arbitrage-filter-checkbox">
+                                        <label class="form-check-label" for="arbitrage-filter-checkbox">
+                                            💰 Show Only Arbitrage
+                                        </label>
+                                    </div>
+                                    
+                                    <div id="filter-badge" class="badge bg-success" style="display: none; font-size: 0.9rem;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- League Browse Buttons -->
+                        <div class="row">
+                            <div class="col-md-12">
+                                <div class="text-center">
+                                    <small class="text-muted d-block mb-2">Browse by League:</small>
+                                    <div class="d-flex flex-wrap justify-content-center">
+                                        <button class="btn btn-outline-primary m-1" data-league="PL">Premier League</button>
+                                        <button class="btn btn-outline-primary m-1" data-league="PD">La Liga</button>
+                                        <button class="btn btn-outline-primary m-1" data-league="BL1">Bundesliga</button>
+                                        <button class="btn btn-outline-primary m-1" data-league="SA">Serie A</button>
+                                        <button class="btn btn-outline-primary m-1" data-league="FL1">Ligue 1</button>
+                                        <button class="btn btn-outline-primary m-1" data-league="CL">Champions League</button>
+                                        <button class="btn btn-outline-primary m-1" data-league="EL">Europa League</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -770,6 +810,18 @@
                 });
             });
             
+            // Filter control event listeners
+            const betOpportunitiesFilter = document.getElementById('bet-opportunities-filter');
+            const arbitrageFilterCheckbox = document.getElementById('arbitrage-filter-checkbox');
+            
+            if (betOpportunitiesFilter) {
+                betOpportunitiesFilter.addEventListener('change', applyFilters);
+            }
+            
+            if (arbitrageFilterCheckbox) {
+                arbitrageFilterCheckbox.addEventListener('change', applyFilters);
+            }
+            
             // Functions
             function normalizeTeamName(input) {
                 // Check if input matches any team name or alias
@@ -854,32 +906,93 @@
                 });
             }
             
-            function displayMatches(matches, filterArbitrage = false) {
+            // Helper function to get maximum confidence from betting tips
+            // Note: Only checks 1X2 predictions which are available upfront
+            // Over/Under data is loaded on-demand when viewing a specific match
+            function getMaxBettingConfidence(match) {
+                if (!match.predictions) return 0;
+                
+                let maxConfidence = 0;
+                
+                // Check 1X2 predictions (always available)
+                if (match.predictions.probabilities) {
+                    const probs = match.predictions.probabilities;
+                    maxConfidence = Math.max(
+                        probs.HOME_WIN || 0,
+                        probs.DRAW || 0,
+                        probs.AWAY_WIN || 0
+                    );
+                }
+                
+                // Check Over/Under if it's embedded in the match object
+                // (Future enhancement: pre-load Over/Under for all matches to improve filtering)
+                if (match.totals && match.totals.predictions) {
+                    Object.values(match.totals.predictions).forEach(pred => {
+                        if (pred.over) maxConfidence = Math.max(maxConfidence, pred.over);
+                        if (pred.under) maxConfidence = Math.max(maxConfidence, pred.under);
+                    });
+                }
+                
+                return maxConfidence * 100; // Convert to percentage
+            }
+            
+            // Update the filter badge with match counts
+            function updateFilterBadge(filteredCount, totalCount, arbitrageFilter, betOpportunitiesFilter) {
+                const badge = document.getElementById('filter-badge');
+                
+                if (filteredCount === totalCount) {
+                    badge.style.display = 'none';
+                    return;
+                }
+                
+                badge.style.display = 'inline-block';
+                
+                let badgeText = '';
+                if (arbitrageFilter) {
+                    badgeText = `${filteredCount} Arbitrage ${filteredCount === 1 ? 'Opportunity' : 'Opportunities'}`;
+                } else if (betOpportunitiesFilter !== 'all') {
+                    const thresholds = { '88': 'Very Safe', '75': 'Safe', '60': 'Moderate' };
+                    badgeText = `${filteredCount} ${thresholds[betOpportunitiesFilter]} Bet${filteredCount === 1 ? '' : 's'} Found`;
+                }
+                
+                badge.textContent = badgeText;
+            }
+            
+            function displayMatches(matches) {
                 if (!matches || matches.length === 0) {
                     matchesList.innerHTML = `<p class="text-center text-muted">No matches found</p>`;
                     return;
                 }
                 
-                // Store full matches data globally (never overwrite with filtered)
-                if (!window.currentMatches || !filterArbitrage) {
-                    window.currentMatches = matches;
-                }
+                // Store matches globally
+                window.currentMatches = matches;
                 
-                // Filter for arbitrage if requested
+                // Get current filter settings from the top filter bar
+                const arbitrageFilter = document.getElementById('arbitrage-filter-checkbox')?.checked || false;
+                const betOpportunitiesFilter = document.getElementById('bet-opportunities-filter')?.value || 'all';
+                
+                // Apply filters
                 let filteredMatches = matches;
-                if (filterArbitrage) {
-                    filteredMatches = matches.filter(match => 
+                
+                // Filter for arbitrage
+                if (arbitrageFilter) {
+                    filteredMatches = filteredMatches.filter(match => 
                         match.predictions && 
                         match.predictions.arbitrage && 
                         match.predictions.arbitrage.is_arbitrage
                     );
                 }
                 
-                const arbitrageCount = matches.filter(match => 
-                    match.predictions && 
-                    match.predictions.arbitrage && 
-                    match.predictions.arbitrage.is_arbitrage
-                ).length;
+                // Filter for bet opportunities (high confidence bets)
+                if (betOpportunitiesFilter !== 'all') {
+                    const threshold = parseInt(betOpportunitiesFilter);
+                    filteredMatches = filteredMatches.filter(match => 
+                        getMaxBettingConfidence(match) >= threshold
+                    );
+                }
+                
+                // Update filter badge
+                updateFilterBadge(filteredMatches.length, matches.length, arbitrageFilter, betOpportunitiesFilter);
                 
                 const popularTeams = [
                     'Bayern München', 'Paris Saint-Germain', 'Arsenal', 'Real Madrid', 'Liverpool FC',
@@ -894,25 +1007,7 @@
                     'FK Red Star Belgrade', 'Brentford FC', 'Bologna', 'Athletic Bilbao', 'Manchester United'
                 ];
                 
-                // Add filter UI
-                let filterHtml = `
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="arbitrage-filter" ${filterArbitrage ? 'checked' : ''} onchange="toggleArbitrageFilter(this.checked)">
-                            <label class="form-check-label" for="arbitrage-filter">
-                                💰 Show only arbitrage opportunities
-                            </label>
-                        </div>
-                        <small class="text-muted">
-                            ${filterArbitrage ? 
-                                `Showing ${filteredMatches.length} of ${matches.length} matches` : 
-                                `${arbitrageCount} arbitrage ${arbitrageCount === 1 ? 'opportunity' : 'opportunities'} found`
-                            }
-                        </small>
-                    </div>
-                `;
-                
-                let html = filterHtml;
+                let html = '';
                 filteredMatches.forEach((match, filteredIndex) => {
                     const homeTeam = match.home_team.toLowerCase();
                     const awayTeam = match.away_team.toLowerCase();
@@ -970,14 +1065,12 @@
                 });
             }
             
-            function toggleArbitrageFilter(isChecked) {
+            // Reapply filters when filter controls change
+            function applyFilters() {
                 if (window.currentMatches) {
-                    displayMatches(window.currentMatches, isChecked);
+                    displayMatches(window.currentMatches);
                 }
             }
-            
-            // Make function available globally for inline onclick handler
-            window.toggleArbitrageFilter = toggleArbitrageFilter;
             
             function displayMatchPredictions(match) {
                 // Show prediction container
