@@ -889,31 +889,61 @@
                 apiName = apiName.trim();
                 const lower = apiName.toLowerCase();
                 
-                // Normalize league identifier to handle variations
-                const leagueLower = (league || '').toLowerCase();
+                // Normalize league identifier to handle variations (remove spaces for matching)
+                const leagueLower = (league || '').toLowerCase().replace(/\s+/g, '');  // Remove all spaces
                 const isPremierLeague = leagueLower.includes('premier') || leagueLower === 'epl';
-                const isLaLiga = leagueLower.includes('la liga') || leagueLower.includes('spain') || leagueLower === 'pd';
+                const isLaLiga = leagueLower.includes('laliga') || leagueLower.includes('spain') || leagueLower.includes('primera') || leagueLower === 'pd';
                 const isBundesliga = leagueLower.includes('bundesliga') || leagueLower.includes('germany') || leagueLower === 'bl1';
-                const isSerieA = leagueLower.includes('serie a') || leagueLower.includes('italy') || leagueLower === 'sa';
-                const isLigue1 = leagueLower.includes('ligue 1') || leagueLower.includes('france') || leagueLower === 'fl1';
+                const isSerieA = leagueLower.includes('seriea') || leagueLower.includes('italy') || leagueLower === 'sa';
+                const isLigue1 = leagueLower.includes('ligue1') || leagueLower.includes('ligue') || leagueLower.includes('france') || leagueLower === 'fl1';
                 
                 // League-specific patterns to avoid cross-league collisions (e.g., Inter Miami vs Inter Milan)
                 const patterns = [
                     // Bundesliga teams
                     { test: /^bayern/i, result: 'FC Bayern München', leagues: [isBundesliga] },
+                    { test: /^dortmund|^bvb$/i, result: 'Borussia Dortmund', leagues: [isBundesliga] },
+                    { test: /^(?:rb\s+)?leipzig$/i, result: 'RB Leipzig', leagues: [isBundesliga] },
+                    { test: /^leverkusen|^bayer$/i, result: 'Bayer 04 Leverkusen', leagues: [isBundesliga] },
+                    { test: /^(?:union\s+)?berlin$/i, result: '1. FC Union Berlin', leagues: [isBundesliga] },
+                    { test: /^freiburg|^sc\s+freiburg$/i, result: 'SC Freiburg', leagues: [isBundesliga] },
+                    { test: /^frankfurt|^eintracht$/i, result: 'Eintracht Frankfurt', leagues: [isBundesliga] },
+                    { test: /^gladbach|^m.?gladbach|^borussia\s+m/i, result: 'Borussia Mönchengladbach', leagues: [isBundesliga] },
                     
                     // La Liga teams
                     { test: /^bar[cç]a|^barcelona/i, result: 'FC Barcelona', leagues: [isLaLiga] },
                     { test: /^real\s+madrid/i, result: 'Real Madrid CF', leagues: [isLaLiga] },
                     { test: /^atl[eé]tico\s+madrid/i, result: 'Atlético de Madrid', leagues: [isLaLiga] },
+                    { test: /^sevilla$/i, result: 'Sevilla FC', leagues: [isLaLiga] },
+                    { test: /^valencia$/i, result: 'Valencia CF', leagues: [isLaLiga] },
+                    { test: /^(?:real\s+)?betis$/i, result: 'Real Betis', leagues: [isLaLiga] },
+                    { test: /^villarreal$/i, result: 'Villarreal CF', leagues: [isLaLiga] },
+                    { test: /^athletic|^bilbao$/i, result: 'Athletic Club', leagues: [isLaLiga] },
+                    { test: /^(?:real\s+)?sociedad$/i, result: 'Real Sociedad', leagues: [isLaLiga] },
+                    { test: /^getafe$/i, result: 'Getafe CF', leagues: [isLaLiga] },
+                    { test: /^espanyol$/i, result: 'RCD Espanyol', leagues: [isLaLiga] },
+                    { test: /^celta|^vigo$/i, result: 'RC Celta de Vigo', leagues: [isLaLiga] },
                     
                     // Serie A teams (Inter/Milan only for Serie A to avoid Inter Miami collision)
                     { test: /^inter(?:\s+milan)?$/i, result: 'FC Internazionale Milano', leagues: [isSerieA] },
                     { test: /^(?:ac\s+)?milan$/i, result: 'AC Milan', leagues: [isSerieA] },
                     { test: /^juve|^juventus/i, result: 'Juventus FC', leagues: [isSerieA] },
+                    { test: /^roma|^as\s+roma$/i, result: 'AS Roma', leagues: [isSerieA] },
+                    { test: /^napoli|^ssc\s+napoli$/i, result: 'SSC Napoli', leagues: [isSerieA] },
+                    { test: /^lazio|^ss\s+lazio$/i, result: 'SS Lazio', leagues: [isSerieA] },
+                    { test: /^atalanta$/i, result: 'Atalanta BC', leagues: [isSerieA] },
+                    { test: /^fiorentina$/i, result: 'ACF Fiorentina', leagues: [isSerieA] },
+                    { test: /^torino$/i, result: 'Torino FC', leagues: [isSerieA] },
+                    { test: /^bologna$/i, result: 'Bologna FC 1909', leagues: [isSerieA] },
                     
                     // Ligue 1 teams (PSG only for Ligue 1 to avoid Paris FC collision)
                     { test: /^psg$|^paris\s+saint/i, result: 'Paris Saint-Germain', leagues: [isLigue1] },
+                    { test: /^marseille|^om$/i, result: 'Olympique de Marseille', leagues: [isLigue1] },
+                    { test: /^lyon|^ol$/i, result: 'Olympique Lyonnais', leagues: [isLigue1] },
+                    { test: /^monaco|^as\s+monaco$/i, result: 'AS Monaco', leagues: [isLigue1] },
+                    { test: /^lille|^losc$/i, result: 'LOSC Lille', leagues: [isLigue1] },
+                    { test: /^nice|^ogc\s+nice$/i, result: 'OGC Nice', leagues: [isLigue1] },
+                    { test: /^lens|^rc\s+lens$/i, result: 'RC Lens', leagues: [isLigue1] },
+                    { test: /^rennes|^stade\s+rennais$/i, result: 'Stade Rennais FC', leagues: [isLigue1] },
                     
                     // Premier League teams
                     { test: /^arsenal$/i, result: 'Arsenal FC', leagues: [isPremierLeague] },
@@ -985,28 +1015,49 @@
                     'Ipswich Town': 'Ipswich Town',
                     // La Liga
                     'Barcelona': 'FC Barcelona',
+                    'FC Barcelona': 'FC Barcelona',
+                    'Barça': 'FC Barcelona',
                     'Real Madrid': 'Real Madrid CF',
+                    'Madrid': 'Real Madrid CF',
                     'Atletico Madrid': 'Atlético de Madrid',
                     'Atlético Madrid': 'Atlético de Madrid',
+                    'Atleti': 'Atlético de Madrid',
                     'Sevilla': 'Sevilla FC',
                     'Valencia': 'Valencia CF',
                     'Real Betis': 'Real Betis',
+                    'Betis': 'Real Betis',
                     'Villarreal': 'Villarreal CF',
                     'Athletic Bilbao': 'Athletic Club',
+                    'Athletic Club': 'Athletic Club',
                     'Real Sociedad': 'Real Sociedad',
+                    'Sociedad': 'Real Sociedad',
+                    'Getafe': 'Getafe CF',
+                    'Espanyol': 'RCD Espanyol',
+                    'Celta Vigo': 'RC Celta de Vigo',
+                    'Celta': 'RC Celta de Vigo',
                     // Bundesliga
                     'Bayern Munich': 'FC Bayern München',
                     'Bayern München': 'FC Bayern München',
+                    'Bayern': 'FC Bayern München',
                     'Borussia Dortmund': 'Borussia Dortmund',
+                    'Dortmund': 'Borussia Dortmund',
                     'RB Leipzig': 'RB Leipzig',
+                    'Leipzig': 'RB Leipzig',
                     'Bayer Leverkusen': 'Bayer 04 Leverkusen',
+                    'Leverkusen': 'Bayer 04 Leverkusen',
                     'Union Berlin': '1. FC Union Berlin',
                     'Freiburg': 'SC Freiburg',
                     'Eintracht Frankfurt': 'Eintracht Frankfurt',
+                    'Frankfurt': 'Eintracht Frankfurt',
+                    'Borussia Mönchengladbach': 'Borussia Mönchengladbach',
+                    "Borussia M'Gladbach": 'Borussia Mönchengladbach',
+                    'Gladbach': 'Borussia Mönchengladbach',
                     // Serie A
                     'Juventus': 'Juventus FC',
+                    'Juve': 'Juventus FC',
                     'Inter': 'FC Internazionale Milano',
                     'Inter Milan': 'FC Internazionale Milano',
+                    'Internazionale': 'FC Internazionale Milano',
                     'AC Milan': 'AC Milan',
                     'Milan': 'AC Milan',
                     'Roma': 'AS Roma',
@@ -1014,19 +1065,33 @@
                     'Napoli': 'SSC Napoli',
                     'SSC Napoli': 'SSC Napoli',
                     'Lazio': 'SS Lazio',
+                    'SS Lazio': 'SS Lazio',
                     'Atalanta': 'Atalanta BC',
+                    'Atalanta BC': 'Atalanta BC',
                     'Fiorentina': 'ACF Fiorentina',
+                    'ACF Fiorentina': 'ACF Fiorentina',
+                    'Torino': 'Torino FC',
+                    'Bologna': 'Bologna FC 1909',
                     // Ligue 1
                     'Paris Saint-Germain': 'Paris Saint-Germain',
                     'Paris Saint Germain': 'Paris Saint-Germain',
                     'PSG': 'Paris Saint-Germain',
                     'Marseille': 'Olympique de Marseille',
+                    'OM': 'Olympique de Marseille',
+                    'Olympique Marseille': 'Olympique de Marseille',
                     'Lyon': 'Olympique Lyonnais',
+                    'OL': 'Olympique Lyonnais',
+                    'Olympique Lyon': 'Olympique Lyonnais',
                     'Monaco': 'AS Monaco',
+                    'AS Monaco': 'AS Monaco',
                     'Lille': 'LOSC Lille',
+                    'LOSC': 'LOSC Lille',
                     'Nice': 'OGC Nice',
+                    'OGC Nice': 'OGC Nice',
                     'Lens': 'RC Lens',
-                    'Rennes': 'Stade Rennais FC'
+                    'RC Lens': 'RC Lens',
+                    'Rennes': 'Stade Rennais FC',
+                    'Stade Rennais': 'Stade Rennais FC'
                 };
                 
                 return nameMap[teamName] || teamName;
