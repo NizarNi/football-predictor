@@ -1559,6 +1559,11 @@
                             }
                         }
                         html += `</tbody></table>`;
+                        
+                        // Add xG trend chart if recent matches available
+                        if (contextData.xg && contextData.xg.home_stats && contextData.xg.home_stats.recent_matches && contextData.xg.home_stats.recent_matches.length > 0) {
+                            html += `<div class="mt-3"><canvas id="home-xg-chart" style="height: 150px;"></canvas></div>`;
+                        }
                     } else {
                         html += `<p class="text-muted small"><i>No standings data available</i></p>`;
                     }
@@ -1595,6 +1600,11 @@
                             }
                         }
                         html += `</tbody></table>`;
+                        
+                        // Add xG trend chart if recent matches available
+                        if (contextData.xg && contextData.xg.away_stats && contextData.xg.away_stats.recent_matches && contextData.xg.away_stats.recent_matches.length > 0) {
+                            html += `<div class="mt-3"><canvas id="away-xg-chart" style="height: 150px;"></canvas></div>`;
+                        }
                     } else {
                         html += `<p class="text-muted small"><i>No standings data available</i></p>`;
                     }
@@ -1604,6 +1614,24 @@
                 }
                 
                 matchContext.innerHTML = html;
+                
+                // Destroy old charts if they exist to prevent memory leaks
+                if (window.homeXgChart) {
+                    window.homeXgChart.destroy();
+                    window.homeXgChart = null;
+                }
+                if (window.awayXgChart) {
+                    window.awayXgChart.destroy();
+                    window.awayXgChart = null;
+                }
+                
+                // Create xG trend charts if data available
+                if (contextData.xg && contextData.xg.home_stats && contextData.xg.home_stats.recent_matches && contextData.xg.home_stats.recent_matches.length > 0) {
+                    window.homeXgChart = createXgTrendChart('home-xg-chart', contextData.xg.home_stats.recent_matches, currentMatchData.home_team);
+                }
+                if (contextData.xg && contextData.xg.away_stats && contextData.xg.away_stats.recent_matches && contextData.xg.away_stats.recent_matches.length > 0) {
+                    window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
+                }
                 
                 // Reinitialize tooltips for dynamically added content
                 initTooltips();
