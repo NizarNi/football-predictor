@@ -8,9 +8,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from football_data_api import get_competitions, get_upcoming_matches, get_match_details, RateLimitExceededError
-from rapidapi_football_prediction import get_upcoming_matches_with_predictions, RapidAPIPredictionError
-
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
+from odds_api_client import get_upcoming_matches_with_odds, OddsAPIError, LEAGUE_CODE_MAPPING
+from odds_calculator import calculate_predictions_from_odds
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -35,45 +34,59 @@ def index():
 
 @app.route("/upcoming", methods=["GET"])
 def upcoming():
-    """Get upcoming matches with predictions using RapidAPI (primary) and football-data.org (fallback)"""
+    """Get upcoming matches with predictions using The Odds API (primary) and football-data.org (fallback)"""
     league_code = request.args.get("league", None)
     next_n_days = request.args.get("next_n_days", 30, type=int)
     
     try:
-        # Try RapidAPI first (provides both matches and predictions)
-        print(f"🔍 Fetching matches with predictions from RapidAPI...")
+        # Try The Odds API first (provides both matches and odds-based predictions)
+        print(f"🔍 Fetching matches with odds from The Odds API...")
         try:
-            rapid_matches = get_upcoming_matches_with_predictions(next_n_days=next_n_days, federation="UEFA")
+            if league_code:
+                if league_code not in LEAGUE_CODE_MAPPING:
+                    return jsonify({"error": f"League code \"{league_code}\" not supported"}), 404
+                leagues_to_fetch = [league_code]
+            else:
+                leagues_to_fetch = list(LEAGUE_CODE_MAPPING.keys())
             
-            # Filter by league if specified
-            if league_code and rapid_matches:
-                # Map league codes to competition names (approximate matching)
-                league_filters = {
-                    "PL": ["premier league", "england"],
-                    "PD": ["la liga", "spain"],
-                    "BL1": ["bundesliga", "germany"],
-                    "SA": ["serie a", "italy"],
-                    "EL": ["europa league", "uefa europa"],
-                    "FL1": ["ligue 1", "france"],
-                    "CL": ["champions league", "uefa"]
-                }
-                filter_terms = league_filters.get(league_code, [league_code.lower()])
-                rapid_matches = [
-                    m for m in rapid_matches 
-                    if any(term in m.get("league", "").lower() for term in filter_terms)
-                ]
+            odds_matches = get_upcoming_matches_with_odds(league_codes=leagues_to_fetch, next_n_days=next_n_days)
             
-            if rapid_matches:
-                print(f"✅ Found {len(rapid_matches)} matches from RapidAPI")
+            if odds_matches:
+                # Calculate predictions from odds for each match
+                for match in odds_matches:
+                    predictions = calculate_predictions_from_odds(match)
+                    
+                    # Format match data
+                    match["datetime"] = match["commence_time"]
+                    match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
+                    
+                    # Add predictions in the expected format
+                    match["predictions"] = {
+                        "1x2": {
+                            "prediction": predictions["prediction"],
+                            "confidence": predictions["confidence"],
+                            "probabilities": {
+                                "HOME_WIN": predictions["probabilities"]["home_win"],
+                                "DRAW": predictions["probabilities"]["draw"],
+                                "AWAY_WIN": predictions["probabilities"]["away_win"]
+                            },
+                            "is_safe_bet": predictions["confidence"] >= 60,
+                            "bookmaker_count": predictions["bookmaker_count"]
+                        },
+                        "best_odds": predictions["best_odds"],
+                        "arbitrage": predictions["arbitrage"]
+                    }
+                
+                print(f"✅ Found {len(odds_matches)} matches from The Odds API")
                 return jsonify({
-                    "matches": rapid_matches,
-                    "total_matches": len(rapid_matches),
-                    "source": "RapidAPI"
+                    "matches": odds_matches,
+                    "total_matches": len(odds_matches),
+                    "source": "The Odds API"
                 })
-        except RapidAPIPredictionError as e:
-            print(f"⚠️  RapidAPI unavailable: {e}")
+        except OddsAPIError as e:
+            print(f"⚠️  The Odds API unavailable: {e}")
         except Exception as e:
-            print(f"⚠️  RapidAPI error: {e}")
+            print(f"⚠️  The Odds API error: {e}")
         
         # Fallback to football-data.org (no predictions)
         print(f"🔄 Falling back to football-data.org...")
@@ -216,8 +229,6 @@ def get_match(match_id):
 def predict_match(match_id):
     """Get predictions for a specific match"""
     try:
-        # Since we don't have individual match prediction capability,
-        # return a structured response indicating predictions are unavailable
         response = {
             "predictions": {
                 "1x2": {
@@ -229,16 +240,12 @@ def predict_match(match_id):
                         "AWAY_WIN": 0.33
                     },
                     "is_safe_bet": False,
-                    "note": "Predictions unavailable for individual match lookup"
+                    "note": "Individual match predictions available when browsing upcoming matches with odds"
                 },
-                "exact_score": {
-                    "note": "Predictions unavailable"
-                },
-                "over_under": {
-                    "note": "Predictions unavailable"
-                }
+                "best_odds": None,
+                "arbitrage": None
             },
-            "note": "Prediction data is only available when browsing upcoming matches"
+            "note": "Prediction data with odds is available when browsing upcoming matches"
         }
         
         return jsonify(response)

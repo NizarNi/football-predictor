@@ -1,9 +1,20 @@
 # Football Prediction - Safe Bet Analyzer
 
 ## Overview
-A Flask-based web application that provides football match predictions using external APIs. The application fetches upcoming matches from the football-data.org API and generates predictions using the Football Prediction API on RapidAPI.
+A Flask-based web application that provides football match predictions using real bookmaker odds from The Odds API. The application fetches upcoming matches with live odds from 30+ bookmakers, converts odds to implied probabilities, detects arbitrage opportunities, and provides consensus predictions based on market data.
 
 ## Recent Changes
+- **2025-10-08**: Major Architecture Update - The Odds API Integration
+  - **REPLACED**: RapidAPI predictions with The Odds API real bookmaker odds
+  - **ADDED**: `odds_api_client.py` for fetching odds from The Odds API with 3-key rotation
+  - **ADDED**: `odds_calculator.py` for odds-to-probability conversion and arbitrage detection
+  - **REMOVED**: `rapidapi_football_prediction.py` - no longer needed
+  - **ENHANCED**: Predictions now based on averaged bookmaker consensus
+  - **NEW FEATURE**: Arbitrage opportunity detection when total probability < 100%
+  - **NEW FEATURE**: Best odds display showing highest prices from any bookmaker
+  - **IMPROVED**: API key rotation system now supports 3 keys for extended quota
+  - **METHODOLOGY**: Sports-betting approach using real market data instead of ML predictions
+
 - **2025-10-08**: UI Enhancements - Europa League & Popular Match Highlighting
   - **ADDED**: Europa League (EL) support to both backend and frontend
   - **ADDED**: Popular match highlighting with golden badge for Champions League and Europa League fixtures
@@ -32,8 +43,9 @@ A Flask-based web application that provides football match predictions using ext
 ```
 football_predictor/
 ├── app.py                      # Main Flask application
-├── football_data_api.py        # API client for football-data.org
-├── rapidapi_football_prediction.py  # RapidAPI prediction client
+├── football_data_api.py        # API client for football-data.org (fallback)
+├── odds_api_client.py          # The Odds API client with key rotation
+├── odds_calculator.py          # Odds conversion and arbitrage detection
 ├── gunicorn_config.py          # Gunicorn production configuration
 ├── start.sh                    # Startup script
 ├── requirements.txt            # Python dependencies
@@ -54,17 +66,24 @@ football_predictor/
    - `/process_data` - Deprecated endpoint (returns error)
 
 2. **Football Data API (football_data_api.py)**: 
-   - Fetches competitions and matches from football-data.org
+   - Fallback source for match schedules from football-data.org
    - Implements API key rotation to handle rate limits
    - Supports multiple API keys for high availability
 
-3. **RapidAPI Predictions (rapidapi_football_prediction.py)**:
-   - Fetches match predictions from Football Prediction API
-   - Supports different prediction markets (classic, over_25)
-   - **NEW**: Implements API key rotation with round-robin selection
-   - **NEW**: Automatic failover between multiple RapidAPI keys
+3. **The Odds API Client (odds_api_client.py)**:
+   - Fetches live odds from 30+ bookmakers via The Odds API
+   - Maps league codes (PL, PD, BL1, etc.) to Odds API sport keys
+   - Implements 3-key rotation for extended API quota
+   - Supports multiple regions (US, UK, EU) and markets (h2h, spreads, totals)
 
-4. **Frontend (templates/index.html)**:
+4. **Odds Calculator (odds_calculator.py)**:
+   - Converts decimal/American odds to implied probabilities
+   - Averages probabilities across all bookmakers for consensus
+   - Detects arbitrage opportunities (when combined probability < 100%)
+   - Finds best odds for each outcome across all bookmakers
+   - Calculates optimal stake distribution for arbitrage bets
+
+5. **Frontend (templates/index.html)**:
    - Bootstrap-based responsive UI
    - Team search functionality
    - League browsing (Premier League, La Liga, Bundesliga, etc.)
@@ -72,11 +91,12 @@ football_predictor/
 
 ### API Keys Required
 The application requires the following API keys (configured in Replit Secrets):
-- `FOOTBALL_DATA_API_KEY_1` - Primary football-data.org API key
-- `FOOTBALL_DATA_API_KEY_2` - Secondary football-data.org API key
-- `FOOTBALL_DATA_API_KEY_3` - Tertiary football-data.org API key
-- `RAPIDAPI_KEY` - Primary RapidAPI key for predictions
-- `RAPIDAPI_KEY_2` - Secondary RapidAPI key for rate limit rotation
+- `FOOTBALL_DATA_API_KEY_1` - Primary football-data.org API key (fallback)
+- `FOOTBALL_DATA_API_KEY_2` - Secondary football-data.org API key (fallback)
+- `FOOTBALL_DATA_API_KEY_3` - Tertiary football-data.org API key (fallback)
+- `ODDS_API_KEY_1` - Primary The Odds API key for live odds
+- `ODDS_API_KEY_2` - Secondary The Odds API key for rate limit rotation
+- `ODDS_API_KEY_3` - Tertiary The Odds API key for extended quota
 
 ### Dependencies
 - Flask 3.1.2 - Web framework
@@ -100,14 +120,24 @@ The app is configured to deploy using gunicorn with:
 - Auto-scaling deployment type
 
 ## Features
-- **Match Predictions**: Get predictions for upcoming football matches
-- **Multiple Prediction Types**:
-  - 1X2 (Home Win/Draw/Away Win)
-  - Over/Under goals (various thresholds)
-  - Exact score predictions
-- **Confidence Levels**: Each prediction includes a confidence score
-- **Multi-League Support**: Fetches matches from multiple top European leagues
-- **Rate Limit Handling**: Automatic API key rotation to handle rate limits
+- **Odds-Based Predictions**: Get predictions based on real bookmaker consensus
+- **Bookmaker Consensus**: Averaged probabilities across 30+ bookmakers
+- **Arbitrage Detection**: Automatically identifies arbitrage opportunities with profit margins
+- **Best Odds Display**: Shows best available odds for each outcome across all bookmakers
+- **Prediction Types**:
+  - 1X2 (Home Win/Draw/Away Win) with implied probabilities
+  - Confidence scores based on market consensus
+  - Bookmaker count for transparency
+- **Multi-League Support**: 
+  - Premier League (PL)
+  - La Liga (PD)
+  - Bundesliga (BL1)
+  - Serie A (SA)
+  - Ligue 1 (FL1)
+  - Champions League (CL)
+  - Europa League (EL)
+- **Rate Limit Handling**: Automatic 3-key rotation to handle API quotas
+- **Real Market Data**: Uses actual bookmaker odds, not ML predictions
 
 ## Supported Leagues
 - Premier League (England)
