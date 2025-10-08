@@ -1075,6 +1075,185 @@
                 return `https://raw.githubusercontent.com/luukhopman/football-logos/master/logos/${encodeURIComponent(leagueFolder)}/${teamFileName}`;
             }
             
+            // Calculate WCAG contrast ratio
+            function getContrastRatio(rgb1, rgb2) {
+                const lum1 = 0.2126 * Math.pow(rgb1[0]/255, 2.2) + 0.7152 * Math.pow(rgb1[1]/255, 2.2) + 0.0722 * Math.pow(rgb1[2]/255, 2.2);
+                const lum2 = 0.2126 * Math.pow(rgb2[0]/255, 2.2) + 0.7152 * Math.pow(rgb2[1]/255, 2.2) + 0.0722 * Math.pow(rgb2[2]/255, 2.2);
+                const lighter = Math.max(lum1, lum2);
+                const darker = Math.min(lum1, lum2);
+                return (lighter + 0.05) / (darker + 0.05);
+            }
+            
+            // Helper function to ensure color has proper contrast by adjusting the color
+            function ensureColorContrast(color, isDark) {
+                if (!color) return { color: null, shadow: '' };
+                
+                // Convert hex to RGB
+                const hex = color.replace('#', '');
+                let r = parseInt(hex.substr(0, 2), 16);
+                let g = parseInt(hex.substr(2, 2), 16);
+                let b = parseInt(hex.substr(4, 2), 16);
+                
+                // Background colors
+                const lightBg = [248, 250, 252]; // #f8fafc
+                const darkBg = [30, 41, 59]; // #1e293b
+                const bgColor = isDark ? darkBg : lightBg;
+                
+                // Check initial contrast ratio
+                let contrastRatio = getContrastRatio([r, g, b], bgColor);
+                
+                // If contrast is already good, return original color
+                if (contrastRatio >= 4.5) {
+                    return { color: color, shadow: '' };
+                }
+                
+                // Iteratively adjust color until contrast ≥4.5:1
+                const maxIterations = 30;
+                for (let i = 0; i < maxIterations && contrastRatio < 4.5; i++) {
+                    if (isDark) {
+                        // In dark mode, lighten by adding (works for black)
+                        r = Math.min(255, r + 15);
+                        g = Math.min(255, g + 15);
+                        b = Math.min(255, b + 15);
+                    } else {
+                        // In light mode, darken by subtracting
+                        r = Math.max(0, r - 15);
+                        g = Math.max(0, g - 15);
+                        b = Math.max(0, b - 15);
+                    }
+                    contrastRatio = getContrastRatio([r, g, b], bgColor);
+                }
+                
+                // Convert adjusted RGB back to hex
+                const toHex = (val) => val.toString(16).padStart(2, '0');
+                const adjustedColor = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+                
+                return { color: adjustedColor, shadow: '' };
+            }
+            
+            // Get team brand color based on team name
+            function getTeamBrandColor(teamName) {
+                const teamColors = {
+                    // Premier League
+                    'Manchester United': '#DA291C',
+                    'Man United': '#DA291C',
+                    'Manchester City': '#6CABDD',
+                    'Man City': '#6CABDD',
+                    'Liverpool': '#C8102E',
+                    'Chelsea': '#034694',
+                    'Arsenal': '#EF0107',
+                    'Tottenham': '#132257',
+                    'Tottenham Hotspur': '#132257',
+                    'Spurs': '#132257',
+                    'Newcastle': '#241F20',
+                    'Newcastle United': '#241F20',
+                    'West Ham': '#7A263A',
+                    'West Ham United': '#7A263A',
+                    'Aston Villa': '#95BFE5',
+                    'Brighton': '#0057B8',
+                    'Everton': '#003399',
+                    'Leicester': '#003090',
+                    'Leicester City': '#003090',
+                    'Wolves': '#FDB913',
+                    'Wolverhampton': '#FDB913',
+                    'Crystal Palace': '#1B458F',
+                    'Fulham': '#000000',
+                    'Brentford': '#E30613',
+                    'Southampton': '#D71920',
+                    'Nottingham Forest': '#DD0000',
+                    'Bournemouth': '#DA291C',
+                    'Ipswich': '#3050A0',
+                    'Ipswich Town': '#3050A0',
+                    
+                    // La Liga
+                    'Real Madrid': '#FEBE10',
+                    'Barcelona': '#A50044',
+                    'Atletico Madrid': '#CB3524',
+                    'Atl\u00e9tico Madrid': '#CB3524',
+                    'Sevilla': '#D62123',
+                    'Valencia': '#EE3524',
+                    'Real Sociedad': '#0A3AB9',
+                    'Real Betis': '#00954C',
+                    'Villarreal': '#FFE667',
+                    'Athletic Bilbao': '#EE2523',
+                    'Celta Vigo': '#83C1EB',
+                    'Espanyol': '#007BC7',
+                    'Getafe': '#005999',
+                    'Osasuna': '#D21F3C',
+                    'Rayo Vallecano': '#E4002B',
+                    'Mallorca': '#E20613',
+                    'Las Palmas': '#FFED00',
+                    'Girona': '#CC0000',
+                    
+                    // Bundesliga
+                    'Bayern Munich': '#DC052D',
+                    'Borussia Dortmund': '#FDE100',
+                    'Dortmund': '#FDE100',
+                    'RB Leipzig': '#DD0741',
+                    'Bayer Leverkusen': '#E32221',
+                    'Borussia Monchengladbach': '#000000',
+                    'Eintracht Frankfurt': '#E1000F',
+                    'VfL Wolfsburg': '#65B32E',
+                    'Union Berlin': '#EB1923',
+                    'SC Freiburg': '#E2001A',
+                    'Hoffenheim': '#1961B5',
+                    'VfB Stuttgart': '#E32219',
+                    'Mainz': '#C3151C',
+                    'Werder Bremen': '#1D9053',
+                    
+                    // Serie A
+                    'Juventus': '#000000',
+                    'Inter Milan': '#0068A8',
+                    'Inter': '#0068A8',
+                    'AC Milan': '#FB090B',
+                    'Milan': '#FB090B',
+                    'Napoli': '#00569F',
+                    'Roma': '#FCC44A',
+                    'AS Roma': '#FCC44A',
+                    'Lazio': '#87D8F7',
+                    'Atalanta': '#003171',
+                    'Fiorentina': '#6C2F8A',
+                    'Torino': '#8B1D1C',
+                    'Genoa': '#A81F31',
+                    'Sampdoria': '#003C80',
+                    'Udinese': '#000000',
+                    'Bologna': '#004A98',
+                    'Sassuolo': '#006838',
+                    'Hellas Verona': '#0F52A0',
+                    'Cagliari': '#D0011B',
+                    'Empoli': '#005EB8',
+                    
+                    // Ligue 1
+                    'Paris Saint Germain': '#004170',
+                    'PSG': '#004170',
+                    'Marseille': '#2FAEE0',
+                    'Monaco': '#C8102E',
+                    'AS Monaco': '#C8102E',
+                    'Lyon': '#DA020E',
+                    'Lille': '#E30613',
+                    'Nice': '#ED1C2E',
+                    'Rennes': '#E30513',
+                    'Lens': '#FFC627',
+                    'Montpellier': '#F39200',
+                    'Nantes': '#FEF100',
+                    'Strasbourg': '#009CDE',
+                    'Reims': '#E30613',
+                    'Brest': '#E30613',
+                    'Toulouse': '#411E5E',
+                    
+                    // Champions League / Europa teams
+                    'Ajax': '#D2122E',
+                    'Benfica': '#E30613',
+                    'Porto': '#003D8F',
+                    'Sporting CP': '#006940',
+                    'Celtic': '#009B48',
+                    'Rangers': '#0F47AF',
+                    'PSV': '#ED1B2E'
+                };
+                
+                return teamColors[teamName] || null;
+            }
+            
             const autocompleteDropdown = document.getElementById('autocomplete-dropdown');
             
             // Autocomplete functionality
@@ -1718,7 +1897,9 @@
                     // Home team column
                     html += `<div class="col-md-6 ${hasAwayData ? 'border-end' : ''}">`;
                     const homeLogoUrl = getTeamLogoUrl(currentMatchData.home_team, currentMatchData.league);
-                    html += `<h6 class="fw-bold text-primary mb-2"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
+                    const homeBrandColor = getTeamBrandColor(currentMatchData.home_team);
+                    const homeColorData = homeBrandColor ? ensureColorContrast(homeBrandColor, isDarkTheme()) : { color: 'var(--primary-color)', shadow: '' };
+                    html += `<h6 class="fw-bold mb-2" style="color: ${homeColorData.color}; ${homeColorData.shadow}"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
                     
                     if (hasHomeData) {
                         html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
@@ -1755,7 +1936,9 @@
                     // Away team column
                     html += `<div class="col-md-6">`;
                     const awayLogoUrl = getTeamLogoUrl(currentMatchData.away_team, currentMatchData.league);
-                    html += `<h6 class="fw-bold text-danger mb-2"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
+                    const awayBrandColor = getTeamBrandColor(currentMatchData.away_team);
+                    const awayColorData = awayBrandColor ? ensureColorContrast(awayBrandColor, isDarkTheme()) : { color: '#ef4444', shadow: '' };
+                    html += `<h6 class="fw-bold mb-2" style="color: ${awayColorData.color}; ${awayColorData.shadow}"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
                     
                     if (hasAwayData) {
                         html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
