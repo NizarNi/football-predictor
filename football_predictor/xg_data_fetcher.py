@@ -99,13 +99,21 @@ def is_cache_valid(cache_file):
 
 
 def load_from_cache(cache_key):
-    """Load xG data from cache"""
+    """Load xG data from cache with backward compatibility"""
     cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
     
     if is_cache_valid(cache_file):
         try:
             with open(cache_file, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                
+            # Backward compatibility: migrate old xg_overperformance to scoring_clinicality
+            for team_name, team_data in data.items():
+                if 'xg_overperformance' in team_data and 'scoring_clinicality' not in team_data:
+                    team_data['scoring_clinicality'] = team_data['xg_overperformance']
+                    print(f"🔄 Migrated {team_name}: xg_overperformance → scoring_clinicality")
+                
+            return data
         except Exception as e:
             print(f"Error loading cache: {e}")
             return None
@@ -252,15 +260,16 @@ def fetch_league_xg_stats(league_code, season=None):
                 xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
                 xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
                 
-                # Calculate xG overperformance per game (actual goals vs expected)
-                xg_overperformance_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
-                xg_data[team_name]['xg_overperformance'] = round(xg_overperformance_total / matches, 2)
+                # Calculate scoring clinicality per game (actual goals vs expected)
+                # Positive = clinical finishing, Negative = wasteful
+                scoring_clinicality_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
+                xg_data[team_name]['scoring_clinicality'] = round(scoring_clinicality_total / matches, 2)
             else:
                 xg_data[team_name]['xg_for_per_game'] = 0
                 xg_data[team_name]['xg_against_per_game'] = 0
                 xg_data[team_name]['goals_for_per_game'] = 0
                 xg_data[team_name]['goals_against_per_game'] = 0
-                xg_data[team_name]['xg_overperformance'] = 0
+                xg_data[team_name]['scoring_clinicality'] = 0
         
         
         # Save to cache
@@ -419,7 +428,7 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         'home_stats': {
             'xg_for_per_game': home_stats['xg_for_per_game'],
             'xg_against_per_game': home_stats['xg_against_per_game'],
-            'xg_overperformance': home_stats['xg_overperformance'],
+            'scoring_clinicality': home_stats['scoring_clinicality'],
             'rolling_5': home_rolling,
             'form': home_form,
             'recent_matches': home_recent_matches
@@ -427,7 +436,7 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         'away_stats': {
             'xg_for_per_game': away_stats['xg_for_per_game'],
             'xg_against_per_game': away_stats['xg_against_per_game'],
-            'xg_overperformance': away_stats['xg_overperformance'],
+            'scoring_clinicality': away_stats['scoring_clinicality'],
             'rolling_5': away_rolling,
             'form': away_form,
             'recent_matches': away_recent_matches

@@ -1548,10 +1548,10 @@
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
                             html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals created per game based on shot quality and positions" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                             html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals conceded per game (Post-Shot xG faced by goalkeeper)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                            if (contextData.xg.home_stats.xg_overperformance) {
-                                const overperf = contextData.xg.home_stats.xg_overperformance;
-                                const overPerfClass = overperf > 0 ? 'text-success' : 'text-danger';
-                                html += `<tr><td class="text-muted">xG Diff: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = overperforming, Negative = underperforming" style="cursor: help; font-size: 0.8em;"></i></td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            if (contextData.xg.home_stats.scoring_clinicality !== undefined && contextData.xg.home_stats.scoring_clinicality !== null) {
+                                const clinicality = contextData.xg.home_stats.scoring_clinicality;
+                                const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
+                                html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
                             // Add xG-based form (Last 5 matches from FBref)
                             if (contextData.xg.home_stats.form) {
@@ -1589,10 +1589,10 @@
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
                             html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals created per game based on shot quality and positions" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                             html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals conceded per game (Post-Shot xG faced by goalkeeper)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                            if (contextData.xg.away_stats.xg_overperformance) {
-                                const overperf = contextData.xg.away_stats.xg_overperformance;
-                                const overPerfClass = overperf > 0 ? 'text-success' : 'text-danger';
-                                html += `<tr><td class="text-muted">xG Diff: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = overperforming, Negative = underperforming" style="cursor: help; font-size: 0.8em;"></i></td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            if (contextData.xg.away_stats.scoring_clinicality !== undefined && contextData.xg.away_stats.scoring_clinicality !== null) {
+                                const clinicality = contextData.xg.away_stats.scoring_clinicality;
+                                const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
+                                html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
                             // Add xG-based form (Last 5 matches from FBref)
                             if (contextData.xg.away_stats.form) {
