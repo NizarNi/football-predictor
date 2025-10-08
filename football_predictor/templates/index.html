@@ -728,27 +728,55 @@
                 });
             }
             
+            function formatFormIndicators(formString) {
+                if (!formString) return '';
+                
+                const formArray = formString.split('');
+                return formArray.map(result => {
+                    let className = '';
+                    let bgColor = '';
+                    
+                    if (result === 'W') {
+                        bgColor = '#28a745'; // Green
+                    } else if (result === 'D') {
+                        bgColor = '#6c757d'; // Gray
+                    } else if (result === 'L') {
+                        bgColor = '#dc3545'; // Red
+                    }
+                    
+                    return `<span style="display: inline-block; width: 24px; height: 24px; background-color: ${bgColor}; color: white; text-align: center; line-height: 24px; font-size: 12px; font-weight: bold; border-radius: 3px; margin: 0 2px;">${result}</span>`;
+                }).join('');
+            }
+            
             function displayMatchContextData(contextData) {
                 let html = '';
                 
                 if (contextData.narrative) {
-                    html += `<div class="alert alert-info mb-3"><i class="fas fa-info-circle me-2"></i>${contextData.narrative}</div>`;
+                    html += `<div class="alert alert-secondary mb-3 small"><i class="fas fa-comment-dots me-2"></i>${contextData.narrative}</div>`;
                 }
                 
                 if (contextData.home_team && contextData.away_team) {
                     html += `
                         <div class="row">
-                            <div class="col-md-6">
-                                <h6 class="fw-bold">${currentMatchData.home_team}</h6>
-                                ${contextData.home_team.position ? `<p class="mb-1"><strong>Position:</strong> ${contextData.home_team.position}</p>` : ''}
-                                ${contextData.home_team.points !== null ? `<p class="mb-1"><strong>Points:</strong> ${contextData.home_team.points}</p>` : ''}
-                                ${contextData.home_team.form ? `<p class="mb-1"><strong>Form:</strong> ${contextData.home_team.form}</p>` : ''}
+                            <div class="col-md-6 border-end">
+                                <h6 class="fw-bold text-primary mb-2"><i class="fas fa-home me-1"></i>${currentMatchData.home_team}</h6>
+                                <table class="table table-sm table-borderless mb-0">
+                                    <tbody>
+                                        ${contextData.home_team.position ? `<tr><td class="text-muted" style="width: 80px;">Position:</td><td><span class="badge bg-secondary">${contextData.home_team.position}</span></td></tr>` : ''}
+                                        ${contextData.home_team.points !== null ? `<tr><td class="text-muted">Points:</td><td><strong>${contextData.home_team.points}</strong></td></tr>` : ''}
+                                        ${contextData.home_team.form ? `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.home_team.form)}</td></tr>` : ''}
+                                    </tbody>
+                                </table>
                             </div>
                             <div class="col-md-6">
-                                <h6 class="fw-bold">${currentMatchData.away_team}</h6>
-                                ${contextData.away_team.position ? `<p class="mb-1"><strong>Position:</strong> ${contextData.away_team.position}</p>` : ''}
-                                ${contextData.away_team.points !== null ? `<p class="mb-1"><strong>Points:</strong> ${contextData.away_team.points}</p>` : ''}
-                                ${contextData.away_team.form ? `<p class="mb-1"><strong>Form:</strong> ${contextData.away_team.form}</p>` : ''}
+                                <h6 class="fw-bold text-danger mb-2"><i class="fas fa-plane-departure me-1"></i>${currentMatchData.away_team}</h6>
+                                <table class="table table-sm table-borderless mb-0">
+                                    <tbody>
+                                        ${contextData.away_team.position ? `<tr><td class="text-muted" style="width: 80px;">Position:</td><td><span class="badge bg-secondary">${contextData.away_team.position}</span></td></tr>` : ''}
+                                        ${contextData.away_team.points !== null ? `<tr><td class="text-muted">Points:</td><td><strong>${contextData.away_team.points}</strong></td></tr>` : ''}
+                                        ${contextData.away_team.form ? `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.away_team.form)}</td></tr>` : ''}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     `;
