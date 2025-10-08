@@ -7,7 +7,7 @@ import sys
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from football_data_api import get_competitions, get_upcoming_matches, RateLimitExceededError
+from football_data_api import get_competitions, get_upcoming_matches, get_match_details, RateLimitExceededError
 from rapidapi_football_prediction import get_upcoming_matches_with_predictions, RapidAPIPredictionError
 
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
@@ -169,6 +169,82 @@ def search():
     except Exception as e:
         print(f"Error in search: {e}")
         return jsonify({"error": f"Search failed: {str(e)}"}), 500
+
+@app.route("/match/<int:match_id>", methods=["GET"])
+def get_match(match_id):
+    """Get detailed information about a specific match"""
+    try:
+        # Try to get match details from football-data.org
+        match_details = get_match_details(match_id)
+        
+        if not match_details:
+            return jsonify({"error": f"Match with ID {match_id} not found"}), 404
+        
+        # Format the response to match frontend expectations
+        response = {
+            "match": {
+                "id": match_details.get("id"),
+                "home": {
+                    "name": match_details.get("home_team", {}).get("name", "Unknown")
+                },
+                "away": {
+                    "name": match_details.get("away_team", {}).get("name", "Unknown")
+                },
+                "stage": match_details.get("league", "Unknown"),
+                "date": match_details.get("date"),
+                "timestamp": match_details.get("timestamp"),
+                "datetime": datetime.fromtimestamp(match_details.get("timestamp", 0)).strftime("%Y-%m-%d %H:%M") if match_details.get("timestamp") else "TBD",
+                "status": match_details.get("status", "SCHEDULED"),
+                "venue": match_details.get("venue", "Unknown")
+            }
+        }
+        
+        # Add score if available
+        if "score" in match_details:
+            response["match"]["score"] = match_details["score"]
+        
+        return jsonify(response)
+        
+    except RateLimitExceededError as e:
+        return jsonify({"error": f"Rate limit exceeded: {str(e)}"}), 429
+    except Exception as e:
+        print(f"Error fetching match {match_id}: {e}")
+        return jsonify({"error": f"Failed to fetch match details: {str(e)}"}), 500
+
+@app.route("/predict/<int:match_id>", methods=["GET"])
+def predict_match(match_id):
+    """Get predictions for a specific match"""
+    try:
+        # Since we don't have individual match prediction capability,
+        # return a structured response indicating predictions are unavailable
+        response = {
+            "predictions": {
+                "1x2": {
+                    "prediction": "N/A",
+                    "confidence": 0,
+                    "probabilities": {
+                        "HOME_WIN": 0.33,
+                        "DRAW": 0.33,
+                        "AWAY_WIN": 0.33
+                    },
+                    "is_safe_bet": False,
+                    "note": "Predictions unavailable for individual match lookup"
+                },
+                "exact_score": {
+                    "note": "Predictions unavailable"
+                },
+                "over_under": {
+                    "note": "Predictions unavailable"
+                }
+            },
+            "note": "Prediction data is only available when browsing upcoming matches"
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        print(f"Error predicting match {match_id}: {e}")
+        return jsonify({"error": f"Failed to get predictions: {str(e)}"}), 500
 
 @app.route("/process_data", methods=["POST"])
 def process_data():

@@ -3,12 +3,29 @@ import requests
 import os
 from datetime import datetime, timedelta
 
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
+# Support multiple API keys for rotation
+RAPIDAPI_KEYS = [
+    os.environ.get("RAPIDAPI_KEY"),
+    os.environ.get("RAPIDAPI_KEY_2")
+]
+RAPIDAPI_KEYS = [key for key in RAPIDAPI_KEYS if key]  # Filter out None values
+
 RAPIDAPI_HOST = "football-prediction-api.p.rapidapi.com"
+current_key_index = 0
 
 class RapidAPIPredictionError(Exception):
     """Custom exception for RapidAPI prediction errors."""
     pass
+
+def get_next_api_key():
+    """Get the next API key in rotation."""
+    global current_key_index
+    if not RAPIDAPI_KEYS:
+        raise RapidAPIPredictionError("No RAPIDAPI_KEY environment variables set.")
+    
+    key = RAPIDAPI_KEYS[current_key_index]
+    current_key_index = (current_key_index + 1) % len(RAPIDAPI_KEYS)
+    return key
 
 def get_predictions_by_date(iso_date: str, federation: str = "UEFA", market: str = "classic") -> dict:
     """Fetches predictions for matches on a specific date.
@@ -24,13 +41,12 @@ def get_predictions_by_date(iso_date: str, federation: str = "UEFA", market: str
     Raises:
         RapidAPIPredictionError: If the API call fails
     """
-    if not RAPIDAPI_KEY:
-        raise RapidAPIPredictionError("RAPIDAPI_KEY environment variable not set.")
+    api_key = get_next_api_key()
     
     url = f"https://{RAPIDAPI_HOST}/api/v2/predictions"
     
     headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Key": api_key,
         "X-RapidAPI-Host": RAPIDAPI_HOST
     }
     
@@ -64,8 +80,8 @@ def get_upcoming_matches_with_predictions(next_n_days: int = 7, federation: str 
     Returns:
         List of matches with predictions
     """
-    if not RAPIDAPI_KEY:
-        raise RapidAPIPredictionError("RAPIDAPI_KEY environment variable not set.")
+    if not RAPIDAPI_KEYS:
+        raise RapidAPIPredictionError("No RAPIDAPI_KEY environment variables set.")
     
     all_matches = []
     today = datetime.now().date()

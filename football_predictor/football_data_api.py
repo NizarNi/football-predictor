@@ -107,8 +107,9 @@ def get_upcoming_matches(competition_id, next_n_days=7):
 def get_match_details(match_id):
     data = _make_api_request(f"matches/{match_id}")
     
-    if data and "match" in data:
-        match = data["match"]
+    if data and "id" in data:
+        # API returns match data directly, not wrapped in "match" key
+        match = data
         match_info = {
             "id": match["id"],
             "date": match["utcDate"],
@@ -117,7 +118,7 @@ def get_match_details(match_id):
             "away_team": {"name": match["awayTeam"]["name"]},
             "league": match["competition"]["name"],
             "status": match["status"],
-            "venue": "Unknown",
+            "venue": match.get("venue", "Unknown"),
             "goals": {
                 "home": match["score"]["fullTime"]["home"] if match["score"]["fullTime"]["home"] is not None else match["score"]["halfTime"]["home"],
                 "away": match["score"]["fullTime"]["away"] if match["score"]["fullTime"]["away"] is not None else match["score"]["halfTime"]["away"]
