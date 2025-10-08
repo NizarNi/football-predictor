@@ -610,7 +610,16 @@
                     </div>
                 `;
                 
-                document.getElementById('load-over-under-btn').addEventListener('click', loadOverUnderPredictions);
+                // Use setTimeout to ensure DOM is updated before attaching listener
+                setTimeout(() => {
+                    const btn = document.getElementById('load-over-under-btn');
+                    if (btn) {
+                        console.log('Attaching click handler to Over/Under button');
+                        btn.addEventListener('click', loadOverUnderPredictions);
+                    } else {
+                        console.error('Over/Under button not found in DOM');
+                    }
+                }, 0);
             }
             
             function loadOverUnderPredictions() {
