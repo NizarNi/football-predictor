@@ -313,30 +313,13 @@
                             </div>
                             
                             <div class="row mt-4">
-                                <div class="col-md-6 mb-3">
+                                <div class="col-12 mb-3">
                                     <div class="card">
                                         <div class="card-header bg-primary text-white">
                                             <i class="fas fa-trophy me-2"></i> 1X2 Prediction
                                         </div>
                                         <div class="card-body">
                                             <div id="prediction-1x2">
-                                                <div class="loading">
-                                                    <div class="spinner-border text-primary" role="status">
-                                                        <span class="visually-hidden">Loading...</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div class="col-md-6 mb-3">
-                                    <div class="card">
-                                        <div class="card-header bg-primary text-white">
-                                            <i class="fas fa-bullseye me-2"></i> Exact Score
-                                        </div>
-                                        <div class="card-body">
-                                            <div id="prediction-exact-score">
                                                 <div class="loading">
                                                     <div class="spinner-border text-primary" role="status">
                                                         <span class="visually-hidden">Loading...</span>
@@ -427,7 +410,6 @@
             const matchLeague = document.getElementById('match-league');
             const matchDate = document.getElementById('match-date');
             const prediction1x2 = document.getElementById('prediction-1x2');
-            const predictionExactScore = document.getElementById('prediction-exact-score');
             const predictionOverUnder = document.getElementById('prediction-over-under');
             const bettingAnalysis = document.getElementById('betting-analysis');
             const matchContext = document.getElementById('match-context');
@@ -583,43 +565,27 @@
                 // Load match context
                 loadMatchContext(match);
                 
-                // Check if predictions exist (Odds API matches)
+                // Display predictions from Odds API
                 if (match.predictions && match.predictions['1x2']) {
                     display1X2Prediction(match.predictions['1x2']);
-                    displayExactScorePrediction({note: 'Not available for odds-based predictions'});
                     resetOverUnderButton();
                     displayOddsBasedAnalysis(match);
                 } else {
-                    // Fallback to old method for football-data.org matches
-                    prediction1x2.innerHTML = loadingSpinner();
-                    predictionExactScore.innerHTML = loadingSpinner();
-                    predictionOverUnder.innerHTML = loadingSpinner();
-                    bettingAnalysis.innerHTML = loadingSpinner();
-                    
-                    getMatchDetails(match.id);
+                    prediction1x2.innerHTML = '<p class="text-muted">No predictions available for this match</p>';
+                    resetOverUnderButton();
+                    bettingAnalysis.innerHTML = '<p class="text-muted">No betting analysis available</p>';
                 }
             }
             
             function resetOverUnderButton() {
                 predictionOverUnder.innerHTML = `
                     <div class="text-center">
-                        <button id="load-over-under-btn" class="btn btn-primary">
+                        <button onclick="loadOverUnderPredictions()" class="btn btn-primary">
                             <i class="fas fa-chart-bar me-2"></i> Show Over/Under Odds
                         </button>
                         <p class="text-muted mt-2 small">Click to fetch detailed over/under predictions from bookmakers</p>
                     </div>
                 `;
-                
-                // Use setTimeout to ensure DOM is updated before attaching listener
-                setTimeout(() => {
-                    const btn = document.getElementById('load-over-under-btn');
-                    if (btn) {
-                        console.log('Attaching click handler to Over/Under button');
-                        btn.addEventListener('click', loadOverUnderPredictions);
-                    } else {
-                        console.error('Over/Under button not found in DOM');
-                    }
-                }, 0);
             }
             
             function loadOverUnderPredictions() {
@@ -793,61 +759,6 @@
                 matchContext.innerHTML = html;
             }
             
-            function getMatchDetails(matchId) {
-                // Fetch match details
-                fetch(`/match/${matchId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        console.error('Error:', data.error);
-                        prediction1x2.innerHTML = `<p class="text-danger">Error loading match details</p>`;
-                        return;
-                    }
-                    
-                    const match = data.match;
-                    
-                    // Update match details
-                    matchTeams.textContent = `${match.home.name} vs ${match.away.name}`;
-                    matchLeague.textContent = match.stage || 'Unknown League';
-                    matchDate.textContent = match.date || 'TBD';
-                    
-                    // Get predictions
-                    getPredictions(matchId);
-                    
-                    // Display betting analysis
-                    displayBettingAnalysis(match);
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    prediction1x2.innerHTML = `<p class="text-danger">Error loading match details</p>`;
-                });
-            }
-            
-            function getPredictions(matchId) {
-                fetch(`/predict/${matchId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        console.error('Error:', data.error);
-                        return;
-                    }
-                    
-                    const predictions = data.predictions;
-                    
-                    // Display 1X2 prediction
-                    display1X2Prediction(predictions['1x2']);
-                    
-                    // Display exact score prediction
-                    displayExactScorePrediction(predictions['exact_score']);
-                    
-                    // Display over/under predictions
-                    displayOverUnderPredictions(predictions['over_under']);
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                });
-            }
-            
             function display1X2Prediction(prediction) {
                 if (!prediction) {
                     prediction1x2.innerHTML = `<p class="text-muted">No prediction available</p>`;
@@ -899,46 +810,6 @@
                 `;
                 
                 prediction1x2.innerHTML = html;
-            }
-            
-            function displayExactScorePrediction(prediction) {
-                if (!prediction) {
-                    predictionExactScore.innerHTML = `<p class="text-muted">No prediction available</p>`;
-                    return;
-                }
-                
-                const safetyClass = prediction.is_safe_bet ? 'safe-bet' : 'risky-bet';
-                const safetyText = prediction.is_safe_bet ? 'Safe Bet' : 'Risky Bet';
-                
-                let html = `
-                    <div class="text-center mb-3">
-                        <span class="prediction-badge ${safetyClass}">
-                            ${prediction.most_likely} (${(prediction.confidence * 100).toFixed(1)}%)
-                            <i class="fas ${prediction.is_safe_bet ? 'fa-shield-alt' : 'fa-exclamation-triangle'} ms-1"></i>
-                            ${safetyText}
-                        </span>
-                    </div>
-                    
-                    <div class="mt-3">
-                        <h6>Top Score Predictions:</h6>
-                        <div class="mt-2">
-                `;
-                
-                prediction.top_predictions.forEach(score => {
-                    html += `
-                        <div class="exact-score-item">
-                            <span>${score.score}</span>
-                            <span>${(score.probability * 100).toFixed(1)}%</span>
-                        </div>
-                    `;
-                });
-                
-                html += `
-                        </div>
-                    </div>
-                `;
-                
-                predictionExactScore.innerHTML = html;
             }
             
             function displayOverUnderPredictions(predictions) {
