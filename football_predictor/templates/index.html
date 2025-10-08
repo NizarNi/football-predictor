@@ -1395,8 +1395,7 @@
                 if (!formString) return '';
                 
                 const formArray = formString.split('');
-                return formArray.map(result => {
-                    let className = '';
+                return `<div style="display: inline-flex; gap: 2px; white-space: nowrap;">` + formArray.map(result => {
                     let bgColor = '';
                     
                     if (result === 'W') {
@@ -1407,15 +1406,15 @@
                         bgColor = '#dc3545'; // Red
                     }
                     
-                    return `<span style="display: inline-block; width: 24px; height: 24px; background-color: ${bgColor}; color: white; text-align: center; line-height: 24px; font-size: 12px; font-weight: bold; border-radius: 3px; margin: 0 2px;">${result}</span>`;
-                }).join('');
+                    return `<span style="display: inline-block; width: 24px; height: 24px; background-color: ${bgColor}; color: white; text-align: center; line-height: 24px; font-size: 12px; font-weight: bold; border-radius: 3px;">${result}</span>`;
+                }).join('') + `</div>`;
             }
             
             function createXgTrendChart(canvasId, recentMatches, teamName) {
                 if (!recentMatches || recentMatches.length === 0) return null;
                 
-                // Reverse to show oldest to newest (left to right)
-                const matches = [...recentMatches].reverse();
+                // Keep original order to show newest to oldest (recent on right)
+                const matches = [...recentMatches];
                 
                 // Compute rolling 5-match averages for each point
                 const rollingWindow = 5;
@@ -1576,28 +1575,6 @@
                     html += `<div class="alert ${alertClass} mb-3 small"><i class="fas ${icon} me-2"></i>${contextData.narrative}</div>`;
                 }
                 
-                // Add xG trend chart explanation if charts will be displayed
-                const hasHomeXgChart = contextData.xg && contextData.xg.home_stats && contextData.xg.home_stats.recent_matches && contextData.xg.home_stats.recent_matches.length > 0;
-                const hasAwayXgChart = contextData.xg && contextData.xg.away_stats && contextData.xg.away_stats.recent_matches && contextData.xg.away_stats.recent_matches.length > 0;
-                
-                if (hasHomeXgChart || hasAwayXgChart) {
-                    html += `
-                        <div class="alert alert-primary mb-3 small" style="background-color: #e7f3ff; border-color: #b3d9ff;">
-                            <div class="d-flex align-items-start">
-                                <i class="fas fa-chart-line me-2 mt-1" style="color: #0066cc;"></i>
-                                <div>
-                                    <strong>📈 How to Read xG Trend Charts:</strong><br>
-                                    <span style="color: #28a745; font-weight: 600;">●</span> <strong style="color: #28a745;">Green line (xGF)</strong> = Goals created per game<br>
-                                    <span style="color: #dc3545; font-weight: 600;">●</span> <strong style="color: #dc3545;">Red line (xGA)</strong> = Goals conceded per game<br>
-                                    <span class="ms-3">✅ Green ABOVE red = Good attacking form</span><br>
-                                    <span class="ms-3">❌ Red ABOVE green = Defensive struggles</span><br>
-                                    <span class="ms-3">📈 Rising green = Attack improving | 📉 Falling red = Defense improving</span>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                }
-                
                 const hasHomeData = contextData.home_team && (contextData.home_team.position || contextData.home_team.points || contextData.home_team.form);
                 const hasAwayData = contextData.away_team && (contextData.away_team.position || contextData.away_team.points || contextData.away_team.form);
                 
@@ -1606,7 +1583,8 @@
                     
                     // Home team column
                     html += `<div class="col-md-6 ${hasAwayData ? 'border-end' : ''}">`;
-                    html += `<h6 class="fw-bold text-primary mb-2"><i class="fas fa-home me-1"></i>${currentMatchData.home_team}</h6>`;
+                    const homeLogoUrl = getTeamLogoUrl(currentMatchData.home_team, currentMatchData.league);
+                    html += `<h6 class="fw-bold text-primary mb-2"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
                     
                     if (hasHomeData) {
                         html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
@@ -1642,7 +1620,8 @@
                     
                     // Away team column
                     html += `<div class="col-md-6">`;
-                    html += `<h6 class="fw-bold text-danger mb-2"><i class="fas fa-plane-departure me-1"></i>${currentMatchData.away_team}</h6>`;
+                    const awayLogoUrl = getTeamLogoUrl(currentMatchData.away_team, currentMatchData.league);
+                    html += `<h6 class="fw-bold text-danger mb-2"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
                     
                     if (hasAwayData) {
                         html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
@@ -1679,9 +1658,29 @@
                     html += `</div>`;
                     
                     // Add side-by-side xG trend comparison section
+                    const hasHomeXgChart = contextData.xg && contextData.xg.home_stats && contextData.xg.home_stats.recent_matches && contextData.xg.home_stats.recent_matches.length > 0;
+                    const hasAwayXgChart = contextData.xg && contextData.xg.away_stats && contextData.xg.away_stats.recent_matches && contextData.xg.away_stats.recent_matches.length > 0;
+                    
                     if (hasHomeXgChart || hasAwayXgChart) {
+                        // Add explanation box before charts
                         html += `
-                            <div class="row mt-4">
+                            <div class="alert alert-primary mb-3 small mt-4" style="background-color: #e7f3ff; border-color: #b3d9ff;">
+                                <div class="d-flex align-items-start">
+                                    <i class="fas fa-chart-line me-2 mt-1" style="color: #0066cc;"></i>
+                                    <div>
+                                        <strong>📈 How to Read xG Trend Charts:</strong><br>
+                                        <span style="color: #28a745; font-weight: 600;">●</span> <strong style="color: #28a745;">Green line (xGF)</strong> = Goals created per game<br>
+                                        <span style="color: #dc3545; font-weight: 600;">●</span> <strong style="color: #dc3545;">Red line (xGA)</strong> = Goals conceded per game<br>
+                                        <span class="ms-3">✅ Green ABOVE red = Good attacking form</span><br>
+                                        <span class="ms-3">❌ Red ABOVE green = Defensive struggles</span><br>
+                                        <span class="ms-3">📈 Rising green = Attack improving | 📉 Falling red = Defense improving</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        
+                        html += `
+                            <div class="row">
                                 <div class="col-12">
                                     <h6 class="fw-bold mb-3 text-center">
                                         <i class="fas fa-chart-area me-2"></i>xG Trend Comparison
@@ -1697,7 +1696,9 @@
                                     <div class="text-center mb-2">
                                         <span class="badge bg-primary">${currentMatchData.home_team}</span>
                                     </div>
-                                    <canvas id="home-xg-chart" style="height: 180px;"></canvas>
+                                    <div style="max-height: 200px; overflow: hidden; position: relative;">
+                                        <canvas id="home-xg-chart" style="height: 180px;"></canvas>
+                                    </div>
                                 </div>
                             `;
                         }
@@ -1716,7 +1717,9 @@
                                     <div class="text-center mb-2">
                                         <span class="badge bg-danger">${currentMatchData.away_team}</span>
                                     </div>
-                                    <canvas id="away-xg-chart" style="height: 180px;"></canvas>
+                                    <div style="max-height: 200px; overflow: hidden; position: relative;">
+                                        <canvas id="away-xg-chart" style="height: 180px;"></canvas>
+                                    </div>
                                 </div>
                             `;
                         }
@@ -1919,7 +1922,7 @@
                 const risky = options.find(opt => opt.prob >= 0.15 && opt.prob < 0.30);
                 
                 let html = '<div class="analysis-section mb-3">';
-                html += '<div class="analysis-title">💡 Betting Tips</div>';
+                html += '<div class="analysis-title">💡 Betting Tips <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Recommendations based on bookmaker consensus odds. Factors: implied probability, value rating, confidence threshold. Source: 30+ bookmakers via The Odds API" style="cursor: help; font-size: 0.85em;"></i></div>';
                 
                 if (safest) {
                     const typeIcon = safest.type === 'totals' ? '⚽' : safest.type === 'double_chance' ? '🎯' : '🏆';
