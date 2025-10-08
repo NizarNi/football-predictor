@@ -16,6 +16,30 @@
             --card-bg: #ffffff;
             --text-color: #1e293b;
             --border-color: #e2e8f0;
+            --muted-text: #64748b;
+            --analysis-bg: #f1f5f9;
+            --league-badge-bg: #e2e8f0;
+            --probability-bar-bg: #e2e8f0;
+            --autocomplete-bg: #ffffff;
+            --autocomplete-hover: #f8f9fa;
+            --autocomplete-border: #dddddd;
+        }
+        
+        body.dark-theme {
+            --primary-color: #3b82f6;
+            --secondary-color: #06b6d4;
+            --accent-color: #f59e0b;
+            --background-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #e2e8f0;
+            --border-color: #334155;
+            --muted-text: #94a3b8;
+            --analysis-bg: #334155;
+            --league-badge-bg: #334155;
+            --probability-bar-bg: #334155;
+            --autocomplete-bg: #1e293b;
+            --autocomplete-hover: #334155;
+            --autocomplete-border: #475569;
         }
         
         body {
@@ -23,11 +47,13 @@
             background-color: var(--background-color);
             color: var(--text-color);
             line-height: 1.6;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
         
         .navbar {
             background-color: var(--primary-color);
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s ease;
         }
         
         .navbar-brand {
@@ -41,7 +67,7 @@
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
             background-color: var(--card-bg);
             margin-bottom: 20px;
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: transform 0.2s, box-shadow 0.2s, background-color 0.3s ease, border-color 0.3s ease;
         }
         
         .card:hover {
@@ -66,6 +92,11 @@
             border-color: #152b63;
         }
         
+        body.dark-theme .btn-primary:hover {
+            background-color: #2563eb;
+            border-color: #2563eb;
+        }
+        
         .btn-outline-primary {
             color: var(--primary-color);
             border-color: var(--primary-color);
@@ -86,7 +117,11 @@
         
         .match-card.popular-match {
             border: 2px solid #f59e0b;
-            background: linear-gradient(135deg, #fff9e6 0%, #ffffff 100%);
+            background: linear-gradient(135deg, #fff9e6 0%, var(--card-bg) 100%);
+        }
+        
+        body.dark-theme .match-card.popular-match {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, var(--card-bg) 100%);
         }
         
         .match-card.popular-match::before {
@@ -104,7 +139,11 @@
         
         .match-card.arbitrage-match {
             border: 2px solid #10b981;
-            background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%);
+            background: linear-gradient(135deg, #f0fdf4 0%, var(--card-bg) 100%);
+        }
+        
+        body.dark-theme .match-card.arbitrage-match {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, var(--card-bg) 100%);
         }
         
         .match-card.arbitrage-match::after {
@@ -122,7 +161,11 @@
         
         .match-card.safe-bet-match {
             border: 2px solid #3b82f6;
-            background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+            background: linear-gradient(135deg, #eff6ff 0%, var(--card-bg) 100%);
+        }
+        
+        body.dark-theme .match-card.safe-bet-match {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, var(--card-bg) 100%);
         }
         
         .match-card.safe-bet-match::after {
@@ -218,9 +261,10 @@
         .probability-bar {
             height: 20px;
             border-radius: 10px;
-            background-color: #e2e8f0;
+            background-color: var(--probability-bar-bg);
             overflow: hidden;
             margin: 5px 0;
+            transition: background-color 0.3s ease;
         }
         
         .probability-fill {
@@ -232,21 +276,23 @@
             font-size: 0.8rem;
             padding: 3px 8px;
             border-radius: 12px;
-            background-color: #e2e8f0;
+            background-color: var(--league-badge-bg);
             color: var(--text-color);
             margin-right: 5px;
+            transition: background-color 0.3s ease;
         }
         
         .match-date {
             font-size: 0.8rem;
-            color: #64748b;
+            color: var(--muted-text);
         }
         
         .analysis-section {
-            background-color: #f1f5f9;
+            background-color: var(--analysis-bg);
             border-radius: 8px;
             padding: 15px;
             margin-top: 10px;
+            transition: background-color 0.3s ease;
         }
         
         .analysis-title {
@@ -258,24 +304,26 @@
         .autocomplete-dropdown {
             position: absolute;
             z-index: 999999;
-            background: white;
-            border: 1px solid #ddd;
+            background: var(--autocomplete-bg);
+            border: 1px solid var(--autocomplete-border);
             border-radius: 4px;
             max-height: 300px;
             overflow-y: auto;
             width: calc(100% - 12px);
             margin-top: 2px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: background-color 0.3s ease, border-color 0.3s ease;
         }
         
         .autocomplete-item {
             padding: 10px 15px;
             cursor: pointer;
-            border-bottom: 1px solid #f1f1f1;
+            border-bottom: 1px solid var(--border-color);
+            transition: background-color 0.3s ease;
         }
         
         .autocomplete-item:hover {
-            background-color: #f8f9fa;
+            background-color: var(--autocomplete-hover);
         }
         
         .autocomplete-item .team-name {
@@ -285,13 +333,13 @@
         
         .autocomplete-item .team-alias {
             font-size: 0.85rem;
-            color: #64748b;
+            color: var(--muted-text);
             margin-left: 5px;
         }
         
         .autocomplete-item .team-league {
             font-size: 0.75rem;
-            color: #94a3b8;
+            color: var(--muted-text);
             display: block;
         }
         
@@ -538,6 +586,33 @@
             let currentMatchData = null;
             let currentOverUnderData = null;
             let currentXgData = null;
+            
+            // Theme-aware color helper functions
+            function isDarkTheme() {
+                return document.body.classList.contains('dark-theme');
+            }
+            
+            function getThemeColors() {
+                const dark = isDarkTheme();
+                return {
+                    primary: dark ? '#3b82f6' : '#1e3a8a',
+                    secondary: dark ? '#06b6d4' : '#0ea5e9',
+                    muted: dark ? '#94a3b8' : '#64748b',
+                    xgFor: '#28a745',  // Keep green for xGF
+                    xgAgainst: '#dc3545',  // Keep red for xGA
+                    winGreen: '#28a745',
+                    drawGray: dark ? '#94a3b8' : '#6c757d',
+                    lossRed: '#dc3545',
+                    chartGrid: dark ? 'rgba(148, 163, 184, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                    chartText: dark ? '#94a3b8' : '#64748b',
+                    infoBoxBg: dark ? 'rgba(59, 130, 246, 0.15)' : '#e7f3ff',
+                    infoBoxBorder: dark ? 'rgba(59, 130, 246, 0.3)' : '#b3d9ff',
+                    infoBoxIcon: dark ? '#3b82f6' : '#0066cc',
+                    xgAnalysisBg: dark ? 'rgba(99, 102, 241, 0.15)' : '#f0f4ff',
+                    xgAnalysisBorder: dark ? 'rgba(99, 102, 241, 0.3)' : '#6366f1',
+                    xgAnalysisText: dark ? '#818cf8' : '#6366f1'
+                };
+            }
             
             // Comprehensive team database with nicknames and aliases (unique aliases only)
             const teamDatabase = [
@@ -1306,7 +1381,7 @@
                                             <span>${(prediction.probabilities.over * 100).toFixed(1)}%</span>
                                         </div>
                                         <div class="probability-bar">
-                                            <div class="probability-fill" style="width: ${prediction.probabilities.over * 100}%; background-color: #0ea5e9;"></div>
+                                            <div class="probability-fill" style="width: ${prediction.probabilities.over * 100}%; background-color: ${getThemeColors().secondary};"></div>
                                         </div>
                                         ${prediction.best_odds.over ? `<small class="text-muted">Best odds: ${prediction.best_odds.over.price.toFixed(2)} (${prediction.best_odds.over.bookmaker})</small>` : ''}
                                     </div>
@@ -1316,7 +1391,7 @@
                                             <span>${(prediction.probabilities.under * 100).toFixed(1)}%</span>
                                         </div>
                                         <div class="probability-bar">
-                                            <div class="probability-fill" style="width: ${prediction.probabilities.under * 100}%; background-color: #64748b;"></div>
+                                            <div class="probability-fill" style="width: ${prediction.probabilities.under * 100}%; background-color: ${getThemeColors().muted};"></div>
                                         </div>
                                         ${prediction.best_odds.under ? `<small class="text-muted">Best odds: ${prediction.best_odds.under.price.toFixed(2)} (${prediction.best_odds.under.bookmaker})</small>` : ''}
                                     </div>
@@ -1394,16 +1469,17 @@
             function formatFormIndicators(formString) {
                 if (!formString) return '';
                 
+                const colors = getThemeColors();
                 const formArray = formString.split('');
                 return `<div style="display: inline-flex; gap: 2px; white-space: nowrap;">` + formArray.map(result => {
                     let bgColor = '';
                     
                     if (result === 'W') {
-                        bgColor = '#28a745'; // Green
+                        bgColor = colors.winGreen;
                     } else if (result === 'D') {
-                        bgColor = '#6c757d'; // Gray
+                        bgColor = colors.drawGray;
                     } else if (result === 'L') {
-                        bgColor = '#dc3545'; // Red
+                        bgColor = colors.lossRed;
                     }
                     
                     return `<span style="display: inline-block; width: 24px; height: 24px; background-color: ${bgColor}; color: white; text-align: center; line-height: 24px; font-size: 12px; font-weight: bold; border-radius: 3px;">${result}</span>`;
@@ -1415,6 +1491,7 @@
                 
                 // Keep original order to show newest to oldest (recent on right)
                 const matches = [...recentMatches];
+                const colors = getThemeColors();
                 
                 // Compute rolling 5-match averages for each point
                 const rollingWindow = 5;
@@ -1449,7 +1526,7 @@
                             {
                                 label: 'xG For (Rolling Avg)',
                                 data: xgForRolling,
-                                borderColor: '#28a745',
+                                borderColor: colors.xgFor,
                                 backgroundColor: 'rgba(40, 167, 69, 0.1)',
                                 fill: true,
                                 tension: 0.3,
@@ -1460,7 +1537,7 @@
                             {
                                 label: 'xG Against (Rolling Avg)',
                                 data: xgAgainstRolling,
-                                borderColor: '#dc3545',
+                                borderColor: colors.xgAgainst,
                                 backgroundColor: 'rgba(220, 53, 69, 0.1)',
                                 fill: true,
                                 tension: 0.3,
@@ -1479,13 +1556,15 @@
                                 position: 'top',
                                 labels: {
                                     boxWidth: 12,
-                                    font: { size: 11 }
+                                    font: { size: 11 },
+                                    color: colors.chartText
                                 }
                             },
                             title: {
                                 display: true,
                                 text: `${teamName} - Rolling 5-Match xG Trend`,
-                                font: { size: 12, weight: 'bold' }
+                                font: { size: 12, weight: 'bold' },
+                                color: colors.chartText
                             },
                             tooltip: {
                                 callbacks: {
@@ -1529,18 +1608,20 @@
                                 title: {
                                     display: true,
                                     text: 'Expected Goals per Game',
-                                    font: { size: 11, weight: 'bold' }
+                                    font: { size: 11, weight: 'bold' },
+                                    color: colors.chartText
                                 },
                                 ticks: {
-                                    font: { size: 10 }
+                                    font: { size: 10 },
+                                    color: colors.chartText
                                 },
                                 grid: {
                                     color: function(context) {
                                         // Make zero-line more visible
                                         if (context.tick.value === 0) {
-                                            return 'rgba(0, 0, 0, 0.3)';
+                                            return isDarkTheme() ? 'rgba(148, 163, 184, 0.3)' : 'rgba(0, 0, 0, 0.3)';
                                         }
-                                        return 'rgba(0, 0, 0, 0.05)';
+                                        return colors.chartGrid;
                                     },
                                     lineWidth: function(context) {
                                         // Make zero-line thicker
@@ -1555,7 +1636,8 @@
                                 ticks: {
                                     font: { size: 9 },
                                     maxRotation: 45,
-                                    minRotation: 45
+                                    minRotation: 45,
+                                    color: colors.chartText
                                 },
                                 grid: {
                                     display: false
@@ -1663,14 +1745,15 @@
                     
                     if (hasHomeXgChart || hasAwayXgChart) {
                         // Add explanation box before charts
+                        const themeColors = getThemeColors();
                         html += `
-                            <div class="alert alert-primary mb-3 small mt-4" style="background-color: #e7f3ff; border-color: #b3d9ff;">
+                            <div class="alert alert-primary mb-3 small mt-4" style="background-color: ${themeColors.infoBoxBg}; border-color: ${themeColors.infoBoxBorder};">
                                 <div class="d-flex align-items-start">
-                                    <i class="fas fa-chart-line me-2 mt-1" style="color: #0066cc;"></i>
+                                    <i class="fas fa-chart-line me-2 mt-1" style="color: ${themeColors.infoBoxIcon};"></i>
                                     <div>
                                         <strong>📈 How to Read xG Trend Charts:</strong><br>
-                                        <span style="color: #28a745; font-weight: 600;">●</span> <strong style="color: #28a745;">Green line (xGF)</strong> = Goals created per game<br>
-                                        <span style="color: #dc3545; font-weight: 600;">●</span> <strong style="color: #dc3545;">Red line (xGA)</strong> = Goals conceded per game<br>
+                                        <span style="color: ${themeColors.xgFor}; font-weight: 600;">●</span> <strong style="color: ${themeColors.xgFor};">Green line (xGF)</strong> = Goals created per game<br>
+                                        <span style="color: ${themeColors.xgAgainst}; font-weight: 600;">●</span> <strong style="color: ${themeColors.xgAgainst};">Red line (xGA)</strong> = Goals conceded per game<br>
                                         <span class="ms-3">✅ Green ABOVE red = Good attacking form</span><br>
                                         <span class="ms-3">❌ Red ABOVE green = Defensive struggles</span><br>
                                         <span class="ms-3">📈 Rising green = Attack improving | 📉 Falling red = Defense improving</span>
@@ -1778,7 +1861,7 @@
                                 <span>${(prediction.probabilities.HOME_WIN * 100).toFixed(1)}%</span>
                             </div>
                             <div class="probability-bar">
-                                <div class="probability-fill" style="width: ${prediction.probabilities.HOME_WIN * 100}%; background-color: #1e3a8a;"></div>
+                                <div class="probability-fill" style="width: ${prediction.probabilities.HOME_WIN * 100}%; background-color: ${getThemeColors().primary};"></div>
                             </div>
                         </div>
                         <div class="mb-2">
@@ -1787,7 +1870,7 @@
                                 <span>${(prediction.probabilities.DRAW * 100).toFixed(1)}%</span>
                             </div>
                             <div class="probability-bar">
-                                <div class="probability-fill" style="width: ${prediction.probabilities.DRAW * 100}%; background-color: #64748b;"></div>
+                                <div class="probability-fill" style="width: ${prediction.probabilities.DRAW * 100}%; background-color: ${getThemeColors().muted};"></div>
                             </div>
                         </div>
                         <div class="mb-2">
@@ -1796,7 +1879,7 @@
                                 <span>${(prediction.probabilities.AWAY_WIN * 100).toFixed(1)}%</span>
                             </div>
                             <div class="probability-bar">
-                                <div class="probability-fill" style="width: ${prediction.probabilities.AWAY_WIN * 100}%; background-color: #0ea5e9;"></div>
+                                <div class="probability-fill" style="width: ${prediction.probabilities.AWAY_WIN * 100}%; background-color: ${getThemeColors().secondary};"></div>
                             </div>
                         </div>
                     </div>
@@ -1843,7 +1926,7 @@
                                             <span>${(prediction.probabilities.OVER * 100).toFixed(1)}%</span>
                                         </div>
                                         <div class="probability-bar">
-                                            <div class="probability-fill" style="width: ${prediction.probabilities.OVER * 100}%; background-color: #0ea5e9;"></div>
+                                            <div class="probability-fill" style="width: ${prediction.probabilities.OVER * 100}%; background-color: ${getThemeColors().secondary};"></div>
                                         </div>
                                     </div>
                                     <div class="mt-2">
@@ -1852,7 +1935,7 @@
                                             <span>${(prediction.probabilities.UNDER * 100).toFixed(1)}%</span>
                                         </div>
                                         <div class="probability-bar">
-                                            <div class="probability-fill" style="width: ${prediction.probabilities.UNDER * 100}%; background-color: #64748b;"></div>
+                                            <div class="probability-fill" style="width: ${prediction.probabilities.UNDER * 100}%; background-color: ${getThemeColors().muted};"></div>
                                         </div>
                                     </div>
                                 </div>
@@ -1961,8 +2044,9 @@
                 
                 // Add xG-based insights if available
                 if (xgData && xgData.available) {
-                    html += '<div class="analysis-section mb-3" style="border: 2px solid #6366f1; background-color: #f0f4ff;">';
-                    html += '<div class="analysis-title" style="color: #6366f1;"><i class="fas fa-chart-line me-2"></i>xG Analysis <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Statistical predictions based on Expected Goals (xG). Considers: team attacking strength (xGF), defensive strength (xGA). Source: FBref via soccerdata" style="cursor: help; font-size: 0.85em;"></i></div>';
+                    const themeColors = getThemeColors();
+                    html += `<div class="analysis-section mb-3" style="border: 2px solid ${themeColors.xgAnalysisBorder}; background-color: ${themeColors.xgAnalysisBg};">`;
+                    html += `<div class="analysis-title" style="color: ${themeColors.xgAnalysisText};"><i class="fas fa-chart-line me-2"></i>xG Analysis <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Statistical predictions based on Expected Goals (xG). Considers: team attacking strength (xGF), defensive strength (xGA). Source: FBref via soccerdata" style="cursor: help; font-size: 0.85em;"></i></div>`;
                     
                     html += `
                         <p class="mb-2">
