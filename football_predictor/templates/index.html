@@ -26,8 +26,8 @@
         }
         
         body.dark-theme {
-            --primary-color: #3b82f6;
-            --secondary-color: #06b6d4;
+            --primary-color: #6366f1;
+            --secondary-color: #22d3ee;
             --accent-color: #f59e0b;
             --background-color: #0f172a;
             --card-bg: #1e293b;
@@ -93,8 +93,8 @@
         }
         
         body.dark-theme .btn-primary:hover {
-            background-color: #2563eb;
-            border-color: #2563eb;
+            background-color: #4f46e5;
+            border-color: #4f46e5;
         }
         
         .btn-outline-primary {
@@ -160,12 +160,12 @@
         }
         
         .match-card.safe-bet-match {
-            border: 2px solid #3b82f6;
+            border: 2px solid #6366f1;
             background: linear-gradient(135deg, #eff6ff 0%, var(--card-bg) 100%);
         }
         
         body.dark-theme .match-card.safe-bet-match {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.15) 0%, var(--card-bg) 100%);
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, var(--card-bg) 100%);
         }
         
         .match-card.safe-bet-match::after {
@@ -173,7 +173,7 @@
             position: absolute;
             top: -10px;
             right: 10px;
-            background: #3b82f6;
+            background: #6366f1;
             color: white;
             padding: 2px 10px;
             border-radius: 12px;
@@ -585,8 +585,8 @@
         function getThemeColors() {
             const dark = isDarkTheme();
             return {
-                primary: dark ? '#3b82f6' : '#1e3a8a',
-                secondary: dark ? '#06b6d4' : '#0ea5e9',
+                primary: dark ? '#6366f1' : '#1e3a8a',
+                secondary: dark ? '#22d3ee' : '#0ea5e9',
                 muted: dark ? '#94a3b8' : '#64748b',
                 xgFor: '#28a745',  // Keep green for xGF
                 xgAgainst: '#dc3545',  // Keep red for xGA
@@ -595,9 +595,9 @@
                 lossRed: '#dc3545',
                 chartGrid: dark ? 'rgba(148, 163, 184, 0.1)' : 'rgba(0, 0, 0, 0.05)',
                 chartText: dark ? '#94a3b8' : '#64748b',
-                infoBoxBg: dark ? 'rgba(59, 130, 246, 0.15)' : '#e7f3ff',
-                infoBoxBorder: dark ? 'rgba(59, 130, 246, 0.3)' : '#b3d9ff',
-                infoBoxIcon: dark ? '#3b82f6' : '#0066cc',
+                infoBoxBg: dark ? 'rgba(99, 102, 241, 0.15)' : '#e7f3ff',
+                infoBoxBorder: dark ? 'rgba(99, 102, 241, 0.3)' : '#b3d9ff',
+                infoBoxIcon: dark ? '#6366f1' : '#0066cc',
                 xgAnalysisBg: dark ? 'rgba(99, 102, 241, 0.15)' : '#f0f4ff',
                 xgAnalysisBorder: dark ? 'rgba(99, 102, 241, 0.3)' : '#6366f1',
                 xgAnalysisText: dark ? '#818cf8' : '#6366f1'
