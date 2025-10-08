@@ -215,7 +215,7 @@ def search():
         print(f"Error in search: {e}")
         return jsonify({"error": f"Search failed: {str(e)}"}), 500
 
-@app.route("/match/<int:match_id>", methods=["GET"])
+@app.route("/match/<match_id>", methods=["GET"])
 def get_match(match_id):
     """Get detailed information about a specific match"""
     try:
@@ -421,7 +421,7 @@ def fuzzy_team_match(team1, team2):
     
     return False
 
-@app.route("/match/<int:match_id>/context", methods=["GET"])
+@app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
     """Get match context including standings and form"""
     try:
