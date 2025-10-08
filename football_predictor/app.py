@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from football_data_api import get_competitions, get_upcoming_matches, get_match_details, RateLimitExceededError
 from odds_api_client import get_upcoming_matches_with_odds, OddsAPIError, LEAGUE_CODE_MAPPING
 from odds_calculator import calculate_predictions_from_odds
+from xg_data_fetcher import get_match_xg_prediction
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -310,6 +311,43 @@ def get_match_totals(event_id):
     except Exception as e:
         print(f"Error fetching totals for {event_id}: {e}")
         return jsonify({"error": f"Failed to fetch totals: {str(e)}"}), 500
+
+@app.route("/match/<event_id>/xg", methods=["GET"])
+def get_match_xg(event_id):
+    """Get xG (Expected Goals) analysis for a specific match on-demand"""
+    try:
+        home_team = request.args.get("home_team")
+        away_team = request.args.get("away_team")
+        league_code = request.args.get("league")
+        
+        if not home_team or not away_team:
+            return jsonify({"error": "home_team and away_team parameters required"}), 400
+        
+        if not league_code:
+            return jsonify({"error": "league parameter required"}), 400
+        
+        # Get xG prediction for the match
+        xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
+        
+        if not xg_prediction.get('available'):
+            return jsonify({
+                "xg": None,
+                "error": xg_prediction.get('error', 'xG data not available'),
+                "source": "FBref via soccerdata"
+            }), 200
+        
+        return jsonify({
+            "xg": xg_prediction,
+            "source": "FBref via soccerdata"
+        })
+        
+    except Exception as e:
+        print(f"Error fetching xG for {event_id}: {e}")
+        return jsonify({
+            "xg": None,
+            "error": f"Failed to fetch xG data: {str(e)}",
+            "source": "FBref via soccerdata"
+        }), 200
 
 def normalize_team_name(name):
     """Normalize team name for better matching"""
