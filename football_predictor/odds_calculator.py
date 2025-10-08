@@ -138,24 +138,36 @@ def calculate_totals_from_odds(odds_data):
     predictions = []
     common_lines = [1.5, 2.5, 3.5]
     
-    for line, data in sorted(totals_by_line.items()):
-        if line not in common_lines:
-            continue
-            
-        if data['over'] and data['under']:
-            avg_over = sum(data['over']) / len(data['over'])
-            avg_under = sum(data['under']) / len(data['under'])
+    # Special handling for 2.5: combine with 2.25 and 2.75 for enhanced prediction
+    if 2.5 in totals_by_line or 2.25 in totals_by_line or 2.75 in totals_by_line:
+        combined_over = []
+        combined_under = []
+        combined_over_odds = []
+        combined_under_odds = []
+        lines_used = []
+        
+        for adjacent_line in [2.25, 2.5, 2.75]:
+            if adjacent_line in totals_by_line:
+                lines_used.append(adjacent_line)
+                combined_over.extend(totals_by_line[adjacent_line]['over'])
+                combined_under.extend(totals_by_line[adjacent_line]['under'])
+                combined_over_odds.extend(totals_by_line[adjacent_line]['over_odds'])
+                combined_under_odds.extend(totals_by_line[adjacent_line]['under_odds'])
+        
+        if combined_over and combined_under:
+            avg_over = sum(combined_over) / len(combined_over)
+            avg_under = sum(combined_under) / len(combined_under)
             
             total = avg_over + avg_under
             if total > 0:
                 avg_over /= total
                 avg_under /= total
             
-            best_over = max(data['over_odds'], key=lambda x: x['price']) if data['over_odds'] else None
-            best_under = max(data['under_odds'], key=lambda x: x['price']) if data['under_odds'] else None
+            best_over = max(combined_over_odds, key=lambda x: x['price']) if combined_over_odds else None
+            best_under = max(combined_under_odds, key=lambda x: x['price']) if combined_under_odds else None
             
             predictions.append({
-                "line": line,
+                "line": 2.5,
                 "probabilities": {
                     "over": round(avg_over, 4),
                     "under": round(avg_under, 4)
@@ -166,8 +178,41 @@ def calculate_totals_from_odds(odds_data):
                     "over": best_over,
                     "under": best_under
                 },
-                "bookmaker_count": max(len(data['over']), len(data['under']))
+                "bookmaker_count": max(len(combined_over), len(combined_under)),
+                "enhanced": len(lines_used) > 1,
+                "lines_used": lines_used
             })
+    
+    # Handle 1.5 and 3.5 normally
+    for line in [1.5, 3.5]:
+        if line in totals_by_line:
+            data = totals_by_line[line]
+            if data['over'] and data['under']:
+                avg_over = sum(data['over']) / len(data['over'])
+                avg_under = sum(data['under']) / len(data['under'])
+                
+                total = avg_over + avg_under
+                if total > 0:
+                    avg_over /= total
+                    avg_under /= total
+                
+                best_over = max(data['over_odds'], key=lambda x: x['price']) if data['over_odds'] else None
+                best_under = max(data['under_odds'], key=lambda x: x['price']) if data['under_odds'] else None
+                
+                predictions.append({
+                    "line": line,
+                    "probabilities": {
+                        "over": round(avg_over, 4),
+                        "under": round(avg_under, 4)
+                    },
+                    "prediction": "OVER" if avg_over > avg_under else "UNDER",
+                    "confidence": round(max(avg_over, avg_under) * 100, 1),
+                    "best_odds": {
+                        "over": best_over,
+                        "under": best_under
+                    },
+                    "bookmaker_count": max(len(data['over']), len(data['under']))
+                })
     
     return {
         "predictions": predictions,

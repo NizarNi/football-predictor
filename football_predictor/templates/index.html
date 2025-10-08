@@ -101,6 +101,24 @@
             font-weight: 600;
         }
         
+        .match-card.arbitrage-match {
+            border: 2px solid #10b981;
+            background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%);
+        }
+        
+        .match-card.arbitrage-match::after {
+            content: "💰 ARBITRAGE";
+            position: absolute;
+            top: -10px;
+            left: 10px;
+            background: #10b981;
+            color: white;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        
         .match-card {
             position: relative;
         }
@@ -220,7 +238,7 @@
         
         .autocomplete-dropdown {
             position: absolute;
-            z-index: 1000;
+            z-index: 9999;
             background: white;
             border: 1px solid #ddd;
             border-radius: 4px;
@@ -650,11 +668,32 @@
                 });
             }
             
-            function displayMatches(matches) {
+            function displayMatches(matches, filterArbitrage = false) {
                 if (!matches || matches.length === 0) {
                     matchesList.innerHTML = `<p class="text-center text-muted">No matches found</p>`;
                     return;
                 }
+                
+                // Store full matches data globally (never overwrite with filtered)
+                if (!window.currentMatches || !filterArbitrage) {
+                    window.currentMatches = matches;
+                }
+                
+                // Filter for arbitrage if requested
+                let filteredMatches = matches;
+                if (filterArbitrage) {
+                    filteredMatches = matches.filter(match => 
+                        match.predictions && 
+                        match.predictions.arbitrage && 
+                        match.predictions.arbitrage.is_arbitrage
+                    );
+                }
+                
+                const arbitrageCount = matches.filter(match => 
+                    match.predictions && 
+                    match.predictions.arbitrage && 
+                    match.predictions.arbitrage.is_arbitrage
+                ).length;
                 
                 const popularTeams = [
                     'Bayern München', 'Paris Saint-Germain', 'Arsenal', 'Real Madrid', 'Liverpool FC',
@@ -669,17 +708,46 @@
                     'FK Red Star Belgrade', 'Brentford FC', 'Bologna', 'Athletic Bilbao', 'Manchester United'
                 ];
                 
-                let html = '';
-                matches.forEach((match, index) => {
+                // Add filter UI
+                let filterHtml = `
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="arbitrage-filter" ${filterArbitrage ? 'checked' : ''} onchange="toggleArbitrageFilter(this.checked)">
+                            <label class="form-check-label" for="arbitrage-filter">
+                                💰 Show only arbitrage opportunities
+                            </label>
+                        </div>
+                        <small class="text-muted">
+                            ${filterArbitrage ? 
+                                `Showing ${filteredMatches.length} of ${matches.length} matches` : 
+                                `${arbitrageCount} arbitrage ${arbitrageCount === 1 ? 'opportunity' : 'opportunities'} found`
+                            }
+                        </small>
+                    </div>
+                `;
+                
+                let html = filterHtml;
+                filteredMatches.forEach((match, filteredIndex) => {
                     const homeTeam = match.home_team.toLowerCase();
                     const awayTeam = match.away_team.toLowerCase();
                     const isPopular = popularTeams.some(team => 
                         homeTeam.includes(team.toLowerCase()) || awayTeam.includes(team.toLowerCase())
                     );
+                    const hasArbitrage = match.predictions && 
+                                       match.predictions.arbitrage && 
+                                       match.predictions.arbitrage.is_arbitrage;
                     const popularClass = isPopular ? ' popular-match' : '';
+                    const arbitrageClass = hasArbitrage ? ' arbitrage-match' : '';
+                    
+                    // Find the original index in the full matches array
+                    const originalIndex = matches.findIndex(m => 
+                        m.home_team === match.home_team && 
+                        m.away_team === match.away_team && 
+                        m.commence_time === match.commence_time
+                    );
                     
                     html += `
-                        <div class="card match-card mb-2${popularClass}" data-match-index="${index}">
+                        <div class="card match-card mb-2${popularClass}${arbitrageClass}" data-match-index="${originalIndex}">
                             <div class="card-body p-3">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
@@ -697,9 +765,6 @@
                 
                 matchesList.innerHTML = html;
                 
-                // Store matches data globally
-                window.currentMatches = matches;
-                
                 // Add click event to match cards
                 document.querySelectorAll('.match-card').forEach(card => {
                     card.addEventListener('click', function() {
@@ -708,6 +773,15 @@
                     });
                 });
             }
+            
+            function toggleArbitrageFilter(isChecked) {
+                if (window.currentMatches) {
+                    displayMatches(window.currentMatches, isChecked);
+                }
+            }
+            
+            // Make function available globally for inline onclick handler
+            window.toggleArbitrageFilter = toggleArbitrageFilter;
             
             function displayMatchPredictions(match) {
                 // Show prediction container
@@ -833,6 +907,10 @@
                     const safetyClass = prediction.confidence >= 60 ? 'safe-bet' : 'risky-bet';
                     const safetyText = prediction.confidence >= 60 ? 'Confident' : 'Lower Confidence';
                     
+                    const enhancedInfo = prediction.enhanced && prediction.lines_used ? 
+                        `<p class="text-info small mt-2"><i class="fas fa-info-circle me-1"></i>Enhanced calculation using ${prediction.lines_used.join(', ')} goal lines from ${prediction.bookmaker_count} bookmakers</p>` : 
+                        '';
+                    
                     html += `
                         <div class="col-md-6 mb-3">
                             <div class="card">
@@ -868,7 +946,7 @@
                                         </div>
                                         ${prediction.best_odds.under ? `<small class="text-muted">Best odds: ${prediction.best_odds.under.price.toFixed(2)} (${prediction.best_odds.under.bookmaker})</small>` : ''}
                                     </div>
-                                    <p class="text-muted small mt-2">${prediction.bookmaker_count} bookmakers</p>
+                                    ${enhancedInfo || `<p class="text-muted small mt-2">${prediction.bookmaker_count} bookmakers</p>`}
                                 </div>
                             </div>
                         </div>
@@ -891,10 +969,20 @@
                     'UEFA Champions League': 'CL',
                     'EPL': 'PL',
                     'Premier League': 'PL',
+                    'English Premier League': 'PL',
                     'La Liga': 'PD',
+                    'Spanish La Liga': 'PD',
+                    'Spain La Liga': 'PD',
                     'Bundesliga': 'BL1',
+                    'German Bundesliga': 'BL1',
+                    'Germany Bundesliga': 'BL1',
                     'Serie A': 'SA',
+                    'Italian Serie A': 'SA',
+                    'Italy Serie A': 'SA',
                     'Ligue 1': 'FL1',
+                    'French Ligue 1': 'FL1',
+                    'France Ligue 1': 'FL1',
+                    'Ligue 1 - France': 'FL1',
                     'UEFA Europa League': 'EL'
                 };
                 

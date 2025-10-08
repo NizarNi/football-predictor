@@ -74,11 +74,7 @@ def upcoming():
                         "1x2": {
                             "prediction": predictions["prediction"],
                             "confidence": predictions["confidence"],
-                            "probabilities": {
-                                "HOME_WIN": predictions["probabilities"]["home_win"],
-                                "DRAW": predictions["probabilities"]["draw"],
-                                "AWAY_WIN": predictions["probabilities"]["away_win"]
-                            },
+                            "probabilities": predictions["probabilities"],
                             "is_safe_bet": predictions["confidence"] >= 60,
                             "bookmaker_count": predictions["bookmaker_count"]
                         },
@@ -155,39 +151,64 @@ def search():
         return jsonify({"error": "Please provide a team name"}), 400
     
     try:
-        # Fetch matches from all leagues
-        all_upcoming_matches = []
+        print(f"🔍 Searching for team: {team_name}")
         
-        for league in SUPPORTED_LEAGUES:
-            try:
-                matches = get_upcoming_matches(league, next_n_days=30)
-                if matches:
-                    all_upcoming_matches.extend(matches)
-            except RateLimitExceededError as api_e:
-                print(f"Rate limit exceeded for {league}: {api_e}")
-                continue
-            except Exception as api_e:
-                print(f"Error fetching matches for {league}: {api_e}")
-        
-        # Filter matches by team name
-        team_name_lower = team_name.lower()
-        filtered_matches = [
-            match for match in all_upcoming_matches
-            if team_name_lower in match.get("home_team", "").lower() or 
-               team_name_lower in match.get("away_team", "").lower()
-        ]
-        
-        if not filtered_matches:
-            return jsonify({"error": f"No matches found for team '{team_name}'"}), 404
-        
-        # Sort by date
-        filtered_matches = sorted(filtered_matches, key=lambda x: x["timestamp"])
-        
-        # Add datetime formatting for frontend
-        for match in filtered_matches:
-            match["datetime"] = datetime.fromtimestamp(match["timestamp"]).strftime("%Y-%m-%d %H:%M")
-        
-        return jsonify({"matches": filtered_matches})
+        # Use The Odds API to fetch matches from all leagues
+        try:
+            odds_matches = get_upcoming_matches_with_odds(
+                league_codes=list(LEAGUE_CODE_MAPPING.keys()), 
+                next_n_days=30
+            )
+            
+            if not odds_matches:
+                # No matches from Odds API - return empty result
+                print(f"ℹ️ No matches available from The Odds API")
+                return jsonify({"error": f"No matches found for team '{team_name}' - try again later"}), 404
+            
+            # Filter matches by team name
+            team_name_lower = team_name.lower()
+            filtered_matches = [
+                match for match in odds_matches
+                if team_name_lower in match.get("home_team", "").lower() or 
+                   team_name_lower in match.get("away_team", "").lower()
+            ]
+            
+            if not filtered_matches:
+                return jsonify({"error": f"No matches found for team '{team_name}'"}), 404
+            
+            # Calculate predictions from odds for each match
+            for match in filtered_matches:
+                predictions = calculate_predictions_from_odds(match)
+                
+                # Format match data
+                match["datetime"] = match["commence_time"]
+                match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
+                
+                # Add predictions in the expected format
+                match["predictions"] = {
+                    "1x2": {
+                        "prediction": predictions["prediction"],
+                        "confidence": predictions["confidence"],
+                        "probabilities": predictions["probabilities"],
+                        "is_safe_bet": predictions["confidence"] >= 60,
+                        "bookmaker_count": predictions["bookmaker_count"]
+                    },
+                    "best_odds": predictions["best_odds"],
+                    "arbitrage": predictions["arbitrage"]
+                }
+            
+            # Sort by date
+            filtered_matches = sorted(filtered_matches, key=lambda x: x["timestamp"])
+            
+            print(f"✅ Found {len(filtered_matches)} matches for '{team_name}' from The Odds API")
+            return jsonify({
+                "matches": filtered_matches,
+                "source": "The Odds API"
+            })
+                
+        except Exception as odds_e:
+            print(f"⚠️ The Odds API error during search: {odds_e}")
+            return jsonify({"error": "Search service temporarily unavailable"}), 503
         
     except Exception as e:
         print(f"Error in search: {e}")
