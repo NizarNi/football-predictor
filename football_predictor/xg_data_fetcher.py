@@ -3,6 +3,7 @@ xG Data Fetcher Module
 Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 """
 import soccerdata as sd
+import pandas as pd
 from datetime import datetime, timedelta
 import json
 import os
@@ -381,6 +382,182 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
             'confidence': confidence
         }
     }
+
+
+def parse_match_result(score, is_home_team):
+    """
+    Parse match score to determine result (W/D/L)
+    
+    Args:
+        score: Score string (e.g., "2-1", "1-1")
+        is_home_team: Boolean indicating if team is playing at home
+    
+    Returns:
+        str: 'W', 'D', or 'L'
+    """
+    if not score or pd.isna(score) or score == '':
+        return None
+    
+    try:
+        # Handle both hyphen (-) and en-dash (–) in scores
+        score_str = str(score).replace('–', '-')
+        parts = score_str.split('-')
+        if len(parts) != 2:
+            return None
+            
+        home_goals = int(parts[0])
+        away_goals = int(parts[1])
+        
+        if is_home_team:
+            if home_goals > away_goals:
+                return 'W'
+            elif home_goals == away_goals:
+                return 'D'
+            else:
+                return 'L'
+        else:
+            if away_goals > home_goals:
+                return 'W'
+            elif home_goals == away_goals:
+                return 'D'
+            else:
+                return 'L'
+    except:
+        return None
+
+
+def fetch_team_match_logs(team_name, league_code, season=None):
+    """
+    Fetch match-by-match logs for a team including xG and results
+    
+    Args:
+        team_name: Team name to fetch logs for
+        league_code: League code (e.g., 'PL', 'PD')
+        season: Season year (optional)
+    
+    Returns:
+        list: List of match dictionaries with xG, results, and form
+    """
+    # Check if league is supported
+    if league_code not in LEAGUE_MAPPING:
+        print(f"⚠️  League {league_code} not supported for match logs")
+        return []
+    
+    league_name = LEAGUE_MAPPING[league_code]
+    
+    # Determine season
+    if not season:
+        season = get_current_season()
+    
+    try:
+        # Fetch schedule data
+        print(f"📊 Fetching match logs for {team_name} in {league_name} (season {season})...")
+        fbref = sd.FBref(league_name, season)
+        schedule = fbref.read_schedule()
+        
+        # Normalize team name for matching
+        normalized_name = normalize_team_name_for_fbref(team_name)
+        
+        # Get home and away matches
+        home_matches = schedule[schedule['home_team'] == normalized_name].copy()
+        away_matches = schedule[schedule['away_team'] == normalized_name].copy()
+        
+        # If no matches found with normalized name, try original name
+        if len(home_matches) == 0 and len(away_matches) == 0:
+            home_matches = schedule[schedule['home_team'] == team_name].copy()
+            away_matches = schedule[schedule['away_team'] == team_name].copy()
+        
+        # Process matches
+        matches = []
+        
+        # Process home matches
+        for idx, row in home_matches.iterrows():
+            match_data = {
+                'date': row['date'],
+                'is_home': True,
+                'opponent': row['away_team'],
+                'xg_for': float(row['home_xg']) if not pd.isna(row['home_xg']) else 0,
+                'xg_against': float(row['away_xg']) if not pd.isna(row['away_xg']) else 0,
+                'result': parse_match_result(row['score'], True)
+            }
+            if match_data['result']:  # Only include completed matches
+                matches.append(match_data)
+        
+        # Process away matches
+        for idx, row in away_matches.iterrows():
+            match_data = {
+                'date': row['date'],
+                'is_home': False,
+                'opponent': row['home_team'],
+                'xg_for': float(row['away_xg']) if not pd.isna(row['away_xg']) else 0,
+                'xg_against': float(row['home_xg']) if not pd.isna(row['home_xg']) else 0,
+                'result': parse_match_result(row['score'], False)
+            }
+            if match_data['result']:  # Only include completed matches
+                matches.append(match_data)
+        
+        # Sort by date (most recent first)
+        matches.sort(key=lambda x: x['date'], reverse=True)
+        
+        print(f"✅ Found {len(matches)} completed matches for {team_name}")
+        return matches
+        
+    except Exception as e:
+        print(f"❌ Error fetching match logs for {team_name}: {e}")
+        return []
+
+
+def calculate_rolling_averages(matches, window=5):
+    """
+    Calculate rolling averages for xG metrics
+    
+    Args:
+        matches: List of match dictionaries (sorted by date, most recent first)
+        window: Number of matches for rolling average (default 5)
+    
+    Returns:
+        dict: Rolling averages for xGF and xGA
+    """
+    if len(matches) < window:
+        window = len(matches)
+    
+    if window == 0:
+        return {
+            'xg_for_rolling': 0,
+            'xg_against_rolling': 0,
+            'matches_count': 0
+        }
+    
+    # Get last N matches
+    recent_matches = matches[:window]
+    
+    # Calculate averages
+    xg_for_total = sum(m['xg_for'] for m in recent_matches)
+    xg_against_total = sum(m['xg_against'] for m in recent_matches)
+    
+    return {
+        'xg_for_rolling': round(xg_for_total / window, 2),
+        'xg_against_rolling': round(xg_against_total / window, 2),
+        'matches_count': window
+    }
+
+
+def extract_last_5_results(matches, limit=5):
+    """
+    Extract last N match results as form string
+    
+    Args:
+        matches: List of match dictionaries (sorted by date, most recent first)
+        limit: Number of results to extract (default 5)
+    
+    Returns:
+        str: Form string (e.g., 'WLDWW')
+    """
+    if len(matches) < limit:
+        limit = len(matches)
+    
+    form = ''.join([m['result'] for m in matches[:limit] if m['result']])
+    return form
 
 
 # Test function
