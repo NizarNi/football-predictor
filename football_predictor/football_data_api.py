@@ -133,6 +133,35 @@ def get_match_details(match_id):
         return match_info
     return None
 
+def get_league_standings(competition_id):
+    """
+    Get current league standings for a competition.
+    competition_id can be either a numeric ID or a code (e.g., 'PL')
+    """
+    data = _make_api_request(f"competitions/{competition_id}/standings")
+    
+    if data and "standings" in data:
+        standings_list = []
+        for standing in data["standings"]:
+            if standing["type"] == "TOTAL":
+                for team in standing["table"]:
+                    team_info = {
+                        "position": team["position"],
+                        "name": team["team"]["name"],
+                        "points": team["points"],
+                        "played": team["playedGames"],
+                        "won": team["won"],
+                        "draw": team["draw"],
+                        "lost": team["lost"],
+                        "goals_for": team["goalsFor"],
+                        "goals_against": team["goalsAgainst"],
+                        "goal_difference": team["goalDifference"],
+                        "form": team.get("form", "")
+                    }
+                    standings_list.append(team_info)
+                return standings_list
+    return []
+
 def get_flashscore_upcoming_matches(next_n_days=7):
     print("Flashscore integration is temporarily commented out due to browser dependency.")
     return []

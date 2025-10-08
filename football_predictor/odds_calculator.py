@@ -102,6 +102,73 @@ def detect_arbitrage(bookmakers, home_team, away_team):
     
     return None
 
+def calculate_totals_from_odds(odds_data):
+    """Calculate over/under probabilities from totals market"""
+    bookmakers = odds_data.get('bookmakers', [])
+    
+    if not bookmakers:
+        return {
+            "predictions": [],
+            "bookmaker_count": 0
+        }
+    
+    totals_by_line = {}
+    
+    for bookmaker in bookmakers:
+        for market in bookmaker.get('markets', []):
+            if market['key'] == 'totals':
+                outcomes = market.get('outcomes', [])
+                
+                for outcome in outcomes:
+                    line = outcome.get('point', 2.5)
+                    name = outcome['name']
+                    price = outcome['price']
+                    prob = decimal_to_probability(price)
+                    
+                    if line not in totals_by_line:
+                        totals_by_line[line] = {'over': [], 'under': [], 'over_odds': [], 'under_odds': []}
+                    
+                    if name.lower() == 'over':
+                        totals_by_line[line]['over'].append(prob)
+                        totals_by_line[line]['over_odds'].append({'price': price, 'bookmaker': bookmaker['title']})
+                    elif name.lower() == 'under':
+                        totals_by_line[line]['under'].append(prob)
+                        totals_by_line[line]['under_odds'].append({'price': price, 'bookmaker': bookmaker['title']})
+    
+    predictions = []
+    for line, data in sorted(totals_by_line.items()):
+        if data['over'] and data['under']:
+            avg_over = sum(data['over']) / len(data['over'])
+            avg_under = sum(data['under']) / len(data['under'])
+            
+            total = avg_over + avg_under
+            if total > 0:
+                avg_over /= total
+                avg_under /= total
+            
+            best_over = max(data['over_odds'], key=lambda x: x['price']) if data['over_odds'] else None
+            best_under = max(data['under_odds'], key=lambda x: x['price']) if data['under_odds'] else None
+            
+            predictions.append({
+                "line": line,
+                "probabilities": {
+                    "over": round(avg_over, 4),
+                    "under": round(avg_under, 4)
+                },
+                "prediction": "OVER" if avg_over > avg_under else "UNDER",
+                "confidence": round(max(avg_over, avg_under) * 100, 1),
+                "best_odds": {
+                    "over": best_over,
+                    "under": best_under
+                },
+                "bookmaker_count": max(len(data['over']), len(data['under']))
+            })
+    
+    return {
+        "predictions": predictions,
+        "bookmaker_count": len(bookmakers)
+    }
+
 def calculate_predictions_from_odds(match_data):
     bookmakers = match_data.get('bookmakers', [])
     home_team = match_data.get('home_team', '')

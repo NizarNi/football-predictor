@@ -351,15 +351,31 @@
                             <div class="row">
                                 <div class="col-12 mb-3">
                                     <div class="card">
+                                        <div class="card-header bg-secondary text-white">
+                                            <i class="fas fa-chart-line me-2"></i> Match Context
+                                        </div>
+                                        <div class="card-body">
+                                            <div id="match-context">
+                                                <p class="text-muted">Select a match to view context</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <div class="card">
                                         <div class="card-header bg-primary text-white">
                                             <i class="fas fa-exchange-alt me-2"></i> Over/Under Predictions
                                         </div>
                                         <div class="card-body">
                                             <div id="prediction-over-under">
-                                                <div class="loading">
-                                                    <div class="spinner-border text-primary" role="status">
-                                                        <span class="visually-hidden">Loading...</span>
-                                                    </div>
+                                                <div class="text-center">
+                                                    <button id="load-over-under-btn" class="btn btn-primary">
+                                                        <i class="fas fa-chart-bar me-2"></i> Show Over/Under Odds
+                                                    </button>
+                                                    <p class="text-muted mt-2 small">Click to fetch detailed over/under predictions from bookmakers</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -414,6 +430,9 @@
             const predictionExactScore = document.getElementById('prediction-exact-score');
             const predictionOverUnder = document.getElementById('prediction-over-under');
             const bettingAnalysis = document.getElementById('betting-analysis');
+            const matchContext = document.getElementById('match-context');
+            
+            let currentMatchData = null;
             
             // Event listeners
             searchBtn.addEventListener('click', searchTeam);
@@ -553,16 +572,22 @@
                 // Show prediction container
                 predictionContainer.style.display = 'block';
                 
+                // Store current match data
+                currentMatchData = match;
+                
                 // Update match details
                 matchTeams.textContent = `${match.home_team} vs ${match.away_team}`;
                 matchLeague.textContent = match.league || 'Unknown League';
                 matchDate.textContent = match.datetime || 'TBD';
                 
+                // Load match context
+                loadMatchContext(match);
+                
                 // Check if predictions exist (Odds API matches)
                 if (match.predictions && match.predictions['1x2']) {
                     display1X2Prediction(match.predictions['1x2']);
                     displayExactScorePrediction({note: 'Not available for odds-based predictions'});
-                    displayOverUnderPredictions({note: 'Not available for odds-based predictions'});
+                    resetOverUnderButton();
                     displayOddsBasedAnalysis(match);
                 } else {
                     // Fallback to old method for football-data.org matches
@@ -573,6 +598,174 @@
                     
                     getMatchDetails(match.id);
                 }
+            }
+            
+            function resetOverUnderButton() {
+                predictionOverUnder.innerHTML = `
+                    <div class="text-center">
+                        <button id="load-over-under-btn" class="btn btn-primary">
+                            <i class="fas fa-chart-bar me-2"></i> Show Over/Under Odds
+                        </button>
+                        <p class="text-muted mt-2 small">Click to fetch detailed over/under predictions from bookmakers</p>
+                    </div>
+                `;
+                
+                document.getElementById('load-over-under-btn').addEventListener('click', loadOverUnderPredictions);
+            }
+            
+            function loadOverUnderPredictions() {
+                if (!currentMatchData) return;
+                
+                predictionOverUnder.innerHTML = loadingSpinner();
+                
+                const eventId = currentMatchData.event_id;
+                const sportKey = currentMatchData.sport_key;
+                
+                if (!eventId || !sportKey) {
+                    predictionOverUnder.innerHTML = '<p class="text-danger">Unable to load over/under odds for this match</p>';
+                    return;
+                }
+                
+                fetch(`/match/${eventId}/totals?sport_key=${sportKey}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        predictionOverUnder.innerHTML = `<p class="text-danger">${data.error}</p>`;
+                        return;
+                    }
+                    
+                    displayTotalsData(data.totals);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    predictionOverUnder.innerHTML = '<p class="text-danger">Failed to load over/under odds</p>';
+                });
+            }
+            
+            function displayTotalsData(totalsData) {
+                if (!totalsData || !totalsData.predictions || totalsData.predictions.length === 0) {
+                    predictionOverUnder.innerHTML = '<p class="text-muted">No over/under odds available for this match</p>';
+                    return;
+                }
+                
+                let html = `<div class="row">`;
+                
+                totalsData.predictions.forEach(prediction => {
+                    const safetyClass = prediction.confidence >= 60 ? 'safe-bet' : 'risky-bet';
+                    const safetyText = prediction.confidence >= 60 ? 'Confident' : 'Lower Confidence';
+                    
+                    html += `
+                        <div class="col-md-6 mb-3">
+                            <div class="card">
+                                <div class="card-header bg-secondary text-white">
+                                    Over/Under ${prediction.line} Goals
+                                </div>
+                                <div class="card-body">
+                                    <div class="text-center mb-3">
+                                        <span class="prediction-badge ${safetyClass}">
+                                            ${prediction.prediction} (${prediction.confidence}%)
+                                            <i class="fas ${prediction.confidence >= 60 ? 'fa-shield-alt' : 'fa-exclamation-triangle'} ms-1"></i>
+                                            ${safetyText}
+                                        </span>
+                                    </div>
+                                    
+                                    <div class="mt-2">
+                                        <div class="d-flex justify-content-between">
+                                            <span>Over ${prediction.line}:</span>
+                                            <span>${(prediction.probabilities.over * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div class="probability-bar">
+                                            <div class="probability-fill" style="width: ${prediction.probabilities.over * 100}%; background-color: #0ea5e9;"></div>
+                                        </div>
+                                        ${prediction.best_odds.over ? `<small class="text-muted">Best odds: ${prediction.best_odds.over.price.toFixed(2)} (${prediction.best_odds.over.bookmaker})</small>` : ''}
+                                    </div>
+                                    <div class="mt-2">
+                                        <div class="d-flex justify-content-between">
+                                            <span>Under ${prediction.line}:</span>
+                                            <span>${(prediction.probabilities.under * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div class="probability-bar">
+                                            <div class="probability-fill" style="width: ${prediction.probabilities.under * 100}%; background-color: #64748b;"></div>
+                                        </div>
+                                        ${prediction.best_odds.under ? `<small class="text-muted">Best odds: ${prediction.best_odds.under.price.toFixed(2)} (${prediction.best_odds.under.bookmaker})</small>` : ''}
+                                    </div>
+                                    <p class="text-muted small mt-2">${prediction.bookmaker_count} bookmakers</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += `</div>`;
+                predictionOverUnder.innerHTML = html;
+            }
+            
+            function loadMatchContext(match) {
+                if (!match || !match.league) {
+                    matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
+                    return;
+                }
+                
+                matchContext.innerHTML = loadingSpinner();
+                
+                const leagueMap = {
+                    'UEFA Champions League': 'CL',
+                    'EPL': 'PL',
+                    'Premier League': 'PL',
+                    'La Liga': 'PD',
+                    'Bundesliga': 'BL1',
+                    'Serie A': 'SA',
+                    'Ligue 1': 'FL1',
+                    'UEFA Europa League': 'EL'
+                };
+                
+                const leagueCode = leagueMap[match.league] || match.league;
+                
+                fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        matchContext.innerHTML = `<p class="text-muted">${data.narrative || 'Context unavailable'}</p>`;
+                        return;
+                    }
+                    
+                    displayMatchContextData(data);
+                })
+                .catch(error => {
+                    console.error('Error loading context:', error);
+                    matchContext.innerHTML = '<p class="text-muted">Unable to load match context</p>';
+                });
+            }
+            
+            function displayMatchContextData(contextData) {
+                let html = '';
+                
+                if (contextData.narrative) {
+                    html += `<div class="alert alert-info mb-3"><i class="fas fa-info-circle me-2"></i>${contextData.narrative}</div>`;
+                }
+                
+                if (contextData.home_team && contextData.away_team) {
+                    html += `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="fw-bold">${currentMatchData.home_team}</h6>
+                                ${contextData.home_team.position ? `<p class="mb-1"><strong>Position:</strong> ${contextData.home_team.position}</p>` : ''}
+                                ${contextData.home_team.points !== null ? `<p class="mb-1"><strong>Points:</strong> ${contextData.home_team.points}</p>` : ''}
+                                ${contextData.home_team.form ? `<p class="mb-1"><strong>Form:</strong> ${contextData.home_team.form}</p>` : ''}
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="fw-bold">${currentMatchData.away_team}</h6>
+                                ${contextData.away_team.position ? `<p class="mb-1"><strong>Position:</strong> ${contextData.away_team.position}</p>` : ''}
+                                ${contextData.away_team.points !== null ? `<p class="mb-1"><strong>Points:</strong> ${contextData.away_team.points}</p>` : ''}
+                                ${contextData.away_team.form ? `<p class="mb-1"><strong>Form:</strong> ${contextData.away_team.form}</p>` : ''}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    html += `<p class="text-muted">${contextData.narrative || 'Detailed context unavailable'}</p>`;
+                }
+                
+                matchContext.innerHTML = html;
             }
             
             function getMatchDetails(matchId) {

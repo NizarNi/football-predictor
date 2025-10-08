@@ -254,6 +254,102 @@ def predict_match(match_id):
         print(f"Error predicting match {match_id}: {e}")
         return jsonify({"error": f"Failed to get predictions: {str(e)}"}), 500
 
+@app.route("/match/<event_id>/totals", methods=["GET"])
+def get_match_totals(event_id):
+    """Get over/under predictions for a specific match on-demand"""
+    try:
+        sport_key = request.args.get("sport_key")
+        if not sport_key:
+            return jsonify({"error": "sport_key parameter required"}), 400
+        
+        from odds_api_client import get_event_odds
+        from odds_calculator import calculate_totals_from_odds
+        
+        odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="totals")
+        
+        if not odds_data:
+            return jsonify({"error": "No totals odds found for this match"}), 404
+        
+        totals_predictions = calculate_totals_from_odds(odds_data)
+        
+        return jsonify({
+            "totals": totals_predictions,
+            "source": "The Odds API"
+        })
+        
+    except Exception as e:
+        print(f"Error fetching totals for {event_id}: {e}")
+        return jsonify({"error": f"Failed to fetch totals: {str(e)}"}), 500
+
+@app.route("/match/<int:match_id>/context", methods=["GET"])
+def get_match_context(match_id):
+    """Get match context including standings and form"""
+    try:
+        league_code = request.args.get("league")
+        home_team = request.args.get("home_team")
+        away_team = request.args.get("away_team")
+        
+        if not league_code:
+            return jsonify({"error": "league parameter required"}), 400
+        
+        from football_data_api import get_league_standings
+        
+        try:
+            standings = get_league_standings(league_code)
+            
+            home_data = None
+            away_data = None
+            
+            if home_team:
+                home_team_lower = home_team.lower()
+                home_data = next((team for team in standings if team['name'].lower() in home_team_lower or home_team_lower in team['name'].lower()), None)
+            
+            if away_team:
+                away_team_lower = away_team.lower()
+                away_data = next((team for team in standings if team['name'].lower() in away_team_lower or away_team_lower in team['name'].lower()), None)
+            
+            context = {
+                "home_team": {
+                    "position": home_data.get('position') if home_data else None,
+                    "points": home_data.get('points') if home_data else None,
+                    "form": home_data.get('form') if home_data else None
+                },
+                "away_team": {
+                    "position": away_data.get('position') if away_data else None,
+                    "points": away_data.get('points') if away_data else None,
+                    "form": away_data.get('form') if away_data else None
+                },
+                "narrative": generate_match_narrative(home_data, away_data) if home_data and away_data else "Match information unavailable"
+            }
+            
+            return jsonify(context)
+            
+        except Exception as e:
+            print(f"Error fetching context: {e}")
+            return jsonify({"narrative": "Match context unavailable"}), 200
+        
+    except Exception as e:
+        print(f"Error in match context: {e}")
+        return jsonify({"error": f"Failed to fetch context: {str(e)}"}), 500
+
+def generate_match_narrative(home_data, away_data):
+    """Generate a narrative description of the match importance"""
+    home_pos = home_data.get('position', 99)
+    away_pos = away_data.get('position', 99)
+    
+    if home_pos <= 2 and away_pos <= 2:
+        return "Top of the table clash between title contenders"
+    elif home_pos <= 4 and away_pos <= 4:
+        return "Champions League qualification battle"
+    elif abs(home_pos - away_pos) <= 2:
+        return "Close contest between neighboring teams in the standings"
+    elif home_pos <= 3:
+        return f"League leaders face mid-table opposition"
+    elif away_pos <= 3:
+        return f"Underdogs host league leaders"
+    else:
+        return "Mid-table encounter"
+
 @app.route("/process_data", methods=["POST"])
 def process_data():
     """Process all scraped match data"""
