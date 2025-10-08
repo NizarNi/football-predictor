@@ -362,6 +362,10 @@
                 <i class="fas fa-futbol me-2"></i>
                 Football Prediction - Safe Bet Analyzer
             </a>
+            <button id="theme-toggle" class="btn btn-outline-light btn-sm" onclick="toggleTheme()">
+                <i id="theme-icon" class="fas fa-moon"></i>
+                <span id="theme-text" class="ms-2 d-none d-md-inline">Dark Mode</span>
+            </button>
         </div>
     </nav>
 
@@ -568,6 +572,216 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Global variables for theme toggle access
+        let currentMatchData = null;
+        let currentOverUnderData = null;
+        let currentXgData = null;
+        
+        // Theme-aware color helper functions (global scope for theme toggle)
+        function isDarkTheme() {
+            return document.body.classList.contains('dark-theme');
+        }
+        
+        function getThemeColors() {
+            const dark = isDarkTheme();
+            return {
+                primary: dark ? '#3b82f6' : '#1e3a8a',
+                secondary: dark ? '#06b6d4' : '#0ea5e9',
+                muted: dark ? '#94a3b8' : '#64748b',
+                xgFor: '#28a745',  // Keep green for xGF
+                xgAgainst: '#dc3545',  // Keep red for xGA
+                winGreen: '#28a745',
+                drawGray: dark ? '#94a3b8' : '#6c757d',
+                lossRed: '#dc3545',
+                chartGrid: dark ? 'rgba(148, 163, 184, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                chartText: dark ? '#94a3b8' : '#64748b',
+                infoBoxBg: dark ? 'rgba(59, 130, 246, 0.15)' : '#e7f3ff',
+                infoBoxBorder: dark ? 'rgba(59, 130, 246, 0.3)' : '#b3d9ff',
+                infoBoxIcon: dark ? '#3b82f6' : '#0066cc',
+                xgAnalysisBg: dark ? 'rgba(99, 102, 241, 0.15)' : '#f0f4ff',
+                xgAnalysisBorder: dark ? 'rgba(99, 102, 241, 0.3)' : '#6366f1',
+                xgAnalysisText: dark ? '#818cf8' : '#6366f1'
+            };
+        }
+        
+        // Format form indicators helper (global scope for theme toggle)
+        function formatFormIndicators(formString) {
+            if (!formString) return '';
+            
+            const colors = getThemeColors();
+            const formArray = formString.split('');
+            return `<div style="display: inline-flex; gap: 2px; white-space: nowrap;">` + formArray.map(result => {
+                let bgColor = '';
+                
+                if (result === 'W') {
+                    bgColor = colors.winGreen;
+                } else if (result === 'D') {
+                    bgColor = colors.drawGray;
+                } else if (result === 'L') {
+                    bgColor = colors.lossRed;
+                }
+                
+                return `<span style="display: inline-block; width: 24px; height: 24px; background-color: ${bgColor}; color: white; text-align: center; line-height: 24px; font-size: 12px; font-weight: bold; border-radius: 3px;">${result}</span>`;
+            }).join('') + `</div>`;
+        }
+        
+        // Create xG trend chart helper (global scope for theme toggle)
+        function createXgTrendChart(canvasId, recentMatches, teamName) {
+            if (!recentMatches || recentMatches.length === 0) return null;
+            
+            const matches = [...recentMatches];
+            const colors = getThemeColors();
+            
+            const rollingWindow = 5;
+            const xgForRolling = [];
+            const xgAgainstRolling = [];
+            const labels = [];
+            
+            for (let i = 0; i < matches.length; i++) {
+                const startIdx = Math.max(0, i - rollingWindow + 1);
+                const window = matches.slice(startIdx, i + 1);
+                
+                const avgXgFor = window.reduce((sum, m) => sum + m.xg_for, 0) / window.length;
+                const avgXgAgainst = window.reduce((sum, m) => sum + m.xg_against, 0) / window.length;
+                
+                xgForRolling.push(avgXgFor);
+                xgAgainstRolling.push(avgXgAgainst);
+                
+                const vs = matches[i].is_home ? 'vs' : '@';
+                labels.push(`${vs} ${matches[i].opponent.substring(0, 10)}`);
+            }
+            
+            const ctx = document.getElementById(canvasId);
+            if (!ctx) return null;
+            
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'xG For (Rolling Avg)',
+                            data: xgForRolling,
+                            borderColor: colors.xgFor,
+                            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            borderWidth: 2
+                        },
+                        {
+                            label: 'xG Against (Rolling Avg)',
+                            data: xgAgainstRolling,
+                            borderColor: colors.xgAgainst,
+                            backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            borderWidth: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                boxWidth: 12,
+                                font: { size: 11 },
+                                color: colors.chartText
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: `${teamName} - Rolling 5-Match xG Trend`,
+                            font: { size: 12, weight: 'bold' },
+                            color: colors.chartText
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: function(tooltipItems) {
+                                    const idx = tooltipItems[0].dataIndex;
+                                    const match = matches[idx];
+                                    const vs = match.is_home ? 'vs' : '@';
+                                    const result = match.result || 'N/A';
+                                    const score = match.score || '';
+                                    return `${vs} ${match.opponent} ${score ? '(' + score + ')' : ''} - ${result}`;
+                                },
+                                label: function(context) {
+                                    const idx = context.dataIndex;
+                                    const match = matches[idx];
+                                    const rollingAvg = context.parsed.y.toFixed(2);
+                                    const actualXg = context.datasetIndex === 0 ? match.xg_for.toFixed(2) : match.xg_against.toFixed(2);
+                                    const metric = context.datasetIndex === 0 ? 'xGF' : 'xGA';
+                                    return [
+                                        `Rolling Avg: ${rollingAvg}`,
+                                        `This Match ${metric}: ${actualXg}`
+                                    ];
+                                },
+                                footer: function(tooltipItems) {
+                                    const idx = tooltipItems[0].dataIndex;
+                                    const xgFor = xgForRolling[idx];
+                                    const xgAgainst = xgAgainstRolling[idx];
+                                    if (xgFor > xgAgainst) {
+                                        return '✅ Good form (Creating > Conceding)';
+                                    } else if (xgAgainst > xgFor) {
+                                        return '❌ Struggling (Conceding > Creating)';
+                                    } else {
+                                        return '⚖️ Balanced';
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Expected Goals per Game',
+                                font: { size: 11, weight: 'bold' },
+                                color: colors.chartText
+                            },
+                            ticks: {
+                                font: { size: 10 },
+                                color: colors.chartText
+                            },
+                            grid: {
+                                color: function(context) {
+                                    if (context.tick.value === 0) {
+                                        return isDarkTheme() ? 'rgba(148, 163, 184, 0.3)' : 'rgba(0, 0, 0, 0.3)';
+                                    }
+                                    return colors.chartGrid;
+                                },
+                                lineWidth: function(context) {
+                                    if (context.tick.value === 0) {
+                                        return 2;
+                                    }
+                                    return 1;
+                                }
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                font: { size: 9 },
+                                maxRotation: 45,
+                                minRotation: 45,
+                                color: colors.chartText
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
         document.addEventListener('DOMContentLoaded', function() {
             // DOM elements
             const teamSearchInput = document.getElementById('team-search');
@@ -582,37 +796,6 @@
             const predictionOverUnder = document.getElementById('prediction-over-under');
             const bettingAnalysis = document.getElementById('betting-analysis');
             const matchContext = document.getElementById('match-context');
-            
-            let currentMatchData = null;
-            let currentOverUnderData = null;
-            let currentXgData = null;
-            
-            // Theme-aware color helper functions
-            function isDarkTheme() {
-                return document.body.classList.contains('dark-theme');
-            }
-            
-            function getThemeColors() {
-                const dark = isDarkTheme();
-                return {
-                    primary: dark ? '#3b82f6' : '#1e3a8a',
-                    secondary: dark ? '#06b6d4' : '#0ea5e9',
-                    muted: dark ? '#94a3b8' : '#64748b',
-                    xgFor: '#28a745',  // Keep green for xGF
-                    xgAgainst: '#dc3545',  // Keep red for xGA
-                    winGreen: '#28a745',
-                    drawGray: dark ? '#94a3b8' : '#6c757d',
-                    lossRed: '#dc3545',
-                    chartGrid: dark ? 'rgba(148, 163, 184, 0.1)' : 'rgba(0, 0, 0, 0.05)',
-                    chartText: dark ? '#94a3b8' : '#64748b',
-                    infoBoxBg: dark ? 'rgba(59, 130, 246, 0.15)' : '#e7f3ff',
-                    infoBoxBorder: dark ? 'rgba(59, 130, 246, 0.3)' : '#b3d9ff',
-                    infoBoxIcon: dark ? '#3b82f6' : '#0066cc',
-                    xgAnalysisBg: dark ? 'rgba(99, 102, 241, 0.15)' : '#f0f4ff',
-                    xgAnalysisBorder: dark ? 'rgba(99, 102, 241, 0.3)' : '#6366f1',
-                    xgAnalysisText: dark ? '#818cf8' : '#6366f1'
-                };
-            }
             
             // Comprehensive team database with nicknames and aliases (unique aliases only)
             const teamDatabase = [
@@ -1466,187 +1649,6 @@
                 });
             }
             
-            function formatFormIndicators(formString) {
-                if (!formString) return '';
-                
-                const colors = getThemeColors();
-                const formArray = formString.split('');
-                return `<div style="display: inline-flex; gap: 2px; white-space: nowrap;">` + formArray.map(result => {
-                    let bgColor = '';
-                    
-                    if (result === 'W') {
-                        bgColor = colors.winGreen;
-                    } else if (result === 'D') {
-                        bgColor = colors.drawGray;
-                    } else if (result === 'L') {
-                        bgColor = colors.lossRed;
-                    }
-                    
-                    return `<span style="display: inline-block; width: 24px; height: 24px; background-color: ${bgColor}; color: white; text-align: center; line-height: 24px; font-size: 12px; font-weight: bold; border-radius: 3px;">${result}</span>`;
-                }).join('') + `</div>`;
-            }
-            
-            function createXgTrendChart(canvasId, recentMatches, teamName) {
-                if (!recentMatches || recentMatches.length === 0) return null;
-                
-                // Keep original order to show newest to oldest (recent on right)
-                const matches = [...recentMatches];
-                const colors = getThemeColors();
-                
-                // Compute rolling 5-match averages for each point
-                const rollingWindow = 5;
-                const xgForRolling = [];
-                const xgAgainstRolling = [];
-                const labels = [];
-                
-                for (let i = 0; i < matches.length; i++) {
-                    const startIdx = Math.max(0, i - rollingWindow + 1);
-                    const window = matches.slice(startIdx, i + 1);
-                    
-                    // Calculate average for this window
-                    const avgXgFor = window.reduce((sum, m) => sum + m.xg_for, 0) / window.length;
-                    const avgXgAgainst = window.reduce((sum, m) => sum + m.xg_against, 0) / window.length;
-                    
-                    xgForRolling.push(avgXgFor);
-                    xgAgainstRolling.push(avgXgAgainst);
-                    
-                    // Create label
-                    const vs = matches[i].is_home ? 'vs' : '@';
-                    labels.push(`${vs} ${matches[i].opponent.substring(0, 10)}`);
-                }
-                
-                const ctx = document.getElementById(canvasId);
-                if (!ctx) return null;
-                
-                return new Chart(ctx, {
-                    type: 'line',
-                    data: {
-                        labels: labels,
-                        datasets: [
-                            {
-                                label: 'xG For (Rolling Avg)',
-                                data: xgForRolling,
-                                borderColor: colors.xgFor,
-                                backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                                fill: true,
-                                tension: 0.3,
-                                pointRadius: 4,
-                                pointHoverRadius: 6,
-                                borderWidth: 2
-                            },
-                            {
-                                label: 'xG Against (Rolling Avg)',
-                                data: xgAgainstRolling,
-                                borderColor: colors.xgAgainst,
-                                backgroundColor: 'rgba(220, 53, 69, 0.1)',
-                                fill: true,
-                                tension: 0.3,
-                                pointRadius: 4,
-                                pointHoverRadius: 6,
-                                borderWidth: 2
-                            }
-                        ]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: {
-                                display: true,
-                                position: 'top',
-                                labels: {
-                                    boxWidth: 12,
-                                    font: { size: 11 },
-                                    color: colors.chartText
-                                }
-                            },
-                            title: {
-                                display: true,
-                                text: `${teamName} - Rolling 5-Match xG Trend`,
-                                font: { size: 12, weight: 'bold' },
-                                color: colors.chartText
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    title: function(tooltipItems) {
-                                        const idx = tooltipItems[0].dataIndex;
-                                        const match = matches[idx];
-                                        const vs = match.is_home ? 'vs' : '@';
-                                        const result = match.result || 'N/A';
-                                        const score = match.score || '';
-                                        return `${vs} ${match.opponent} ${score ? '(' + score + ')' : ''} - ${result}`;
-                                    },
-                                    label: function(context) {
-                                        const idx = context.dataIndex;
-                                        const match = matches[idx];
-                                        const rollingAvg = context.parsed.y.toFixed(2);
-                                        const actualXg = context.datasetIndex === 0 ? match.xg_for.toFixed(2) : match.xg_against.toFixed(2);
-                                        const metric = context.datasetIndex === 0 ? 'xGF' : 'xGA';
-                                        return [
-                                            `Rolling Avg: ${rollingAvg}`,
-                                            `This Match ${metric}: ${actualXg}`
-                                        ];
-                                    },
-                                    footer: function(tooltipItems) {
-                                        const idx = tooltipItems[0].dataIndex;
-                                        const xgFor = xgForRolling[idx];
-                                        const xgAgainst = xgAgainstRolling[idx];
-                                        if (xgFor > xgAgainst) {
-                                            return '✅ Good form (Creating > Conceding)';
-                                        } else if (xgAgainst > xgFor) {
-                                            return '❌ Struggling (Conceding > Creating)';
-                                        } else {
-                                            return '⚖️ Balanced';
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        scales: {
-                            y: {
-                                beginAtZero: true,
-                                title: {
-                                    display: true,
-                                    text: 'Expected Goals per Game',
-                                    font: { size: 11, weight: 'bold' },
-                                    color: colors.chartText
-                                },
-                                ticks: {
-                                    font: { size: 10 },
-                                    color: colors.chartText
-                                },
-                                grid: {
-                                    color: function(context) {
-                                        // Make zero-line more visible
-                                        if (context.tick.value === 0) {
-                                            return isDarkTheme() ? 'rgba(148, 163, 184, 0.3)' : 'rgba(0, 0, 0, 0.3)';
-                                        }
-                                        return colors.chartGrid;
-                                    },
-                                    lineWidth: function(context) {
-                                        // Make zero-line thicker
-                                        if (context.tick.value === 0) {
-                                            return 2;
-                                        }
-                                        return 1;
-                                    }
-                                }
-                            },
-                            x: {
-                                ticks: {
-                                    font: { size: 9 },
-                                    maxRotation: 45,
-                                    minRotation: 45,
-                                    color: colors.chartText
-                                },
-                                grid: {
-                                    display: false
-                                }
-                            }
-                        }
-                    }
-                });
-            }
             
             function displayMatchContextData(contextData) {
                 let html = '';
@@ -2192,6 +2194,57 @@
             
             // Auto-load popular upcoming matches on page load
             getUpcomingMatches('CL');
+        });
+        
+        // Theme toggle functionality (outside DOMContentLoaded for onclick access)
+        function toggleTheme() {
+            const body = document.body;
+            const themeIcon = document.getElementById('theme-icon');
+            const themeText = document.getElementById('theme-text');
+            
+            // Toggle dark theme class
+            body.classList.toggle('dark-theme');
+            
+            // Update button icon and text
+            const isDark = body.classList.contains('dark-theme');
+            if (isDark) {
+                themeIcon.className = 'fas fa-sun';
+                themeText.textContent = 'Light Mode';
+                localStorage.setItem('theme', 'dark');
+            } else {
+                themeIcon.className = 'fas fa-moon';
+                themeText.textContent = 'Dark Mode';
+                localStorage.setItem('theme', 'light');
+            }
+            
+            // Refresh charts if they exist (they'll pick up new theme colors)
+            if (window.homeXgChart) {
+                const homeCanvas = document.getElementById('home-xg-chart');
+                if (homeCanvas && currentMatchData && currentXgData && currentXgData.home_stats && currentXgData.home_stats.recent_matches) {
+                    window.homeXgChart.destroy();
+                    window.homeXgChart = createXgTrendChart('home-xg-chart', currentXgData.home_stats.recent_matches, currentMatchData.home_team);
+                }
+            }
+            if (window.awayXgChart) {
+                const awayCanvas = document.getElementById('away-xg-chart');
+                if (awayCanvas && currentMatchData && currentXgData && currentXgData.away_stats && currentXgData.away_stats.recent_matches) {
+                    window.awayXgChart.destroy();
+                    window.awayXgChart = createXgTrendChart('away-xg-chart', currentXgData.away_stats.recent_matches, currentMatchData.away_team);
+                }
+            }
+        }
+        
+        // Initialize theme from localStorage on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            const savedTheme = localStorage.getItem('theme');
+            const themeIcon = document.getElementById('theme-icon');
+            const themeText = document.getElementById('theme-text');
+            
+            if (savedTheme === 'dark') {
+                document.body.classList.add('dark-theme');
+                themeIcon.className = 'fas fa-sun';
+                themeText.textContent = 'Light Mode';
+            }
         });
     </script>
 </body>
