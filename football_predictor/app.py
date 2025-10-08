@@ -24,7 +24,7 @@ os.makedirs("templates", exist_ok=True)
 
 # Global variables
 # Supported league codes for football-data.org API
-SUPPORTED_LEAGUES = ["PL", "PD", "BL1", "SA", "FL1", "CL"]
+SUPPORTED_LEAGUES = ["PL", "PD", "BL1", "SA", "FL1", "CL", "EL"]
 
 
 
@@ -53,6 +53,7 @@ def upcoming():
                     "PD": ["la liga", "spain"],
                     "BL1": ["bundesliga", "germany"],
                     "SA": ["serie a", "italy"],
+                    "EL": ["europa league", "uefa europa"],
                     "FL1": ["ligue 1", "france"],
                     "CL": ["champions league", "uefa"]
                 }
