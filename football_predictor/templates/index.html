@@ -374,10 +374,11 @@
                                         </div>
                                         <div class="card-body">
                                             <div id="betting-analysis">
-                                                <div class="loading">
-                                                    <div class="spinner-border text-primary" role="status">
-                                                        <span class="visually-hidden">Loading...</span>
-                                                    </div>
+                                                <div class="text-center">
+                                                    <button onclick="loadBettingAnalysis()" class="btn btn-primary">
+                                                        <i class="fas fa-coins me-2"></i> Show Betting Analysis
+                                                    </button>
+                                                    <p class="text-muted mt-2 small">View arbitrage opportunities, best odds, and betting tips</p>
                                                 </div>
                                             </div>
                                         </div>
@@ -569,11 +570,11 @@
                 if (match.predictions && match.predictions['1x2']) {
                     display1X2Prediction(match.predictions['1x2']);
                     resetOverUnderButton();
-                    displayOddsBasedAnalysis(match);
+                    resetBettingAnalysisButton();
                 } else {
                     prediction1x2.innerHTML = '<p class="text-muted">No predictions available for this match</p>';
                     resetOverUnderButton();
-                    bettingAnalysis.innerHTML = '<p class="text-muted">No betting analysis available</p>';
+                    resetBettingAnalysisButton();
                 }
             }
             
@@ -635,6 +636,32 @@
             
             // Make function available globally for inline onclick handler
             window.loadOverUnderPredictions = loadOverUnderPredictions;
+            
+            function resetBettingAnalysisButton() {
+                bettingAnalysis.innerHTML = `
+                    <div class="text-center">
+                        <button onclick="loadBettingAnalysis()" class="btn btn-primary">
+                            <i class="fas fa-coins me-2"></i> Show Betting Analysis
+                        </button>
+                        <p class="text-muted mt-2 small">View arbitrage opportunities, best odds, and betting tips</p>
+                    </div>
+                `;
+            }
+            
+            function loadBettingAnalysis() {
+                if (!currentMatchData) {
+                    bettingAnalysis.innerHTML = '<p class="text-danger">No match data available</p>';
+                    return;
+                }
+                
+                bettingAnalysis.innerHTML = loadingSpinner();
+                
+                // Call the existing display function with current match data
+                displayOddsBasedAnalysis(currentMatchData);
+            }
+            
+            // Make function available globally for inline onclick handler
+            window.loadBettingAnalysis = loadBettingAnalysis;
             
             function displayTotalsData(totalsData) {
                 if (!totalsData || !totalsData.predictions || totalsData.predictions.length === 0) {
@@ -755,36 +782,60 @@
                 let html = '';
                 
                 if (contextData.narrative) {
-                    html += `<div class="alert alert-secondary mb-3 small"><i class="fas fa-comment-dots me-2"></i>${contextData.narrative}</div>`;
+                    const alertClass = contextData.has_data ? 'alert-info' : 'alert-warning';
+                    const icon = contextData.has_data ? 'fa-info-circle' : 'fa-exclamation-triangle';
+                    html += `<div class="alert ${alertClass} mb-3 small"><i class="fas ${icon} me-2"></i>${contextData.narrative}</div>`;
                 }
                 
-                if (contextData.home_team && contextData.away_team) {
-                    html += `
-                        <div class="row">
-                            <div class="col-md-6 border-end">
-                                <h6 class="fw-bold text-primary mb-2"><i class="fas fa-home me-1"></i>${currentMatchData.home_team}</h6>
-                                <table class="table table-sm table-borderless mb-0">
-                                    <tbody>
-                                        ${contextData.home_team.position ? `<tr><td class="text-muted" style="width: 80px;">Position:</td><td><span class="badge bg-secondary">${contextData.home_team.position}</span></td></tr>` : ''}
-                                        ${contextData.home_team.points !== null ? `<tr><td class="text-muted">Points:</td><td><strong>${contextData.home_team.points}</strong></td></tr>` : ''}
-                                        ${contextData.home_team.form ? `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.home_team.form)}</td></tr>` : ''}
-                                    </tbody>
-                                </table>
-                            </div>
-                            <div class="col-md-6">
-                                <h6 class="fw-bold text-danger mb-2"><i class="fas fa-plane-departure me-1"></i>${currentMatchData.away_team}</h6>
-                                <table class="table table-sm table-borderless mb-0">
-                                    <tbody>
-                                        ${contextData.away_team.position ? `<tr><td class="text-muted" style="width: 80px;">Position:</td><td><span class="badge bg-secondary">${contextData.away_team.position}</span></td></tr>` : ''}
-                                        ${contextData.away_team.points !== null ? `<tr><td class="text-muted">Points:</td><td><strong>${contextData.away_team.points}</strong></td></tr>` : ''}
-                                        ${contextData.away_team.form ? `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.away_team.form)}</td></tr>` : ''}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    `;
-                } else {
-                    html += `<p class="text-muted">${contextData.narrative || 'Detailed context unavailable'}</p>`;
+                const hasHomeData = contextData.home_team && (contextData.home_team.position || contextData.home_team.points || contextData.home_team.form);
+                const hasAwayData = contextData.away_team && (contextData.away_team.position || contextData.away_team.points || contextData.away_team.form);
+                
+                if (hasHomeData || hasAwayData) {
+                    html += `<div class="row">`;
+                    
+                    // Home team column
+                    html += `<div class="col-md-6 ${hasAwayData ? 'border-end' : ''}">`;
+                    html += `<h6 class="fw-bold text-primary mb-2"><i class="fas fa-home me-1"></i>${currentMatchData.home_team}</h6>`;
+                    
+                    if (hasHomeData) {
+                        html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
+                        if (contextData.home_team.position) {
+                            html += `<tr><td class="text-muted" style="width: 80px;">Position:</td><td><span class="badge bg-secondary">${contextData.home_team.position}</span></td></tr>`;
+                        }
+                        if (contextData.home_team.points !== null && contextData.home_team.points !== undefined) {
+                            html += `<tr><td class="text-muted">Points:</td><td><strong>${contextData.home_team.points}</strong></td></tr>`;
+                        }
+                        if (contextData.home_team.form) {
+                            html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.home_team.form)}</td></tr>`;
+                        }
+                        html += `</tbody></table>`;
+                    } else {
+                        html += `<p class="text-muted small"><i>No standings data available</i></p>`;
+                    }
+                    html += `</div>`;
+                    
+                    // Away team column
+                    html += `<div class="col-md-6">`;
+                    html += `<h6 class="fw-bold text-danger mb-2"><i class="fas fa-plane-departure me-1"></i>${currentMatchData.away_team}</h6>`;
+                    
+                    if (hasAwayData) {
+                        html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
+                        if (contextData.away_team.position) {
+                            html += `<tr><td class="text-muted" style="width: 80px;">Position:</td><td><span class="badge bg-secondary">${contextData.away_team.position}</span></td></tr>`;
+                        }
+                        if (contextData.away_team.points !== null && contextData.away_team.points !== undefined) {
+                            html += `<tr><td class="text-muted">Points:</td><td><strong>${contextData.away_team.points}</strong></td></tr>`;
+                        }
+                        if (contextData.away_team.form) {
+                            html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.away_team.form)}</td></tr>`;
+                        }
+                        html += `</tbody></table>`;
+                    } else {
+                        html += `<p class="text-muted small"><i>No standings data available</i></p>`;
+                    }
+                    html += `</div>`;
+                    
+                    html += `</div>`;
                 }
                 
                 matchContext.innerHTML = html;
@@ -904,6 +955,76 @@
                 predictionOverUnder.innerHTML = html;
             }
             
+            function generateBettingTips(pred1x2) {
+                if (!pred1x2.probabilities) {
+                    return '';
+                }
+                
+                const probs = pred1x2.probabilities;
+                const homeWin = probs.home_win || 0;
+                const draw = probs.draw || 0;
+                const awayWin = probs.away_win || 0;
+                
+                // Calculate double chance probabilities
+                const dc1X = homeWin + draw;  // Home or Draw
+                const dc12 = homeWin + awayWin;  // Home or Away
+                const dcX2 = draw + awayWin;  // Draw or Away
+                
+                // Create array of betting options
+                const options = [
+                    { name: 'Home Win', prob: homeWin, type: 'single' },
+                    { name: 'Draw', prob: draw, type: 'single' },
+                    { name: 'Away Win', prob: awayWin, type: 'single' },
+                    { name: 'Double Chance 1X (Home or Draw)', prob: dc1X, type: 'double_chance' },
+                    { name: 'Double Chance 12 (Home or Away)', prob: dc12, type: 'double_chance' },
+                    { name: 'Double Chance X2 (Draw or Away)', prob: dcX2, type: 'double_chance' }
+                ];
+                
+                // Sort by probability
+                options.sort((a, b) => b.prob - a.prob);
+                
+                // Find safest, balanced, and risky bets
+                const safest = options.find(opt => opt.prob >= 0.60);
+                const balanced = options.find(opt => opt.prob >= 0.30 && opt.prob < 0.60);
+                const risky = options.find(opt => opt.prob >= 0.15 && opt.prob < 0.30);
+                
+                let html = '<div class="analysis-section mb-3">';
+                html += '<div class="analysis-title">💡 Betting Tips</div>';
+                
+                if (safest) {
+                    html += `
+                        <div class="alert alert-success mb-2">
+                            <strong>🛡️ SAFEST BET:</strong> ${safest.name}
+                            <br><span class="badge bg-success">${(safest.prob * 100).toFixed(1)}% probability</span>
+                            <br><small class="text-muted">Lower odds but highest chance of winning</small>
+                        </div>
+                    `;
+                }
+                
+                if (balanced) {
+                    html += `
+                        <div class="alert alert-info mb-2">
+                            <strong>⚖️ BALANCED BET:</strong> ${balanced.name}
+                            <br><span class="badge bg-info">${(balanced.prob * 100).toFixed(1)}% probability</span>
+                            <br><small class="text-muted">Moderate odds with reasonable chance</small>
+                        </div>
+                    `;
+                }
+                
+                if (risky) {
+                    html += `
+                        <div class="alert alert-warning mb-2">
+                            <strong>🎲 VALUE BET:</strong> ${risky.name}
+                            <br><span class="badge bg-warning text-dark">${(risky.prob * 100).toFixed(1)}% probability</span>
+                            <br><small class="text-muted">Higher odds but lower probability</small>
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+                return html;
+            }
+            
             function displayOddsBasedAnalysis(match) {
                 const predictions = match.predictions || {};
                 const pred1x2 = predictions['1x2'] || {};
@@ -935,14 +1056,25 @@
                     html += '<div class="analysis-title" style="color: #10b981;">✅ Arbitrage Opportunity!</div>';
                     html += `<p><strong>Profit Margin:</strong> ${arbitrage.profit_margin}%</p>`;
                     html += `<p><strong>Optimal Stakes (per $100):</strong></p>`;
-                    html += `<ul>`;
-                    html += `<li>Home: $${arbitrage.stakes.home}</li>`;
-                    html += `<li>Draw: $${arbitrage.stakes.draw}</li>`;
-                    html += `<li>Away: $${arbitrage.stakes.away}</li>`;
+                    html += `<ul style="list-style: none; padding-left: 0;">`;
+                    
+                    if (arbitrage.best_odds && arbitrage.best_odds.home) {
+                        html += `<li class="mb-2">💰 <strong>Home:</strong> $${arbitrage.stakes.home} @ <span class="text-primary">${arbitrage.best_odds.home.bookmaker}</span> <span class="badge bg-secondary">${arbitrage.best_odds.home.price.toFixed(2)}</span></li>`;
+                    }
+                    if (arbitrage.best_odds && arbitrage.best_odds.draw) {
+                        html += `<li class="mb-2">💰 <strong>Draw:</strong> $${arbitrage.stakes.draw} @ <span class="text-primary">${arbitrage.best_odds.draw.bookmaker}</span> <span class="badge bg-secondary">${arbitrage.best_odds.draw.price.toFixed(2)}</span></li>`;
+                    }
+                    if (arbitrage.best_odds && arbitrage.best_odds.away) {
+                        html += `<li class="mb-2">💰 <strong>Away:</strong> $${arbitrage.stakes.away} @ <span class="text-primary">${arbitrage.best_odds.away.bookmaker}</span> <span class="badge bg-secondary">${arbitrage.best_odds.away.price.toFixed(2)}</span></li>`;
+                    }
+                    
                     html += `</ul>`;
-                    html += `<p class="small text-muted">Guaranteed profit: $${arbitrage.profit_margin} per $100 wagered</p>`;
+                    html += `<p class="small text-muted mt-3"><i class="fas fa-info-circle me-1"></i>Guaranteed profit: $${arbitrage.profit_margin} per $100 wagered</p>`;
                     html += '</div>';
                 }
+                
+                // Add Betting Tips
+                html += generateBettingTips(pred1x2);
                 
                 bettingAnalysis.innerHTML = html;
             }

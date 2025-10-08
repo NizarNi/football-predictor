@@ -304,31 +304,42 @@ def get_match_context(match_id):
         from football_data_api import get_league_standings
         
         try:
-            standings = get_league_standings(league_code)
+            standings = get_league_standings(league_code) if league_code else []
             
             home_data = None
             away_data = None
             
-            if home_team:
+            if standings and home_team:
                 home_team_lower = home_team.lower()
                 home_data = next((team for team in standings if team['name'].lower() in home_team_lower or home_team_lower in team['name'].lower()), None)
             
-            if away_team:
+            if standings and away_team:
                 away_team_lower = away_team.lower()
                 away_data = next((team for team in standings if team['name'].lower() in away_team_lower or away_team_lower in team['name'].lower()), None)
+            
+            # Generate narrative based on available data
+            if home_data and away_data:
+                narrative = generate_match_narrative(home_data, away_data)
+            elif home_data or away_data:
+                narrative = "Partial standings available. Full context data unavailable for this match."
+            else:
+                narrative = f"Standings not available for {league_code}. This may be a cup competition or teams not found in league standings."
             
             context = {
                 "home_team": {
                     "position": home_data.get('position') if home_data else None,
                     "points": home_data.get('points') if home_data else None,
-                    "form": home_data.get('form') if home_data else None
+                    "form": home_data.get('form') if home_data else None,
+                    "name": home_team
                 },
                 "away_team": {
                     "position": away_data.get('position') if away_data else None,
                     "points": away_data.get('points') if away_data else None,
-                    "form": away_data.get('form') if away_data else None
+                    "form": away_data.get('form') if away_data else None,
+                    "name": away_team
                 },
-                "narrative": generate_match_narrative(home_data, away_data) if home_data and away_data else "Match information unavailable"
+                "narrative": narrative,
+                "has_data": bool(home_data or away_data)
             }
             
             return jsonify(context)

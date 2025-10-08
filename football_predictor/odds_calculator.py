@@ -136,7 +136,12 @@ def calculate_totals_from_odds(odds_data):
                         totals_by_line[line]['under_odds'].append({'price': price, 'bookmaker': bookmaker['title']})
     
     predictions = []
+    common_lines = [1.5, 2.5, 3.5]
+    
     for line, data in sorted(totals_by_line.items()):
+        if line not in common_lines:
+            continue
+            
         if data['over'] and data['under']:
             avg_over = sum(data['over']) / len(data['over'])
             avg_under = sum(data['under']) / len(data['under'])
