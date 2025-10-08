@@ -4,6 +4,14 @@
 A Flask-based web application that provides football match predictions using external APIs. The application fetches upcoming matches from the football-data.org API and generates predictions using the Football Prediction API on RapidAPI.
 
 ## Recent Changes
+- **2025-10-08**: Fixed infinite loop bug and added API key rotation
+  - **FIXED**: Implemented `/match/<id>` endpoint to return match details in correct frontend structure
+  - **FIXED**: Implemented `/predict/<id>` endpoint with placeholder predictions
+  - **FIXED**: Critical bug in `get_match_details()` - API returns match data directly, not wrapped in "match" key
+  - **ADDED**: RapidAPI key rotation support using `RAPIDAPI_KEY` and `RAPIDAPI_KEY_2` for rate limit handling
+  - **IMPROVED**: API key rotation logic with round-robin selection across multiple keys
+  - **TESTED**: Complete user flow: click league → see matches → click match → see predictions (no longer infinite loop)
+
 - **2025-10-08**: Initial Replit setup completed
   - Installed Python 3.11 and dependencies (Flask, gunicorn, requests)
   - Removed hardcoded API keys for security (now using Replit Secrets)
@@ -33,7 +41,10 @@ football_predictor/
 ### Key Components
 1. **Flask App (app.py)**: Main application with endpoints for:
    - `/` - Home page with match search interface
-   - `/upcoming` - Fetch upcoming matches from multiple leagues
+   - `/upcoming` - Fetch upcoming matches from multiple leagues (with dual-API fallback)
+   - `/match/<id>` - Get detailed match information by ID
+   - `/predict/<id>` - Get predictions for a specific match (returns placeholder when unavailable)
+   - `/search` - Search matches by team name
    - `/process_data` - Deprecated endpoint (returns error)
 
 2. **Football Data API (football_data_api.py)**: 
@@ -44,6 +55,8 @@ football_predictor/
 3. **RapidAPI Predictions (rapidapi_football_prediction.py)**:
    - Fetches match predictions from Football Prediction API
    - Supports different prediction markets (classic, over_25)
+   - **NEW**: Implements API key rotation with round-robin selection
+   - **NEW**: Automatic failover between multiple RapidAPI keys
 
 4. **Frontend (templates/index.html)**:
    - Bootstrap-based responsive UI
@@ -56,7 +69,8 @@ The application requires the following API keys (configured in Replit Secrets):
 - `FOOTBALL_DATA_API_KEY_1` - Primary football-data.org API key
 - `FOOTBALL_DATA_API_KEY_2` - Secondary football-data.org API key
 - `FOOTBALL_DATA_API_KEY_3` - Tertiary football-data.org API key
-- `RAPIDAPI_KEY` - RapidAPI key for predictions
+- `RAPIDAPI_KEY` - Primary RapidAPI key for predictions
+- `RAPIDAPI_KEY_2` - Secondary RapidAPI key for rate limit rotation
 
 ### Dependencies
 - Flask 3.1.2 - Web framework
