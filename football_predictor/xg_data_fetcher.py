@@ -145,6 +145,56 @@ def get_current_season():
         return now.year - 1
 
 
+def fetch_fbref_league_standings(league_code, season=None):
+    """
+    Fetch league standings from FBref as fallback for football-data.org
+    
+    Args:
+        league_code: League code (PL, PD, BL1, SA, FL1, CL, EL)
+        season: Season year (optional)
+    
+    Returns:
+        list: Standings data in format compatible with football-data.org
+    """
+    if season is None:
+        season = get_current_season()
+    
+    # Check if league is supported
+    if league_code not in LEAGUE_MAPPING:
+        print(f"⚠️  League {league_code} not supported for FBref standings")
+        return []
+    
+    league_name = LEAGUE_MAPPING[league_code]
+    
+    try:
+        print(f"📊 Fetching FBref standings for {league_name} (season {season})...")
+        fbref = sd.FBref(leagues=league_name, seasons=season)
+        standings_df = fbref.read_league_table()
+        
+        # Convert DataFrame to list of dicts compatible with football-data.org format
+        standings = []
+        for idx, row in standings_df.iterrows():
+            # Extract team name from MultiIndex if needed
+            if isinstance(idx, tuple):
+                team_name = idx[-1]  # Last element is usually the team name
+            else:
+                team_name = row.get('Squad', str(idx))
+            
+            standings.append({
+                'name': team_name,
+                'position': int(row.get('Rk', 0)) if pd.notna(row.get('Rk')) else 0,
+                'points': int(row.get('Pts', 0)) if pd.notna(row.get('Pts')) else 0,
+                'form': None  # FBref league table doesn't have form string
+            })
+        
+        print(f"✅ Fetched FBref standings for {len(standings)} teams")
+        return standings
+        
+    except Exception as e:
+        print(f"❌ Error fetching FBref standings for {league_code}: {e}")
+        return []
+
+
 def fetch_league_xg_stats(league_code, season=None):
     """
     Fetch xG statistics for all teams in a league

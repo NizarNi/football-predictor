@@ -423,7 +423,7 @@ def fuzzy_team_match(team1, team2):
 
 @app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
-    """Get match context including standings and form"""
+    """Get match context including standings and form (hybrid: football-data.org primary, FBref fallback)"""
     try:
         league_code = request.args.get("league")
         home_team = request.args.get("home_team")
@@ -433,9 +433,26 @@ def get_match_context(match_id):
             return jsonify({"error": "league parameter required"}), 400
         
         from football_data_api import get_league_standings
+        from xg_data_fetcher import fetch_fbref_league_standings
         
         try:
-            standings = get_league_standings(league_code) if league_code else []
+            # Try football-data.org first (primary source)
+            standings = []
+            source = None
+            
+            try:
+                standings = get_league_standings(league_code) if league_code else []
+                if standings:
+                    source = "football-data.org"
+            except Exception as fd_error:
+                print(f"⚠️  football-data.org error: {fd_error}")
+            
+            # If no data from football-data.org, try FBref as fallback
+            if not standings:
+                print(f"📊 Trying FBref fallback for standings...")
+                standings = fetch_fbref_league_standings(league_code)
+                if standings:
+                    source = "FBref"
             
             home_data = None
             away_data = None
@@ -449,6 +466,8 @@ def get_match_context(match_id):
             # Generate narrative based on available data
             if home_data and away_data:
                 narrative = generate_match_narrative(home_data, away_data)
+                if source:
+                    print(f"✅ Standings from {source}")
             elif home_data or away_data:
                 narrative = "Partial standings available. Full context data unavailable for this match."
             else:
@@ -468,7 +487,8 @@ def get_match_context(match_id):
                     "name": away_team
                 },
                 "narrative": narrative,
-                "has_data": bool(home_data or away_data)
+                "has_data": bool(home_data or away_data),
+                "source": source  # Track which API provided the data
             }
             
             return jsonify(context)
