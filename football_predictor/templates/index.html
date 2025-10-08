@@ -659,7 +659,8 @@
             if (!formString) return '';
             
             const colors = getThemeColors();
-            const formArray = formString.split('');
+            // Reverse to show oldest→newest (left to right chronological)
+            const formArray = formString.split('').reverse();
             return `<div style="display: inline-flex; gap: 2px; white-space: nowrap;">` + formArray.map(result => {
                 let bgColor = '';
                 
@@ -679,7 +680,8 @@
         function createXgTrendChart(canvasId, recentMatches, teamName) {
             if (!recentMatches || recentMatches.length === 0) return null;
             
-            const matches = [...recentMatches];
+            // Reverse to show oldest→newest (left to right chronological)
+            const matches = [...recentMatches].reverse();
             const colors = getThemeColors();
             
             const rollingWindow = 5;
