@@ -1442,6 +1442,10 @@
                                 const overPerfClass = overperf > 0 ? 'text-success' : 'text-danger';
                                 html += `<tr><td class="text-muted">xG Diff: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = overperforming, Negative = underperforming" style="cursor: help; font-size: 0.8em;"></i></td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
+                            // Add xG-based form (Last 5 matches from FBref)
+                            if (contextData.xg.home_stats.form) {
+                                html += `<tr><td class="text-muted">Recent Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td>${formatFormIndicators(contextData.xg.home_stats.form)}</td></tr>`;
+                            }
                         }
                         html += `</tbody></table>`;
                     } else {
@@ -1473,6 +1477,10 @@
                                 const overperf = contextData.xg.away_stats.xg_overperformance;
                                 const overPerfClass = overperf > 0 ? 'text-success' : 'text-danger';
                                 html += `<tr><td class="text-muted">xG Diff: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = overperforming, Negative = underperforming" style="cursor: help; font-size: 0.8em;"></i></td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            }
+                            // Add xG-based form (Last 5 matches from FBref)
+                            if (contextData.xg.away_stats.form) {
+                                html += `<tr><td class="text-muted">Recent Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td>${formatFormIndicators(contextData.xg.away_stats.form)}</td></tr>`;
                             }
                         }
                         html += `</tbody></table>`;
