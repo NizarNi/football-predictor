@@ -4,7 +4,19 @@
 A Flask-based web application that provides football match predictions using real bookmaker odds from The Odds API. The application fetches upcoming matches with live odds from 30+ bookmakers, converts odds to implied probabilities, detects arbitrage opportunities, and provides consensus predictions based on market data.
 
 ## Recent Changes
-- **2025-10-08**: Advanced Betting Analysis & UX Improvements (Latest)
+- **2025-10-08**: Search Optimization & Arbitrage Filtering (Latest)
+  - **REFACTORED**: `/search` endpoint now uses The Odds API exclusively for consistency with match data
+  - **FIXED**: Search endpoint gracefully handles empty API results (404 instead of 500 error)
+  - **FIXED**: League code mapping in frontend - handles variations like "Ligue 1 - France" → "FL1" correctly
+  - **FIXED**: Betting tips display - corrected probabilities key format (lowercase: home_win, draw, away_win)
+  - **ENHANCED**: Over/Under 2.5 calculation now averages data from 2.25, 2.5, and 2.75 goal lines (2-3x more data points)
+  - **NEW FEATURE**: Transparency tooltip on enhanced Over/Under 2.5 showing adjacent lines used and bookmaker count
+  - **FIXED**: Autocomplete dropdown z-index (9999) for proper display over other UI elements
+  - **NEW FEATURE**: 💰 Arbitrage filter checkbox - toggle to show only arbitrage opportunities with match counter
+  - **NEW FEATURE**: Visual 💰 ARBITRAGE badge on match cards with green gradient border for easy identification
+  - **FIXED**: Arbitrage filter card click issue - now correctly opens the right match when filtering is enabled
+
+- **2025-10-08**: Advanced Betting Analysis & UX Improvements
   - **NEW FEATURE**: On-demand Betting Analysis button (saves page load time, displays arbitrage/tips on click)
   - **ENHANCED**: Arbitrage display now shows bookmaker names and odds for each stake (e.g., "Home: $40.05 @ Betfair (2.50)")
   - **FILTERED**: Over/Under predictions to only show common lines (1.5, 2.5, 3.5 goals) - hides exotic Asian handicap lines
