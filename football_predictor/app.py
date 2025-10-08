@@ -23,6 +23,8 @@ os.makedirs("static", exist_ok=True)
 os.makedirs("templates", exist_ok=True)
 
 # Global variables
+# Supported league codes for football-data.org API
+SUPPORTED_LEAGUES = ["PL", "PD", "BL1", "SA", "FL1", "CL"]
 
 
 
@@ -33,47 +35,36 @@ def index():
 
 @app.route("/upcoming", methods=["GET"])
 def upcoming():
-    """Get upcoming matches using the API-Football API"""
-    league_name = request.args.get("league", None)
-    season = request.args.get("season", 2025, type=int) # Default to current year
-    next_n_days = request.args.get("next_n_days", 7, type=int)
+    """Get upcoming matches using the football-data.org API"""
+    league_code = request.args.get("league", None)
+    next_n_days = request.args.get("next_n_days", 30, type=int)
     
     try:
-        competitions = get_competitions()
-        if not competitions:
-            return jsonify({"error": "Could not fetch competitions from API-Football"}), 500
-
-        competition_id = None
-        if league_name:
-            for comp in competitions:
-                if comp.get("name", "").lower() == league_name.lower():
-                    competition_id = comp["id"]
-                    break
-            if not competition_id:
-                return jsonify({"error": f"League \"{league_name}\" not found in API-Football"}), 404
+        # Determine which leagues to fetch
+        if league_code:
+            # User selected a specific league
+            if league_code not in SUPPORTED_LEAGUES:
+                return jsonify({"error": f"League code \"{league_code}\" not supported"}), 404
+            leagues_to_fetch = [league_code]
         else:
-            # Default to a popular league if no league is specified, e.g., Premier League (ID 2021)
-            default_league_id = 2021 # Premier League ID for football-data.org
-            competition_id = default_league_id
-
-
-        # Define a list of popular competition IDs to query
-        # These IDs are based on common major leagues and can be expanded.
-        # Example IDs: Premier League (2021), La Liga (2014), Serie A (2019), Bundesliga (2002), Ligue 1 (2015), Champions League (2001)
-        POPULAR_COMPETITION_IDS = [2021, 2014, 2019, 2002, 2015, 2001]
+            # Fetch from all popular leagues
+            leagues_to_fetch = SUPPORTED_LEAGUES
 
         all_upcoming_matches = []
-        for comp_id in POPULAR_COMPETITION_IDS:
+        for league in leagues_to_fetch:
             try:
-                matches = get_upcoming_matches(comp_id, next_n_days=next_n_days)
+                matches = get_upcoming_matches(league, next_n_days=next_n_days)
                 if matches:
                     all_upcoming_matches.extend(matches)
+                    print(f"Found {len(matches)} matches for {league}")
             except RateLimitExceededError as api_e:
-                print(f"Rate limit exceeded for competition ID {comp_id}: {api_e}")
-                # Continue to the next API key or competition if rate limit is hit
+                print(f"Rate limit exceeded for {league}: {api_e}")
                 continue
             except Exception as api_e:
-                print(f"Error fetching matches for competition ID {comp_id}: {api_e}")
+                print(f"Error fetching matches for {league}: {api_e}")
+        
+        if not all_upcoming_matches:
+            return jsonify({"error": "No upcoming matches found"}), 404
         
         # Sort matches by date
         upcoming_matches = sorted(all_upcoming_matches, key=lambda x: x["timestamp"])
@@ -81,7 +72,10 @@ def upcoming():
         # Fetch predictions from RapidAPI for each match
         matches_with_predictions = []
         for match in upcoming_matches:
-            match_id = match.get("id") # Assuming match has an 'id' field
+            # Add datetime formatting for frontend
+            match["datetime"] = datetime.fromtimestamp(match["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            
+            match_id = match.get("id")
             if match_id:
                 try:
                     # Fetch 'classic' (1X2) prediction
@@ -100,7 +94,7 @@ def upcoming():
                             "prediction": classic_prediction,
                             "confidence": classic_confidence,
                             "probabilities": {},
-                            "is_safe_bet": False # RapidAPI doesn't provide this directly
+                            "is_safe_bet": False
                         },
                         "over_under": {
                             "2.5": {
@@ -111,23 +105,85 @@ def upcoming():
                                 "threshold": 2.5
                             }
                         },
-                        "exact_score": {} # RapidAPI doesn't provide exact score predictions in this endpoint
+                        "exact_score": {}
                     }
+                    print(f"✅ Successfully fetched predictions for match {match_id}")
                 except RapidAPIPredictionError as rapid_e:
-                    print(f"Error fetching RapidAPI prediction for match {match_id}: {rapid_e}")
-                    match["predictions"] = {"error": str(rapid_e)}
+                    print(f"❌ RapidAPI error for match {match_id}: {rapid_e}")
+                    match["predictions"] = {
+                        "error": str(rapid_e),
+                        "note": "Predictions temporarily unavailable"
+                    }
                 except Exception as e:
-                    print(f"Unexpected error fetching RapidAPI prediction for match {match_id}: {e}")
-                    match["predictions"] = {"error": str(e)}
+                    print(f"❌ Unexpected error for match {match_id}: {e}")
+                    match["predictions"] = {
+                        "error": "Failed to fetch predictions",
+                        "note": "Service temporarily unavailable"
+                    }
+            else:
+                match["predictions"] = {
+                    "error": "No match ID available for predictions"
+                }
+            
             matches_with_predictions.append(match)
 
-        return jsonify({"matches": matches_with_predictions})
+        return jsonify({
+            "matches": matches_with_predictions,
+            "total_matches": len(matches_with_predictions)
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 
 
+
+@app.route("/search", methods=["POST"])
+def search():
+    """Search for matches by team name"""
+    team_name = request.form.get("team_name", "").strip()
+    
+    if not team_name:
+        return jsonify({"error": "Please provide a team name"}), 400
+    
+    try:
+        # Fetch matches from all leagues
+        all_upcoming_matches = []
+        
+        for league in SUPPORTED_LEAGUES:
+            try:
+                matches = get_upcoming_matches(league, next_n_days=30)
+                if matches:
+                    all_upcoming_matches.extend(matches)
+            except RateLimitExceededError as api_e:
+                print(f"Rate limit exceeded for {league}: {api_e}")
+                continue
+            except Exception as api_e:
+                print(f"Error fetching matches for {league}: {api_e}")
+        
+        # Filter matches by team name
+        team_name_lower = team_name.lower()
+        filtered_matches = [
+            match for match in all_upcoming_matches
+            if team_name_lower in match.get("home_team", "").lower() or 
+               team_name_lower in match.get("away_team", "").lower()
+        ]
+        
+        if not filtered_matches:
+            return jsonify({"error": f"No matches found for team '{team_name}'"}), 404
+        
+        # Sort by date
+        filtered_matches = sorted(filtered_matches, key=lambda x: x["timestamp"])
+        
+        # Add datetime formatting for frontend
+        for match in filtered_matches:
+            match["datetime"] = datetime.fromtimestamp(match["timestamp"]).strftime("%Y-%m-%d %H:%M")
+        
+        return jsonify({"matches": filtered_matches})
+        
+    except Exception as e:
+        print(f"Error in search: {e}")
+        return jsonify({"error": f"Search failed: {str(e)}"}), 500
 
 @app.route("/process_data", methods=["POST"])
 def process_data():

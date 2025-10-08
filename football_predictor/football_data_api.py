@@ -73,13 +73,17 @@ def get_seasons(competition_id):
     return []
 
 def get_upcoming_matches(competition_id, next_n_days=7):
+    """
+    Get upcoming matches for a competition.
+    competition_id can be either a numeric ID (e.g., 2021) or a code (e.g., 'PL')
+    """
     today = datetime.now().date()
     future_date_limit = today + timedelta(days=next_n_days)
 
     params = {
         "dateFrom": today.strftime("%Y-%m-%d"),
         "dateTo": future_date_limit.strftime("%Y-%m-%d"),
-        "status": "SCHEDULED,TIMED,POSTPONED" # Include relevant statuses
+        "status": "SCHEDULED,TIMED,POSTPONED"
     }
 
     data = _make_api_request(f"competitions/{competition_id}/matches", params=params)
