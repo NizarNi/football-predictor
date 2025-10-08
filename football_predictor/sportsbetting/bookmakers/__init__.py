@@ -1,3 +1,0 @@
-"""
-bookmakers module
-"""
