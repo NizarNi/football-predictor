@@ -510,7 +510,7 @@
                 ];
                 
                 let html = '';
-                matches.forEach(match => {
+                matches.forEach((match, index) => {
                     const homeTeam = match.home_team.toLowerCase();
                     const awayTeam = match.away_team.toLowerCase();
                     const isPopular = popularTeams.some(team => 
@@ -519,7 +519,7 @@
                     const popularClass = isPopular ? ' popular-match' : '';
                     
                     html += `
-                        <div class="card match-card mb-2${popularClass}" data-match-id="${match.id}">
+                        <div class="card match-card mb-2${popularClass}" data-match-index="${index}">
                             <div class="card-body p-3">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
@@ -537,31 +537,52 @@
                 
                 matchesList.innerHTML = html;
                 
+                // Store matches data globally
+                window.currentMatches = matches;
+                
                 // Add click event to match cards
                 document.querySelectorAll('.match-card').forEach(card => {
                     card.addEventListener('click', function() {
-                        const matchId = this.getAttribute('data-match-id');
-                        getMatchDetails(matchId);
+                        const matchIndex = parseInt(this.getAttribute('data-match-index'));
+                        displayMatchPredictions(window.currentMatches[matchIndex]);
                     });
                 });
             }
             
-            function getMatchDetails(matchId) {
+            function displayMatchPredictions(match) {
                 // Show prediction container
                 predictionContainer.style.display = 'block';
                 
-                // Reset prediction sections
-                prediction1x2.innerHTML = loadingSpinner();
-                predictionExactScore.innerHTML = loadingSpinner();
-                predictionOverUnder.innerHTML = loadingSpinner();
-                bettingAnalysis.innerHTML = loadingSpinner();
+                // Update match details
+                matchTeams.textContent = `${match.home_team} vs ${match.away_team}`;
+                matchLeague.textContent = match.league || 'Unknown League';
+                matchDate.textContent = match.datetime || 'TBD';
                 
+                // Check if predictions exist (Odds API matches)
+                if (match.predictions && match.predictions['1x2']) {
+                    display1X2Prediction(match.predictions['1x2']);
+                    displayExactScorePrediction({note: 'Not available for odds-based predictions'});
+                    displayOverUnderPredictions({note: 'Not available for odds-based predictions'});
+                    displayOddsBasedAnalysis(match);
+                } else {
+                    // Fallback to old method for football-data.org matches
+                    prediction1x2.innerHTML = loadingSpinner();
+                    predictionExactScore.innerHTML = loadingSpinner();
+                    predictionOverUnder.innerHTML = loadingSpinner();
+                    bettingAnalysis.innerHTML = loadingSpinner();
+                    
+                    getMatchDetails(match.id);
+                }
+            }
+            
+            function getMatchDetails(matchId) {
                 // Fetch match details
                 fetch(`/match/${matchId}`)
                 .then(response => response.json())
                 .then(data => {
                     if (data.error) {
                         console.error('Error:', data.error);
+                        prediction1x2.innerHTML = `<p class="text-danger">Error loading match details</p>`;
                         return;
                     }
                     
@@ -580,6 +601,7 @@
                 })
                 .catch(error => {
                     console.error('Error:', error);
+                    prediction1x2.innerHTML = `<p class="text-danger">Error loading match details</p>`;
                 });
             }
             
@@ -760,6 +782,49 @@
                 html += `</div>`;
                 
                 predictionOverUnder.innerHTML = html;
+            }
+            
+            function displayOddsBasedAnalysis(match) {
+                const predictions = match.predictions || {};
+                const pred1x2 = predictions['1x2'] || {};
+                const bestOdds = predictions.best_odds || {};
+                const arbitrage = predictions.arbitrage || null;
+                
+                let html = '<div class="analysis-section mb-3">';
+                html += '<div class="analysis-title">📊 Market Data</div>';
+                html += `<p><strong>Bookmakers:</strong> ${pred1x2.bookmaker_count || 0} bookmakers providing odds</p>`;
+                html += '</div>';
+                
+                if (bestOdds.home || bestOdds.draw || bestOdds.away) {
+                    html += '<div class="analysis-section mb-3">';
+                    html += '<div class="analysis-title">💰 Best Odds</div>';
+                    if (bestOdds.home && bestOdds.home.price) {
+                        html += `<p><strong>Home Win:</strong> ${bestOdds.home.price.toFixed(2)} at ${bestOdds.home.bookmaker}</p>`;
+                    }
+                    if (bestOdds.draw && bestOdds.draw.price) {
+                        html += `<p><strong>Draw:</strong> ${bestOdds.draw.price.toFixed(2)} at ${bestOdds.draw.bookmaker}</p>`;
+                    }
+                    if (bestOdds.away && bestOdds.away.price) {
+                        html += `<p><strong>Away Win:</strong> ${bestOdds.away.price.toFixed(2)} at ${bestOdds.away.bookmaker}</p>`;
+                    }
+                    html += '</div>';
+                }
+                
+                if (arbitrage && arbitrage.is_arbitrage) {
+                    html += '<div class="analysis-section mb-3" style="border: 2px solid #10b981; background-color: #d1fae5;">';
+                    html += '<div class="analysis-title" style="color: #10b981;">✅ Arbitrage Opportunity!</div>';
+                    html += `<p><strong>Profit Margin:</strong> ${arbitrage.profit_margin}%</p>`;
+                    html += `<p><strong>Optimal Stakes (per $100):</strong></p>`;
+                    html += `<ul>`;
+                    html += `<li>Home: $${arbitrage.stakes.home}</li>`;
+                    html += `<li>Draw: $${arbitrage.stakes.draw}</li>`;
+                    html += `<li>Away: $${arbitrage.stakes.away}</li>`;
+                    html += `</ul>`;
+                    html += `<p class="small text-muted">Guaranteed profit: $${arbitrage.profit_margin} per $100 wagered</p>`;
+                    html += '</div>';
+                }
+                
+                bettingAnalysis.innerHTML = html;
             }
             
             function displayBettingAnalysis(match) {
