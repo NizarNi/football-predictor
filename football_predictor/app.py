@@ -8,7 +8,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from football_data_api import get_competitions, get_upcoming_matches, RateLimitExceededError
-from rapidapi_football_prediction import get_rapidapi_predictions, RapidAPIPredictionError
+from rapidapi_football_prediction import get_upcoming_matches_with_predictions, RapidAPIPredictionError
 
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 
@@ -35,19 +35,53 @@ def index():
 
 @app.route("/upcoming", methods=["GET"])
 def upcoming():
-    """Get upcoming matches using the football-data.org API"""
+    """Get upcoming matches with predictions using RapidAPI (primary) and football-data.org (fallback)"""
     league_code = request.args.get("league", None)
     next_n_days = request.args.get("next_n_days", 30, type=int)
     
     try:
-        # Determine which leagues to fetch
+        # Try RapidAPI first (provides both matches and predictions)
+        print(f"🔍 Fetching matches with predictions from RapidAPI...")
+        try:
+            rapid_matches = get_upcoming_matches_with_predictions(next_n_days=next_n_days, federation="UEFA")
+            
+            # Filter by league if specified
+            if league_code and rapid_matches:
+                # Map league codes to competition names (approximate matching)
+                league_filters = {
+                    "PL": ["premier league", "england"],
+                    "PD": ["la liga", "spain"],
+                    "BL1": ["bundesliga", "germany"],
+                    "SA": ["serie a", "italy"],
+                    "FL1": ["ligue 1", "france"],
+                    "CL": ["champions league", "uefa"]
+                }
+                filter_terms = league_filters.get(league_code, [league_code.lower()])
+                rapid_matches = [
+                    m for m in rapid_matches 
+                    if any(term in m.get("league", "").lower() for term in filter_terms)
+                ]
+            
+            if rapid_matches:
+                print(f"✅ Found {len(rapid_matches)} matches from RapidAPI")
+                return jsonify({
+                    "matches": rapid_matches,
+                    "total_matches": len(rapid_matches),
+                    "source": "RapidAPI"
+                })
+        except RapidAPIPredictionError as e:
+            print(f"⚠️  RapidAPI unavailable: {e}")
+        except Exception as e:
+            print(f"⚠️  RapidAPI error: {e}")
+        
+        # Fallback to football-data.org (no predictions)
+        print(f"🔄 Falling back to football-data.org...")
+        
         if league_code:
-            # User selected a specific league
             if league_code not in SUPPORTED_LEAGUES:
                 return jsonify({"error": f"League code \"{league_code}\" not supported"}), 404
             leagues_to_fetch = [league_code]
         else:
-            # Fetch from all popular leagues
             leagues_to_fetch = SUPPORTED_LEAGUES
 
         all_upcoming_matches = []
@@ -66,72 +100,23 @@ def upcoming():
         if not all_upcoming_matches:
             return jsonify({"error": "No upcoming matches found"}), 404
         
-        # Sort matches by date
+        # Sort and format matches
         upcoming_matches = sorted(all_upcoming_matches, key=lambda x: x["timestamp"])
-
-        # Fetch predictions from RapidAPI for each match
-        matches_with_predictions = []
+        
         for match in upcoming_matches:
-            # Add datetime formatting for frontend
             match["datetime"] = datetime.fromtimestamp(match["timestamp"]).strftime("%Y-%m-%d %H:%M")
-            
-            match_id = match.get("id")
-            if match_id:
-                try:
-                    # Fetch 'classic' (1X2) prediction
-                    classic_prediction_data = get_rapidapi_predictions(match_id, market="classic")
-                    classic_prediction = classic_prediction_data.get("data", {}).get("prediction")
-                    classic_confidence = classic_prediction_data.get("data", {}).get("confidence")
-
-                    # Fetch 'over_25' prediction
-                    over_25_prediction_data = get_rapidapi_predictions(match_id, market="over_25")
-                    over_25_prediction = over_25_prediction_data.get("data", {}).get("prediction")
-                    over_25_confidence = over_25_prediction_data.get("data", {}).get("confidence")
-
-                    # Format predictions to match existing structure
-                    match["predictions"] = {
-                        "1x2": {
-                            "prediction": classic_prediction,
-                            "confidence": classic_confidence,
-                            "probabilities": {},
-                            "is_safe_bet": False
-                        },
-                        "over_under": {
-                            "2.5": {
-                                "prediction": "OVER" if over_25_prediction == "yes" else "UNDER",
-                                "confidence": over_25_confidence,
-                                "probabilities": {},
-                                "is_safe_bet": False,
-                                "threshold": 2.5
-                            }
-                        },
-                        "exact_score": {}
-                    }
-                    print(f"✅ Successfully fetched predictions for match {match_id}")
-                except RapidAPIPredictionError as rapid_e:
-                    print(f"❌ RapidAPI error for match {match_id}: {rapid_e}")
-                    match["predictions"] = {
-                        "error": str(rapid_e),
-                        "note": "Predictions temporarily unavailable"
-                    }
-                except Exception as e:
-                    print(f"❌ Unexpected error for match {match_id}: {e}")
-                    match["predictions"] = {
-                        "error": "Failed to fetch predictions",
-                        "note": "Service temporarily unavailable"
-                    }
-            else:
-                match["predictions"] = {
-                    "error": "No match ID available for predictions"
-                }
-            
-            matches_with_predictions.append(match)
+            match["predictions"] = {
+                "note": "Predictions unavailable - using fallback data source"
+            }
 
         return jsonify({
-            "matches": matches_with_predictions,
-            "total_matches": len(matches_with_predictions)
+            "matches": upcoming_matches,
+            "total_matches": len(upcoming_matches),
+            "source": "football-data.org (fallback)"
         })
+        
     except Exception as e:
+        print(f"❌ Critical error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
