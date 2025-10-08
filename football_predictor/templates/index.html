@@ -218,6 +218,46 @@
             margin-bottom: 5px;
         }
         
+        .autocomplete-dropdown {
+            position: absolute;
+            z-index: 1000;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+            width: calc(100% - 12px);
+            margin-top: 2px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .autocomplete-item {
+            padding: 10px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f1f1;
+        }
+        
+        .autocomplete-item:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .autocomplete-item .team-name {
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        
+        .autocomplete-item .team-alias {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin-left: 5px;
+        }
+        
+        .autocomplete-item .team-league {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            display: block;
+        }
+        
         @media (max-width: 768px) {
             .card-header {
                 font-size: 1rem;
@@ -251,11 +291,14 @@
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <h5>Search by Team</h5>
-                                <div class="input-group">
-                                    <input type="text" id="team-search" class="form-control" placeholder="Enter team name (e.g., Arsenal, Barcelona, Bayern)...">
-                                    <button class="btn btn-primary" id="search-btn">
-                                        <i class="fas fa-search"></i> Search
-                                    </button>
+                                <div style="position: relative;">
+                                    <div class="input-group">
+                                        <input type="text" id="team-search" class="form-control" placeholder="Enter team name or nickname (PSG, Barca, Bayern)..." autocomplete="off">
+                                        <button class="btn btn-primary" id="search-btn">
+                                            <i class="fas fa-search"></i> Search
+                                        </button>
+                                    </div>
+                                    <div id="autocomplete-dropdown" class="autocomplete-dropdown" style="display: none;"></div>
                                 </div>
                                 <small class="text-muted">Press Enter or click Search to find matches</small>
                             </div>
@@ -417,10 +460,101 @@
             
             let currentMatchData = null;
             
+            // Comprehensive team database with nicknames and aliases (unique aliases only)
+            const teamDatabase = [
+                { name: "Arsenal", aliases: ["Gunners", "AFC"], league: "Premier League" },
+                { name: "Liverpool", aliases: ["Reds", "LFC"], league: "Premier League" },
+                { name: "Manchester United", aliases: ["Man Utd", "Man United", "United", "Red Devils", "MUFC"], league: "Premier League" },
+                { name: "Manchester City", aliases: ["Man City", "City", "Citizens", "MCFC"], league: "Premier League" },
+                { name: "Chelsea", aliases: ["Blues", "CFC"], league: "Premier League" },
+                { name: "Tottenham", aliases: ["Spurs", "Tottenham Hotspur", "THFC"], league: "Premier League" },
+                { name: "Newcastle", aliases: ["Newcastle United", "Magpies", "NUFC"], league: "Premier League" },
+                { name: "Aston Villa", aliases: ["Villa", "AVFC"], league: "Premier League" },
+                { name: "Brighton", aliases: ["Brighton & Hove Albion", "Seagulls", "BHAFC"], league: "Premier League" },
+                { name: "West Ham", aliases: ["West Ham United", "Hammers", "WHUFC"], league: "Premier League" },
+                { name: "Barcelona", aliases: ["Barca", "Barça", "Blaugrana"], league: "La Liga" },
+                { name: "Real Madrid", aliases: ["Madrid", "Real", "Los Blancos", "RM"], league: "La Liga" },
+                { name: "Atletico Madrid", aliases: ["Atleti", "Atletico", "ATM"], league: "La Liga" },
+                { name: "Sevilla", aliases: ["SFC"], league: "La Liga" },
+                { name: "Valencia", aliases: ["VCF"], league: "La Liga" },
+                { name: "Real Betis", aliases: ["Betis"], league: "La Liga" },
+                { name: "Bayern Munich", aliases: ["Bayern", "FCB", "FC Bayern", "Die Roten"], league: "Bundesliga" },
+                { name: "Borussia Dortmund", aliases: ["Dortmund", "BVB", "Die Schwarzgelben"], league: "Bundesliga" },
+                { name: "RB Leipzig", aliases: ["Leipzig", "RBL"], league: "Bundesliga" },
+                { name: "Bayer Leverkusen", aliases: ["Leverkusen", "B04"], league: "Bundesliga" },
+                { name: "Juventus", aliases: ["Juve", "Bianconeri", "Old Lady"], league: "Serie A" },
+                { name: "Inter Milan", aliases: ["Inter", "Internazionale", "Nerazzurri"], league: "Serie A" },
+                { name: "AC Milan", aliases: ["Milan", "Rossoneri", "ACM"], league: "Serie A" },
+                { name: "Roma", aliases: ["AS Roma", "Giallorossi"], league: "Serie A" },
+                { name: "Napoli", aliases: ["SSC Napoli", "Partenopei"], league: "Serie A" },
+                { name: "Lazio", aliases: ["SS Lazio", "Biancocelesti"], league: "Serie A" },
+                { name: "Paris Saint Germain", aliases: ["PSG", "Paris SG", "Paris"], league: "Ligue 1" },
+                { name: "Marseille", aliases: ["OM", "Olympique Marseille"], league: "Ligue 1" },
+                { name: "Lyon", aliases: ["Olympique Lyon", "OL"], league: "Ligue 1" },
+                { name: "Monaco", aliases: ["AS Monaco", "ASM"], league: "Ligue 1" },
+                { name: "Lille", aliases: ["LOSC"], league: "Ligue 1" }
+            ];
+            
+            const autocompleteDropdown = document.getElementById('autocomplete-dropdown');
+            
+            // Autocomplete functionality
+            teamSearchInput.addEventListener('input', function() {
+                const query = this.value.trim().toLowerCase();
+                
+                if (query.length < 2) {
+                    autocompleteDropdown.style.display = 'none';
+                    return;
+                }
+                
+                // Find matching teams
+                const matches = teamDatabase.filter(team => {
+                    const nameMatch = team.name.toLowerCase().includes(query);
+                    const aliasMatch = team.aliases.some(alias => alias.toLowerCase().includes(query));
+                    return nameMatch || aliasMatch;
+                }).slice(0, 8); // Limit to 8 results
+                
+                if (matches.length > 0) {
+                    autocompleteDropdown.innerHTML = matches.map(team => {
+                        const matchedAlias = team.aliases.find(alias => alias.toLowerCase().includes(query));
+                        const displayAlias = matchedAlias ? `<span class="team-alias">(${matchedAlias})</span>` : '';
+                        
+                        return `
+                            <div class="autocomplete-item" data-team="${team.name}">
+                                <span class="team-name">${team.name}</span>
+                                ${displayAlias}
+                                <span class="team-league">${team.league}</span>
+                            </div>
+                        `;
+                    }).join('');
+                    
+                    autocompleteDropdown.style.display = 'block';
+                    
+                    // Add click listeners to autocomplete items
+                    document.querySelectorAll('.autocomplete-item').forEach(item => {
+                        item.addEventListener('click', function() {
+                            const teamName = this.getAttribute('data-team');
+                            teamSearchInput.value = teamName;
+                            autocompleteDropdown.style.display = 'none';
+                            searchTeam();
+                        });
+                    });
+                } else {
+                    autocompleteDropdown.style.display = 'none';
+                }
+            });
+            
+            // Hide autocomplete when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!teamSearchInput.contains(e.target) && !autocompleteDropdown.contains(e.target)) {
+                    autocompleteDropdown.style.display = 'none';
+                }
+            });
+            
             // Event listeners
             searchBtn.addEventListener('click', searchTeam);
             teamSearchInput.addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') {
+                    autocompleteDropdown.style.display = 'none';
                     searchTeam();
                 }
             });
@@ -433,9 +567,33 @@
             });
             
             // Functions
+            function normalizeTeamName(input) {
+                // Check if input matches any team name or alias
+                const inputLower = input.toLowerCase();
+                
+                for (const team of teamDatabase) {
+                    // Check if it matches the canonical name
+                    if (team.name.toLowerCase() === inputLower) {
+                        return team.name;
+                    }
+                    
+                    // Check if it matches any alias
+                    const matchedAlias = team.aliases.find(alias => alias.toLowerCase() === inputLower);
+                    if (matchedAlias) {
+                        return team.name;
+                    }
+                }
+                
+                // If no match found, return original input
+                return input;
+            }
+            
             function searchTeam() {
-                const teamName = teamSearchInput.value.trim();
+                let teamName = teamSearchInput.value.trim();
                 if (!teamName) return;
+                
+                // Normalize the team name (resolve aliases to canonical names)
+                teamName = normalizeTeamName(teamName);
                 
                 matchesList.innerHTML = `
                     <div class="loading">
