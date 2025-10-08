@@ -42,6 +42,56 @@
             --autocomplete-border: #475569;
         }
         
+        /* Dark mode text visibility fixes */
+        body.dark-theme #match-context {
+            color: var(--text-color);
+        }
+        
+        body.dark-theme #match-context div:not([class*="text-"]),
+        body.dark-theme #match-context span:not([class*="text-"]):not([class*="badge"]),
+        body.dark-theme #match-context p:not([class*="text-"]) {
+            color: var(--text-color);
+        }
+        
+        body.dark-theme .table {
+            color: var(--text-color);
+        }
+        
+        body.dark-theme .table strong,
+        body.dark-theme #match-context strong:not([class*="text-"]) {
+            color: #f1f5f9;
+        }
+        
+        body.dark-theme .text-muted {
+            color: var(--muted-text) !important;
+        }
+        
+        body.dark-theme h6, 
+        body.dark-theme h5, 
+        body.dark-theme h4 {
+            color: var(--text-color);
+        }
+        
+        body.dark-theme .alert {
+            color: var(--text-color);
+        }
+        
+        body.dark-theme .text-primary {
+            color: var(--primary-color) !important;
+        }
+        
+        body.dark-theme .text-danger {
+            color: #ef4444 !important;
+        }
+        
+        body.dark-theme .text-success {
+            color: #10b981 !important;
+        }
+        
+        body.dark-theme .badge {
+            color: white;
+        }
+        
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: var(--background-color);
