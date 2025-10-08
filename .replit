@@ -42,10 +42,6 @@ externalPort = 3002
 localPort = 34633
 externalPort = 3000
 
-[[ports]]
-localPort = 35577
-externalPort = 3003
-
 [deployment]
 deploymentTarget = "autoscale"
 run = ["gunicorn", "--config", "football_predictor/gunicorn_config.py", "--chdir", "football_predictor", "app:app"]
