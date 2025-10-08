@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Football Prediction - Safe Bet Analyzer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #1e3a8a;
+            --secondary-color: #0ea5e9;
+            --accent-color: #f59e0b;
+            --background-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-color: #1e293b;
+            --border-color: #e2e8f0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+        
+        .navbar {
+            background-color: var(--primary-color);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .navbar-brand {
+            font-weight: 700;
+            color: white !important;
+        }
+        
+        .card {
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            background-color: var(--card-bg);
+            margin-bottom: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card-header {
+            background-color: var(--primary-color);
+            color: white;
+            border-radius: 10px 10px 0 0 !important;
+            font-weight: 600;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .btn-primary:hover {
+            background-color: #152b63;
+            border-color: #152b63;
+        }
+        
+        .btn-outline-primary {
+            color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+        
+        .btn-outline-primary:hover {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .match-card {
+            cursor: pointer;
+        }
+        
+        .match-card:hover {
+            border-color: var(--secondary-color);
+        }
+        
+        .prediction-badge {
+            font-size: 1rem;
+            padding: 8px 12px;
+            border-radius: 20px;
+        }
+        
+        .safe-bet {
+            background-color: #10b981;
+            color: white;
+        }
+        
+        .risky-bet {
+            background-color: #f59e0b;
+            color: white;
+        }
+        
+        .very-risky {
+            background-color: #ef4444;
+            color: white;
+        }
+        
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 200px;
+        }
+        
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+        }
+        
+        .team-logo {
+            width: 30px;
+            height: 30px;
+            object-fit: contain;
+            margin-right: 10px;
+        }
+        
+        .odds-table {
+            font-size: 0.9rem;
+        }
+        
+        .odds-table th, .odds-table td {
+            padding: 8px;
+        }
+        
+        .stats-bar {
+            height: 10px;
+            border-radius: 5px;
+            margin: 5px 0;
+        }
+        
+        .home-stats {
+            background-color: var(--primary-color);
+        }
+        
+        .away-stats {
+            background-color: var(--secondary-color);
+        }
+        
+        .exact-score-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .exact-score-item:last-child {
+            border-bottom: none;
+        }
+        
+        .probability-bar {
+            height: 20px;
+            border-radius: 10px;
+            background-color: #e2e8f0;
+            overflow: hidden;
+            margin: 5px 0;
+        }
+        
+        .probability-fill {
+            height: 100%;
+            background-color: var(--secondary-color);
+        }
+        
+        .league-badge {
+            font-size: 0.8rem;
+            padding: 3px 8px;
+            border-radius: 12px;
+            background-color: #e2e8f0;
+            color: var(--text-color);
+            margin-right: 5px;
+        }
+        
+        .match-date {
+            font-size: 0.8rem;
+            color: #64748b;
+        }
+        
+        .analysis-section {
+            background-color: #f1f5f9;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 10px;
+        }
+        
+        .analysis-title {
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 5px;
+        }
+        
+        @media (max-width: 768px) {
+            .card-header {
+                font-size: 1rem;
+            }
+            
+            .prediction-badge {
+                font-size: 0.8rem;
+                padding: 5px 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-futbol me-2"></i>
+                Football Prediction - Safe Bet Analyzer
+            </a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-search me-2"></i> Find Matches
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <h5>Search by Team</h5>
+                                <div class="input-group">
+                                    <input type="text" id="team-search" class="form-control" placeholder="Enter team name...">
+                                    <button class="btn btn-primary" id="search-btn">
+                                        <i class="fas fa-search"></i> Search
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h5>Browse Upcoming Matches</h5>
+                                <div class="d-flex flex-wrap">
+                                    <button class="btn btn-outline-primary m-1" data-league="PL">Premier League</button>
+                                    <button class="btn btn-outline-primary m-1" data-league="PD">La Liga</button>
+                                    <button class="btn btn-outline-primary m-1" data-league="BL1">Bundesliga</button>
+                                    <button class="btn btn-outline-primary m-1" data-league="SA">Serie A</button>
+                                    <button class="btn btn-outline-primary m-1" data-league="FL1">Ligue 1</button>
+                                    <button class="btn btn-outline-primary m-1" data-league="CL">Champions League</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-6">
+                <div id="matches-container">
+                    <div class="card">
+                        <div class="card-header">
+                            <i class="fas fa-calendar-alt me-2"></i> Matches
+                        </div>
+                        <div class="card-body">
+                            <div id="matches-list">
+                                <p class="text-center text-muted">
+                                    Search for a team or browse upcoming matches to get started
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div id="prediction-container" style="display: none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <i class="fas fa-chart-line me-2"></i> Match Prediction
+                        </div>
+                        <div class="card-body">
+                            <div id="match-details">
+                                <h4 id="match-teams" class="mb-3"></h4>
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <span id="match-league" class="league-badge"></span>
+                                    <span id="match-date" class="match-date"></span>
+                                </div>
+                            </div>
+                            
+                            <div class="row mt-4">
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-header bg-primary text-white">
+                                            <i class="fas fa-trophy me-2"></i> 1X2 Prediction
+                                        </div>
+                                        <div class="card-body">
+                                            <div id="prediction-1x2">
+                                                <div class="loading">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-6 mb-3">
+                                    <div class="card">
+                                        <div class="card-header bg-primary text-white">
+                                            <i class="fas fa-bullseye me-2"></i> Exact Score
+                                        </div>
+                                        <div class="card-body">
+                                            <div id="prediction-exact-score">
+                                                <div class="loading">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <div class="card">
+                                        <div class="card-header bg-primary text-white">
+                                            <i class="fas fa-exchange-alt me-2"></i> Over/Under Predictions
+                                        </div>
+                                        <div class="card-body">
+                                            <div id="prediction-over-under">
+                                                <div class="loading">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header bg-primary text-white">
+                                            <i class="fas fa-chart-bar me-2"></i> Betting Analysis
+                                        </div>
+                                        <div class="card-body">
+                                            <div id="betting-analysis">
+                                                <div class="loading">
+                                                    <div class="spinner-border text-primary" role="status">
+                                                        <span class="visually-hidden">Loading...</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="bg-dark text-white text-center py-3 mt-5">
+        <div class="container">
+            <p class="mb-0">© 2025 Football Prediction - Safe Bet Analyzer</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // DOM elements
+            const teamSearchInput = document.getElementById('team-search');
+            const searchBtn = document.getElementById('search-btn');
+            const leagueButtons = document.querySelectorAll('[data-league]');
+            const matchesList = document.getElementById('matches-list');
+            const predictionContainer = document.getElementById('prediction-container');
+            const matchTeams = document.getElementById('match-teams');
+            const matchLeague = document.getElementById('match-league');
+            const matchDate = document.getElementById('match-date');
+            const prediction1x2 = document.getElementById('prediction-1x2');
+            const predictionExactScore = document.getElementById('prediction-exact-score');
+            const predictionOverUnder = document.getElementById('prediction-over-under');
+            const bettingAnalysis = document.getElementById('betting-analysis');
+            
+            // Event listeners
+            searchBtn.addEventListener('click', searchTeam);
+            teamSearchInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    searchTeam();
+                }
+            });
+            
+            leagueButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const league = this.getAttribute('data-league');
+                    getUpcomingMatches(league);
+                });
+            });
+            
+            // Functions
+            function searchTeam() {
+                const teamName = teamSearchInput.value.trim();
+                if (!teamName) return;
+                
+                matchesList.innerHTML = `
+                    <div class="loading">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                `;
+                
+                fetch('/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `team_name=${encodeURIComponent(teamName)}`
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        matchesList.innerHTML = `<p class="text-danger">${data.error}</p>`;
+                        return;
+                    }
+                    
+                    displayMatches(data.matches);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    matchesList.innerHTML = `<p class="text-danger">Error searching for team: ${error.message}</p>`;
+                });
+            }
+            
+            function getUpcomingMatches(league) {
+                matchesList.innerHTML = `
+                    <div class="loading">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                `;
+                
+                fetch(`/upcoming?league=${encodeURIComponent(league)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        matchesList.innerHTML = `<p class="text-danger">${data.error}</p>`;
+                        return;
+                    }
+                    
+                    displayMatches(data.matches);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    matchesList.innerHTML = `<p class="text-danger">Error getting upcoming matches: ${error.message}</p>`;
+                });
+            }
+            
+            function displayMatches(matches) {
+                if (!matches || matches.length === 0) {
+                    matchesList.innerHTML = `<p class="text-center text-muted">No matches found</p>`;
+                    return;
+                }
+                
+                let html = '';
+                matches.forEach(match => {
+                    html += `
+                        <div class="card match-card mb-2" data-match-id="${match.id}">
+                            <div class="card-body p-3">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div class="fw-bold">${match.home_team} vs ${match.away_team}</div>
+                                        <div class="small text-muted">${match.league || 'Unknown League'}</div>
+                                    </div>
+                                    <div class="text-end">
+                                        <div class="small text-muted">${match.datetime || 'TBD'}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                matchesList.innerHTML = html;
+                
+                // Add click event to match cards
+                document.querySelectorAll('.match-card').forEach(card => {
+                    card.addEventListener('click', function() {
+                        const matchId = this.getAttribute('data-match-id');
+                        getMatchDetails(matchId);
+                    });
+                });
+            }
+            
+            function getMatchDetails(matchId) {
+                // Show prediction container
+                predictionContainer.style.display = 'block';
+                
+                // Reset prediction sections
+                prediction1x2.innerHTML = loadingSpinner();
+                predictionExactScore.innerHTML = loadingSpinner();
+                predictionOverUnder.innerHTML = loadingSpinner();
+                bettingAnalysis.innerHTML = loadingSpinner();
+                
+                // Fetch match details
+                fetch(`/match/${matchId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Error:', data.error);
+                        return;
+                    }
+                    
+                    const match = data.match;
+                    
+                    // Update match details
+                    matchTeams.textContent = `${match.home.name} vs ${match.away.name}`;
+                    matchLeague.textContent = match.stage || 'Unknown League';
+                    matchDate.textContent = match.date || 'TBD';
+                    
+                    // Get predictions
+                    getPredictions(matchId);
+                    
+                    // Display betting analysis
+                    displayBettingAnalysis(match);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            }
+            
+            function getPredictions(matchId) {
+                fetch(`/predict/${matchId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        console.error('Error:', data.error);
+                        return;
+                    }
+                    
+                    const predictions = data.predictions;
+                    
+                    // Display 1X2 prediction
+                    display1X2Prediction(predictions['1x2']);
+                    
+                    // Display exact score prediction
+                    displayExactScorePrediction(predictions['exact_score']);
+                    
+                    // Display over/under predictions
+                    displayOverUnderPredictions(predictions['over_under']);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            }
+            
+            function display1X2Prediction(prediction) {
+                if (!prediction) {
+                    prediction1x2.innerHTML = `<p class="text-muted">No prediction available</p>`;
+                    return;
+                }
+                
+                const safetyClass = prediction.is_safe_bet ? 'safe-bet' : 'risky-bet';
+                const safetyText = prediction.is_safe_bet ? 'Safe Bet' : 'Risky Bet';
+                
+                let html = `
+                    <div class="text-center mb-3">
+                        <span class="prediction-badge ${safetyClass}">
+                            ${prediction.prediction} (${(prediction.confidence * 100).toFixed(1)}%)
+                            <i class="fas ${prediction.is_safe_bet ? 'fa-shield-alt' : 'fa-exclamation-triangle'} ms-1"></i>
+                            ${safetyText}
+                        </span>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <h6>Probability Breakdown:</h6>
+                        <div class="mb-2">
+                            <div class="d-flex justify-content-between">
+                                <span>Home Win:</span>
+                                <span>${(prediction.probabilities.HOME_WIN * 100).toFixed(1)}%</span>
+                            </div>
+                            <div class="probability-bar">
+                                <div class="probability-fill" style="width: ${prediction.probabilities.HOME_WIN * 100}%; background-color: #1e3a8a;"></div>
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <div class="d-flex justify-content-between">
+                                <span>Draw:</span>
+                                <span>${(prediction.probabilities.DRAW * 100).toFixed(1)}%</span>
+                            </div>
+                            <div class="probability-bar">
+                                <div class="probability-fill" style="width: ${prediction.probabilities.DRAW * 100}%; background-color: #64748b;"></div>
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <div class="d-flex justify-content-between">
+                                <span>Away Win:</span>
+                                <span>${(prediction.probabilities.AWAY_WIN * 100).toFixed(1)}%</span>
+                            </div>
+                            <div class="probability-bar">
+                                <div class="probability-fill" style="width: ${prediction.probabilities.AWAY_WIN * 100}%; background-color: #0ea5e9;"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                prediction1x2.innerHTML = html;
+            }
+            
+            function displayExactScorePrediction(prediction) {
+                if (!prediction) {
+                    predictionExactScore.innerHTML = `<p class="text-muted">No prediction available</p>`;
+                    return;
+                }
+                
+                const safetyClass = prediction.is_safe_bet ? 'safe-bet' : 'risky-bet';
+                const safetyText = prediction.is_safe_bet ? 'Safe Bet' : 'Risky Bet';
+                
+                let html = `
+                    <div class="text-center mb-3">
+                        <span class="prediction-badge ${safetyClass}">
+                            ${prediction.most_likely} (${(prediction.confidence * 100).toFixed(1)}%)
+                            <i class="fas ${prediction.is_safe_bet ? 'fa-shield-alt' : 'fa-exclamation-triangle'} ms-1"></i>
+                            ${safetyText}
+                        </span>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <h6>Top Score Predictions:</h6>
+                        <div class="mt-2">
+                `;
+                
+                prediction.top_predictions.forEach(score => {
+                    html += `
+                        <div class="exact-score-item">
+                            <span>${score.score}</span>
+                            <span>${(score.probability * 100).toFixed(1)}%</span>
+                        </div>
+                    `;
+                });
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+                
+                predictionExactScore.innerHTML = html;
+            }
+            
+            function displayOverUnderPredictions(predictions) {
+                if (!predictions) {
+                    predictionOverUnder.innerHTML = `<p class="text-muted">No predictions available</p>`;
+                    return;
+                }
+                
+                let html = `<div class="row">`;
+                
+                const thresholds = ['0.5', '1.5', '2.5', '3.5'];
+                
+                thresholds.forEach(threshold => {
+                    const prediction = predictions[threshold];
+                    if (!prediction) return;
+                    
+                    const safetyClass = prediction.is_safe_bet ? 'safe-bet' : 'risky-bet';
+                    const safetyText = prediction.is_safe_bet ? 'Safe Bet' : 'Risky Bet';
+                    
+                    html += `
+                        <div class="col-md-6 mb-3">
+                            <div class="card">
+                                <div class="card-header bg-secondary text-white">
+                                    Over/Under ${threshold}
+                                </div>
+                                <div class="card-body">
+                                    <div class="text-center mb-3">
+                                        <span class="prediction-badge ${safetyClass}">
+                                            ${prediction.prediction} (${(prediction.confidence * 100).toFixed(1)}%)
+                                            <i class="fas ${prediction.is_safe_bet ? 'fa-shield-alt' : 'fa-exclamation-triangle'} ms-1"></i>
+                                            ${safetyText}
+                                        </span>
+                                    </div>
+                                    
+                                    <div class="mt-2">
+                                        <div class="d-flex justify-content-between">
+                                            <span>Over:</span>
+                                            <span>${(prediction.probabilities.OVER * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div class="probability-bar">
+                                            <div class="probability-fill" style="width: ${prediction.probabilities.OVER * 100}%; background-color: #0ea5e9;"></div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-2">
+                                        <div class="d-flex justify-content-between">
+                                            <span>Under:</span>
+                                            <span>${(prediction.probabilities.UNDER * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div class="probability-bar">
+                                            <div class="probability-fill" style="width: ${prediction.probabilities.UNDER * 100}%; background-color: #64748b;"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += `</div>`;
+                
+                predictionOverUnder.innerHTML = html;
+            }
+            
+            function displayBettingAnalysis(match) {
+                const analysis = match.betting_analysis || {};
+                
+                if (Object.keys(analysis).length === 0) {
+                    bettingAnalysis.innerHTML = `<p class="text-muted">No betting analysis available</p>`;
+                    return;
+                }
+                
+                let html = '';
+                
+                for (const [title, content] of Object.entries(analysis)) {
+                    html += `
+                        <div class="analysis-section mb-3">
+                            <div class="analysis-title">${title}</div>
+                            <div>${content}</div>
+                        </div>
+                    `;
+                }
+                
+                bettingAnalysis.innerHTML = html;
+            }
+            
+            function loadingSpinner() {
+                return `
+                    <div class="loading">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
