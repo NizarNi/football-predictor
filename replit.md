@@ -18,6 +18,13 @@ A Flask-based web application providing football match predictions using real bo
 - **VS SEPARATOR**: Home (blue badge) + "VS" divider + Away (red badge) layout for instant form comparison
 - **TALLER CHARTS**: Comparison charts increased to 180px height for better visibility
 - **GRACEFUL LAYOUT**: Single chart gets full width if only one team has data
+- **QUICK FIX 1**: Fixed infinite scroll bug - Added overflow: hidden wrappers to chart containers
+- **QUICK FIX 2**: Team logos added to Match Context headers (20x20px with fallback handling)
+- **QUICK FIX 3**: Form indicators stay inline (inline-flex with nowrap, no line breaks)
+- **QUICK FIX 4**: Chart timeline shows newest→oldest (recent matches on right side)
+- **QUICK FIX 5**: Verified opponent names accuracy (direct from FBref home_team/away_team fields)
+- **QUICK FIX 6**: Added Betting Tips tooltip explaining data sources and confidence factors
+- **QUICK FIX 7**: Chart explanation box repositioned directly above xG Trend Comparison section
 
 ### Phase 4 - xG Trend Visualizations & Transparency (2025-10-08) ✅
 - **FIXED**: xG Diff calculation now shows per-game average instead of season total for accurate comparison
