@@ -307,7 +307,7 @@
                     </div>
                     <div class="card-body">
                         <div class="row">
-                            <div class="col-md-6 mb-3">
+                            <div class="col-md-6 mb-3" style="position: relative; z-index: 1000;">
                                 <h5>Search by Team</h5>
                                 <div style="position: relative;">
                                     <div class="input-group">
@@ -477,6 +477,7 @@
             const matchContext = document.getElementById('match-context');
             
             let currentMatchData = null;
+            let currentOverUnderData = null;
             
             // Comprehensive team database with nicknames and aliases (unique aliases only)
             const teamDatabase = [
@@ -901,6 +902,9 @@
                     return;
                 }
                 
+                // Store Over/Under data globally
+                currentOverUnderData = totalsData;
+                
                 let html = `<div class="row">`;
                 
                 totalsData.predictions.forEach(prediction => {
@@ -955,6 +959,11 @@
                 
                 html += `</div>`;
                 predictionOverUnder.innerHTML = html;
+                
+                // Regenerate betting tips with Over/Under data if betting analysis is already shown
+                if (bettingAnalysis.innerHTML && !bettingAnalysis.innerHTML.includes('Show Betting Analysis')) {
+                    displayOddsBasedAnalysis(currentMatchData);
+                }
             }
             
             function loadMatchContext(match) {
@@ -1099,7 +1108,7 @@
                 let html = `
                     <div class="text-center mb-3">
                         <span class="prediction-badge ${safetyClass}">
-                            ${prediction.prediction} (${(prediction.confidence * 100).toFixed(1)}%)
+                            ${prediction.prediction} (${prediction.confidence.toFixed(1)}%)
                             <i class="fas ${prediction.is_safe_bet ? 'fa-shield-alt' : 'fa-exclamation-triangle'} ms-1"></i>
                             ${safetyText}
                         </span>
@@ -1201,15 +1210,15 @@
                 predictionOverUnder.innerHTML = html;
             }
             
-            function generateBettingTips(pred1x2) {
+            function generateBettingTips(pred1x2, overUnderData) {
                 if (!pred1x2.probabilities) {
                     return '';
                 }
                 
                 const probs = pred1x2.probabilities;
-                const homeWin = probs.home_win || 0;
-                const draw = probs.draw || 0;
-                const awayWin = probs.away_win || 0;
+                const homeWin = probs.HOME_WIN || 0;
+                const draw = probs.DRAW || 0;
+                const awayWin = probs.AWAY_WIN || 0;
                 
                 // Calculate double chance probabilities
                 const dc1X = homeWin + draw;  // Home or Draw
@@ -1218,13 +1227,35 @@
                 
                 // Create array of betting options
                 const options = [
-                    { name: 'Home Win', prob: homeWin, type: 'single' },
-                    { name: 'Draw', prob: draw, type: 'single' },
-                    { name: 'Away Win', prob: awayWin, type: 'single' },
+                    { name: 'Home Win', prob: homeWin, type: '1x2' },
+                    { name: 'Draw', prob: draw, type: '1x2' },
+                    { name: 'Away Win', prob: awayWin, type: '1x2' },
                     { name: 'Double Chance 1X (Home or Draw)', prob: dc1X, type: 'double_chance' },
                     { name: 'Double Chance 12 (Home or Away)', prob: dc12, type: 'double_chance' },
                     { name: 'Double Chance X2 (Draw or Away)', prob: dcX2, type: 'double_chance' }
                 ];
+                
+                // Add Over/Under options if available
+                if (overUnderData && overUnderData.predictions) {
+                    overUnderData.predictions.forEach(pred => {
+                        const overProb = pred.probabilities.over || 0;
+                        const underProb = pred.probabilities.under || 0;
+                        
+                        options.push({
+                            name: `Over ${pred.line} Goals`,
+                            prob: overProb,
+                            type: 'totals',
+                            line: pred.line
+                        });
+                        
+                        options.push({
+                            name: `Under ${pred.line} Goals`,
+                            prob: underProb,
+                            type: 'totals',
+                            line: pred.line
+                        });
+                    });
+                }
                 
                 // Sort by probability
                 options.sort((a, b) => b.prob - a.prob);
@@ -1238,9 +1269,10 @@
                 html += '<div class="analysis-title">💡 Betting Tips</div>';
                 
                 if (safest) {
+                    const typeIcon = safest.type === 'totals' ? '⚽' : safest.type === 'double_chance' ? '🎯' : '🏆';
                     html += `
                         <div class="alert alert-success mb-2">
-                            <strong>🛡️ SAFEST BET:</strong> ${safest.name}
+                            <strong>🛡️ SAFEST BET:</strong> ${typeIcon} ${safest.name}
                             <br><span class="badge bg-success">${(safest.prob * 100).toFixed(1)}% probability</span>
                             <br><small class="text-muted">Lower odds but highest chance of winning</small>
                         </div>
@@ -1248,9 +1280,10 @@
                 }
                 
                 if (balanced) {
+                    const typeIcon = balanced.type === 'totals' ? '⚽' : balanced.type === 'double_chance' ? '🎯' : '🏆';
                     html += `
                         <div class="alert alert-info mb-2">
-                            <strong>⚖️ BALANCED BET:</strong> ${balanced.name}
+                            <strong>⚖️ BALANCED BET:</strong> ${typeIcon} ${balanced.name}
                             <br><span class="badge bg-info">${(balanced.prob * 100).toFixed(1)}% probability</span>
                             <br><small class="text-muted">Moderate odds with reasonable chance</small>
                         </div>
@@ -1258,9 +1291,10 @@
                 }
                 
                 if (risky) {
+                    const typeIcon = risky.type === 'totals' ? '⚽' : risky.type === 'double_chance' ? '🎯' : '🏆';
                     html += `
                         <div class="alert alert-warning mb-2">
-                            <strong>🎲 VALUE BET:</strong> ${risky.name}
+                            <strong>🎲 VALUE BET:</strong> ${typeIcon} ${risky.name}
                             <br><span class="badge bg-warning text-dark">${(risky.prob * 100).toFixed(1)}% probability</span>
                             <br><small class="text-muted">Higher odds but lower probability</small>
                         </div>
@@ -1319,8 +1353,8 @@
                     html += '</div>';
                 }
                 
-                // Add Betting Tips
-                html += generateBettingTips(pred1x2);
+                // Add Betting Tips (include Over/Under data if available)
+                html += generateBettingTips(pred1x2, currentOverUnderData);
                 
                 bettingAnalysis.innerHTML = html;
             }

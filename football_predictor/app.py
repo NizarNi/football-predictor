@@ -311,6 +311,78 @@ def get_match_totals(event_id):
         print(f"Error fetching totals for {event_id}: {e}")
         return jsonify({"error": f"Failed to fetch totals: {str(e)}"}), 500
 
+def normalize_team_name(name):
+    """Normalize team name for better matching"""
+    if not name:
+        return ""
+    
+    # Convert to lowercase
+    normalized = name.lower()
+    
+    # Remove common prefixes and suffixes
+    prefixes = ['fc ', 'afc ', 'cf ', 'ac ', 'sc ', 'ssc ', 'as ', 'rc ', 'rcd ', 'fk ', 'bfc ', 'vfl ', 'sv ']
+    suffixes = [' fc', ' afc', ' cf', ' ac', ' sc', ' united', ' city', ' town']
+    
+    for prefix in prefixes:
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+            break
+    
+    for suffix in suffixes:
+        if normalized.endswith(suffix):
+            normalized = normalized[:-len(suffix)]
+            break
+    
+    # Replace variations
+    normalized = normalized.replace(' and ', ' & ')
+    normalized = normalized.replace('&', 'and')
+    
+    # Remove extra spaces
+    normalized = ' '.join(normalized.split())
+    
+    return normalized
+
+def fuzzy_team_match(team1, team2):
+    """Check if two team names match with fuzzy logic"""
+    if not team1 or not team2:
+        return False
+    
+    t1_lower = team1.lower()
+    t2_lower = team2.lower()
+    
+    # Exact match
+    if t1_lower == t2_lower:
+        return True
+    
+    # Contains match
+    if t1_lower in t2_lower or t2_lower in t1_lower:
+        return True
+    
+    # Normalized match
+    t1_norm = normalize_team_name(team1)
+    t2_norm = normalize_team_name(team2)
+    
+    if t1_norm == t2_norm:
+        return True
+    
+    # Normalized contains match
+    if t1_norm in t2_norm or t2_norm in t1_norm:
+        return True
+    
+    # Word-based match (at least 2 significant words match)
+    words1 = set(t1_norm.split())
+    words2 = set(t2_norm.split())
+    
+    # Filter out very short words (articles, etc.)
+    words1 = {w for w in words1 if len(w) > 2}
+    words2 = {w for w in words2 if len(w) > 2}
+    
+    common_words = words1 & words2
+    if len(common_words) >= min(2, len(words1), len(words2)):
+        return True
+    
+    return False
+
 @app.route("/match/<int:match_id>/context", methods=["GET"])
 def get_match_context(match_id):
     """Get match context including standings and form"""
@@ -331,12 +403,10 @@ def get_match_context(match_id):
             away_data = None
             
             if standings and home_team:
-                home_team_lower = home_team.lower()
-                home_data = next((team for team in standings if team['name'].lower() in home_team_lower or home_team_lower in team['name'].lower()), None)
+                home_data = next((team for team in standings if fuzzy_team_match(team['name'], home_team)), None)
             
             if standings and away_team:
-                away_team_lower = away_team.lower()
-                away_data = next((team for team in standings if team['name'].lower() in away_team_lower or away_team_lower in team['name'].lower()), None)
+                away_data = next((team for team in standings if fuzzy_team_match(team['name'], away_team)), None)
             
             # Generate narrative based on available data
             if home_data and away_data:

@@ -41,9 +41,9 @@ def calculate_averaged_probabilities(bookmakers, home_team, away_team):
         avg_away /= total
     
     return {
-        "home_win": round(avg_home, 4),
-        "draw": round(avg_draw, 4),
-        "away_win": round(avg_away, 4)
+        "HOME_WIN": round(avg_home, 4),
+        "DRAW": round(avg_draw, 4),
+        "AWAY_WIN": round(avg_away, 4)
     }
 
 def extract_best_odds(bookmakers, home_team, away_team):
@@ -227,9 +227,9 @@ def calculate_predictions_from_odds(match_data):
     if not bookmakers:
         return {
             "probabilities": {
-                "home_win": 0.33,
-                "draw": 0.33,
-                "away_win": 0.33
+                "HOME_WIN": 0.33,
+                "DRAW": 0.33,
+                "AWAY_WIN": 0.33
             },
             "prediction": "N/A",
             "confidence": 0,
@@ -243,9 +243,9 @@ def calculate_predictions_from_odds(match_data):
     arbitrage = detect_arbitrage(bookmakers, home_team, away_team)
     
     max_prob = max(probabilities.values())
-    if probabilities["home_win"] == max_prob:
+    if probabilities["HOME_WIN"] == max_prob:
         prediction = "HOME_WIN"
-    elif probabilities["draw"] == max_prob:
+    elif probabilities["DRAW"] == max_prob:
         prediction = "DRAW"
     else:
         prediction = "AWAY_WIN"
