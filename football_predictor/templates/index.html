@@ -1530,6 +1530,28 @@
                     html += `<div class="alert ${alertClass} mb-3 small"><i class="fas ${icon} me-2"></i>${contextData.narrative}</div>`;
                 }
                 
+                // Add xG trend chart explanation if charts will be displayed
+                const hasHomeXgChart = contextData.xg && contextData.xg.home_stats && contextData.xg.home_stats.recent_matches && contextData.xg.home_stats.recent_matches.length > 0;
+                const hasAwayXgChart = contextData.xg && contextData.xg.away_stats && contextData.xg.away_stats.recent_matches && contextData.xg.away_stats.recent_matches.length > 0;
+                
+                if (hasHomeXgChart || hasAwayXgChart) {
+                    html += `
+                        <div class="alert alert-primary mb-3 small" style="background-color: #e7f3ff; border-color: #b3d9ff;">
+                            <div class="d-flex align-items-start">
+                                <i class="fas fa-chart-line me-2 mt-1" style="color: #0066cc;"></i>
+                                <div>
+                                    <strong>📈 How to Read xG Trend Charts:</strong><br>
+                                    <span style="color: #28a745; font-weight: 600;">●</span> <strong style="color: #28a745;">Green line (xGF)</strong> = Goals created per game<br>
+                                    <span style="color: #dc3545; font-weight: 600;">●</span> <strong style="color: #dc3545;">Red line (xGA)</strong> = Goals conceded per game<br>
+                                    <span class="ms-3">✅ Green ABOVE red = Good attacking form</span><br>
+                                    <span class="ms-3">❌ Red ABOVE green = Defensive struggles</span><br>
+                                    <span class="ms-3">📈 Rising green = Attack improving | 📉 Falling red = Defense improving</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
                 const hasHomeData = contextData.home_team && (contextData.home_team.position || contextData.home_team.points || contextData.home_team.form);
                 const hasAwayData = contextData.away_team && (contextData.away_team.position || contextData.away_team.points || contextData.away_team.form);
                 
