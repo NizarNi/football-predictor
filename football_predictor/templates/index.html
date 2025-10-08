@@ -286,9 +286,11 @@
                         </div>
                         <div class="card-body">
                             <div id="matches-list">
-                                <p class="text-center text-muted">
-                                    Search for a team or browse upcoming matches to get started
-                                </p>
+                                <div class="loading">
+                                    <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -494,12 +496,25 @@
                     return;
                 }
                 
+                const popularTeams = [
+                    'Bayern München', 'Paris Saint-Germain', 'Arsenal', 'Real Madrid', 'Liverpool FC',
+                    'Barcelona', 'Chelsea FC', 'Manchester City', 'Inter Milan', 'Borussia Dortmund',
+                    'Atlético Madrid', 'SSC Napoli', 'Palmeiras', 'AS Roma', 'Crystal Palace',
+                    'Atalanta', 'Aston Villa', 'Newcastle United', 'Bayer Leverkusen', 'AC Milan',
+                    'Sporting', 'Villarreal', 'Juventus', 'Flamengo', 'PSV Eindhoven',
+                    'Brighton & Hove Albion', 'Galatasaray', 'Benfica', 'AFC Bournemouth', 'Real Betis',
+                    'Tottenham Hotspur', 'FC Porto', 'Eintracht Frankfurt', 'Feyenoord', 'Marseille',
+                    'Everton FC', 'Lille', 'RB Leipzig', 'Club Brugge', 'Slavia Prague',
+                    'Union St.Gilloise', 'Olympiakos', 'Lyon', 'Lazio', 'Al Hilal',
+                    'FK Red Star Belgrade', 'Brentford FC', 'Bologna', 'Athletic Bilbao', 'Manchester United'
+                ];
+                
                 let html = '';
                 matches.forEach(match => {
-                    const isPopular = match.league && (
-                        match.league.toLowerCase().includes('champions league') ||
-                        match.league.toLowerCase().includes('europa league') ||
-                        match.league.toLowerCase().includes('uefa')
+                    const homeTeam = match.home_team.toLowerCase();
+                    const awayTeam = match.away_team.toLowerCase();
+                    const isPopular = popularTeams.some(team => 
+                        homeTeam.includes(team.toLowerCase()) || awayTeam.includes(team.toLowerCase())
                     );
                     const popularClass = isPopular ? ' popular-match' : '';
                     
@@ -778,6 +793,9 @@
                     </div>
                 `;
             }
+            
+            // Auto-load popular upcoming matches on page load
+            getUpcomingMatches('CL');
         });
     </script>
 </body>
