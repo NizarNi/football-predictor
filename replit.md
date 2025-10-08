@@ -4,7 +4,22 @@
 A Flask-based web application that provides football match predictions using real bookmaker odds from The Odds API. The application fetches upcoming matches with live odds from 30+ bookmakers, converts odds to implied probabilities, detects arbitrage opportunities, and provides consensus predictions based on market data.
 
 ## Recent Changes
-- **2025-10-08**: Search Optimization & Arbitrage Filtering (Latest)
+- **2025-10-08**: Bug Fixes, Team Logos & Enhanced Betting Tips (Latest)
+  - **FIXED**: Critical NaN probabilities regression - standardized backend/frontend to use uppercase keys (HOME_WIN, DRAW, AWAY_WIN)
+  - **FIXED**: Critical 3950% confidence bug - removed redundant percentage multiplication in frontend
+  - **FIXED**: Autocomplete dropdown z-index improved with stacking context for proper display over all UI elements
+  - **ENHANCED**: Fuzzy team name matching for match context - handles variations (Brighton & Hove Albion vs Brighton, AFC Bournemouth vs Bournemouth, Olympiakos Piraeus vs Olympiakos)
+  - **ADDED**: `normalize_team_name()` function in backend to strip prefixes (FC, AFC, CF) and normalize special characters
+  - **ADDED**: `fuzzy_team_match()` function in backend for word-based team name matching (2+ significant words)
+  - **NEW FEATURE**: Team logos from luukhopman/football-logos GitHub repo displayed on match cards (28x28px) and prediction views (36x36px)
+  - **ADDED**: `normalizeTeamNameForLogo()` function with 50+ team mappings (Arsenal → Arsenal FC, Barcelona → FC Barcelona, etc.)
+  - **ADDED**: `getTeamLogoUrl()` helper to construct GitHub raw URLs with proper encoding for 5 major leagues
+  - **ENHANCED**: Betting tips now include Over/Under recommendations with dynamic refresh when totals data loads
+  - **IMPROVED**: Betting tips regenerate automatically when Over/Under data is loaded after initial display
+  - **STORED**: Over/Under data globally (`currentOverUnderData`) for use in betting tips updates
+  - **LIMITATION**: UEFA competitions (Champions League, Europa League) don't show team logos (no centralized folder in logo repo)
+
+- **2025-10-08**: Search Optimization & Arbitrage Filtering
   - **REFACTORED**: `/search` endpoint now uses The Odds API exclusively for consistency with match data
   - **FIXED**: Search endpoint gracefully handles empty API results (404 instead of 500 error)
   - **FIXED**: League code mapping in frontend - handles variations like "Ligue 1 - France" → "FL1" correctly
