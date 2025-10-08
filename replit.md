@@ -5,6 +5,20 @@ A Flask-based web application providing football match predictions using real bo
 
 ## Recent Changes
 
+### Phase 3 - xG Analytics Integration (2025-10-08) ✅
+- **NEW BACKEND MODULE**: `xg_data_fetcher.py` fetches real Expected Goals data from FBref via soccerdata library
+- **REAL DATA**: Uses shooting stats (xGF), keeper_adv stats (PSxG for xGA), and standard stats (matches played)
+- **DEPENDENCY FIX**: Downgraded lxml to 5.3.0 to resolve MultiIndex DataFrame parsing issues with soccerdata 1.8.2
+- **API ENDPOINT**: `/match/<event_id>/xg` returns comprehensive xG predictions with 24-hour caching
+- **MATCH CONTEXT**: Displays xGF/xGA per game and xG overperformance (goals vs expected) for both teams
+- **BETTING TIPS**: New "xG Analysis" section shows expected goals prediction, result probability, and Over/Under 2.5 recommendation
+- **INTELLIGENT CACHING**: 24-hour JSON cache per league significantly reduces FBref API calls
+- **SEASON LOGIC**: Uses previous complete season (2024) when current season is early (August-November) for more reliable data
+- **LEAGUE SUPPORT**: xG available for top 5 domestic leagues only (PL, PD, BL1, SA, FL1) - not Champions/Europa League
+- **GRACEFUL DEGRADATION**: System handles unsupported leagues elegantly; xG sections simply don't appear
+- **CRITICAL BUG FIX**: Clear `currentXgData` on match selection to prevent stale xG data from appearing in betting tips
+- **DATA FRESHNESS**: xG data shared between Match Context and Betting Analysis with proper state management
+
 ### Phase 2 - UI/Filter Improvements (2025-10-08) ✅
 - **REDESIGNED**: Top section with centered, larger search bar (80% width, prominent position)
 - **NEW FEATURE**: Unified filter bar with clean horizontal layout and centered alignment
@@ -57,7 +71,8 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Best Odds Display:** Shows the highest available odds for each outcome across all bookmakers.
 - **Prediction Types:** Includes 1X2 (Home Win/Draw/Away Win) with implied probabilities, confidence scores, and bookmaker count.
 - **Multi-League Support:** Covers Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Champions League, and Europa League.
-- **Match Context:** Displays league standings, team positions, points, and form, and generates contextual match descriptions.
+- **Match Context:** Displays league standings, team positions, points, form, and xG metrics (xGF, xGA, overperformance) for both teams.
+- **xG Analytics:** Real Expected Goals data from FBref showing team attacking/defensive strength, xG-based match predictions, and Over/Under 2.5 recommendations (available for top 5 leagues only).
 
 ### System Design Choices
 - **Flask Application:** Core web framework for the backend.
@@ -68,8 +83,10 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 ## External Dependencies
 - **The Odds API:** Primary source for live bookmaker odds from 30+ bookmakers.
 - **football-data.org:** Fallback API for match schedules, league standings, and team form.
+- **FBref (via soccerdata):** Real Expected Goals (xG) statistics from FBref.com for top 5 European leagues.
 - **luukhopman/football-logos (GitHub Repo):** Source for team logos displayed in the application.
 - **Flask:** Python web framework.
 - **gunicorn:** WSGI HTTP server.
 - **requests:** HTTP library for making API calls.
+- **soccerdata:** Python library for fetching football statistics from various sources including FBref.
 - **Bootstrap 5.3:** Frontend framework for responsive UI design.
