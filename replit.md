@@ -4,6 +4,12 @@
 A Flask-based web application that provides football match predictions using external APIs. The application fetches upcoming matches from the football-data.org API and generates predictions using the Football Prediction API on RapidAPI.
 
 ## Recent Changes
+- **2025-10-08**: UI Enhancements - Europa League & Popular Match Highlighting
+  - **ADDED**: Europa League (EL) support to both backend and frontend
+  - **ADDED**: Popular match highlighting with golden badge for Champions League and Europa League fixtures
+  - **IMPROVED**: Search bar with better placeholder text and helper instructions
+  - **STYLED**: Match cards for UEFA competitions now display ⭐ POPULAR badge with golden gradient border
+
 - **2025-10-08**: Fixed infinite loop bug and added API key rotation
   - **FIXED**: Implemented `/match/<id>` endpoint to return match details in correct frontend structure
   - **FIXED**: Implemented `/predict/<id>` endpoint with placeholder predictions
@@ -110,6 +116,7 @@ The app is configured to deploy using gunicorn with:
 - Bundesliga (Germany)
 - Ligue 1 (France)
 - Champions League
+- Europa League
 
 ## Technical Notes
 - The app uses Flask in debug mode for development
