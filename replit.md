@@ -5,6 +5,18 @@ A Flask-based web application providing football match predictions using real bo
 
 ## Recent Changes
 
+### Phase 6 - Dark Theme & Toggle (2025-10-08) ✅
+- **COMPLETE DARK THEME**: Modern navy/charcoal color palette with CSS variables for seamless light/dark switching
+- **THEME TOGGLE**: Button in navbar with moon/sun icon, smooth 0.3s transitions, localStorage persistence across sessions
+- **CHART.JS INTEGRATION**: Theme-aware chart colors - grid, text, labels update dynamically when toggling
+- **GLOBAL SCOPE FIX**: Moved helper functions (formatFormIndicators, createXgTrendChart) to global scope for toggle access
+- **VARIABLE MANAGEMENT**: currentMatchData, currentOverUnderData, currentXgData in global scope for cross-function access
+- **PROBABILITY BARS**: Theme-aware colors update dynamically (blue/cyan for dark, darker blues for light)
+- **FORM INDICATORS**: W/D/L squares use getThemeColors() for proper draw indicator contrast (slate vs gray)
+- **SMOOTH UI**: All elements transition smoothly between themes - cards, backgrounds, text, borders, badges
+- **PERSISTENT CHOICE**: localStorage saves 'dark'/'light' preference, auto-applies on page load
+- **CHART REFRESH**: Toggle destroys and recreates xG charts with updated theme palette for instant visual update
+
 ### Phase 5 - Chart Clarity & Premier League Fixes (2025-10-08) ✅
 - **RENAMED**: "xG Diff" → "Scoring Clinicality" with backward compatibility for cached data
 - **CRITICAL FIX**: Flask route parameters changed from `<int:match_id>` to `<match_id>` to accept negative IDs from The Odds API
