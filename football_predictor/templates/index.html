@@ -633,6 +633,9 @@
                 });
             }
             
+            // Make function available globally for inline onclick handler
+            window.loadOverUnderPredictions = loadOverUnderPredictions;
+            
             function displayTotalsData(totalsData) {
                 if (!totalsData || !totalsData.predictions || totalsData.predictions.length === 0) {
                     predictionOverUnder.innerHTML = '<p class="text-muted">No over/under odds available for this match</p>';
