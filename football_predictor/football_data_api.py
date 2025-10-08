@@ -7,12 +7,14 @@ import random
 class RateLimitExceededError(Exception):
     """Custom exception for API rate limit exceeded errors."""
 
-# New API credentials for football-data.org
+# API credentials for football-data.org from environment
 API_KEYS = [
-    os.environ.get("FOOTBALL_DATA_API_KEY_1", "8497ba1147b44cafb94e763d4835b10f"), # Original key
-    os.environ.get("FOOTBALL_DATA_API_KEY_2", "390cfcf491a94d4f91397e8292190407"),  # New key
-    os.environ.get("FOOTBALL_DATA_API_KEY_3", "658f9a8caeab4ca5b9c5dd6c8a2ca393")   # Third key
+    os.environ.get("FOOTBALL_DATA_API_KEY_1"),
+    os.environ.get("FOOTBALL_DATA_API_KEY_2"),
+    os.environ.get("FOOTBALL_DATA_API_KEY_3")
 ]
+# Filter out None values
+API_KEYS = [key for key in API_KEYS if key is not None]
 BASE_URL = "https://api.football-data.org/v4/"
 
 # Global variable to track the current API key index
