@@ -533,6 +533,7 @@
             
             let currentMatchData = null;
             let currentOverUnderData = null;
+            let currentXgData = null;
             
             // Comprehensive team database with nicknames and aliases (unique aliases only)
             const teamDatabase = [
@@ -1208,8 +1209,46 @@
                 
                 bettingAnalysis.innerHTML = loadingSpinner();
                 
-                // Call the existing display function with current match data
-                displayOddsBasedAnalysis(currentMatchData);
+                // Fetch xG data if not already loaded (from Match Context)
+                if (!currentXgData && currentMatchData.league) {
+                    const leagueMap = {
+                        'UEFA Champions League': 'CL',
+                        'EPL': 'PL',
+                        'Premier League': 'PL',
+                        'English Premier League': 'PL',
+                        'La Liga': 'PD',
+                        'Spanish La Liga': 'PD',
+                        'Spain La Liga': 'PD',
+                        'Bundesliga': 'BL1',
+                        'German Bundesliga': 'BL1',
+                        'Germany Bundesliga': 'BL1',
+                        'Serie A': 'SA',
+                        'Italian Serie A': 'SA',
+                        'Italy Serie A': 'SA',
+                        'Ligue 1': 'FL1',
+                        'French Ligue 1': 'FL1',
+                        'France Ligue 1': 'FL1',
+                        'Ligue 1 - France': 'FL1',
+                        'UEFA Europa League': 'EL'
+                    };
+                    
+                    const leagueCode = leagueMap[currentMatchData.league] || currentMatchData.league;
+                    
+                    fetch(`/match/${currentMatchData.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(currentMatchData.home_team)}&away_team=${encodeURIComponent(currentMatchData.away_team)}`)
+                    .then(r => r.json())
+                    .then(xgData => {
+                        currentXgData = xgData.xg || null;
+                        displayOddsBasedAnalysis(currentMatchData);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching xG:', error);
+                        currentXgData = null;
+                        displayOddsBasedAnalysis(currentMatchData);
+                    });
+                } else {
+                    // xG data already loaded or unavailable
+                    displayOddsBasedAnalysis(currentMatchData);
+                }
             }
             
             // Make function available globally for inline onclick handler
@@ -1291,6 +1330,9 @@
                     return;
                 }
                 
+                // Clear xG data from previous match to prevent stale data
+                currentXgData = null;
+                
                 matchContext.innerHTML = loadingSpinner();
                 
                 const leagueMap = {
@@ -1316,15 +1358,20 @@
                 
                 const leagueCode = leagueMap[match.league] || match.league;
                 
-                fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.error) {
-                        matchContext.innerHTML = `<p class="text-muted">${data.narrative || 'Context unavailable'}</p>`;
+                // Fetch both standings context and xG data in parallel
+                Promise.all([
+                    fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`).then(r => r.json()),
+                    fetch(`/match/${match.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`).then(r => r.json())
+                ])
+                .then(([contextData, xgData]) => {
+                    if (contextData.error) {
+                        matchContext.innerHTML = `<p class="text-muted">${contextData.narrative || 'Context unavailable'}</p>`;
                         return;
                     }
                     
-                    displayMatchContextData(data);
+                    // Merge xG data into context data
+                    contextData.xg = xgData.xg || null;
+                    displayMatchContextData(contextData);
                 })
                 .catch(error => {
                     console.error('Error loading context:', error);
@@ -1382,6 +1429,17 @@
                         if (contextData.home_team.form) {
                             html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.home_team.form)}</td></tr>`;
                         }
+                        // Add xG metrics if available
+                        if (contextData.xg && contextData.xg.home_stats) {
+                            html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For:</td><td><strong>${contextData.xg.home_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA:</td><td><strong>${contextData.xg.home_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            if (contextData.xg.home_stats.xg_overperformance) {
+                                const overperf = contextData.xg.home_stats.xg_overperformance;
+                                const overPerfClass = overperf > 0 ? 'text-success' : 'text-danger';
+                                html += `<tr><td class="text-muted">xG Diff:</td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong></td></tr>`;
+                            }
+                        }
                         html += `</tbody></table>`;
                     } else {
                         html += `<p class="text-muted small"><i>No standings data available</i></p>`;
@@ -1402,6 +1460,17 @@
                         }
                         if (contextData.away_team.form) {
                             html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.away_team.form)}</td></tr>`;
+                        }
+                        // Add xG metrics if available
+                        if (contextData.xg && contextData.xg.away_stats) {
+                            html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For:</td><td><strong>${contextData.xg.away_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA:</td><td><strong>${contextData.xg.away_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            if (contextData.xg.away_stats.xg_overperformance) {
+                                const overperf = contextData.xg.away_stats.xg_overperformance;
+                                const overPerfClass = overperf > 0 ? 'text-success' : 'text-danger';
+                                html += `<tr><td class="text-muted">xG Diff:</td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong></td></tr>`;
+                            }
                         }
                         html += `</tbody></table>`;
                     } else {
@@ -1529,7 +1598,7 @@
                 predictionOverUnder.innerHTML = html;
             }
             
-            function generateBettingTips(pred1x2, overUnderData) {
+            function generateBettingTips(pred1x2, overUnderData, xgData) {
                 if (!pred1x2.probabilities) {
                     return '';
                 }
@@ -1621,6 +1690,53 @@
                 }
                 
                 html += '</div>';
+                
+                // Add xG-based insights if available
+                if (xgData && xgData.available) {
+                    html += '<div class="analysis-section mb-3" style="border: 2px solid #6366f1; background-color: #f0f4ff;">';
+                    html += '<div class="analysis-title" style="color: #6366f1;"><i class="fas fa-chart-line me-2"></i>xG Analysis</div>';
+                    
+                    html += `
+                        <p class="mb-2">
+                            <strong>Expected Goals Prediction:</strong>
+                            <span class="badge bg-primary">${xgData.home_xg.toFixed(2)}</span>
+                            -
+                            <span class="badge bg-danger">${xgData.away_xg.toFixed(2)}</span>
+                        </p>
+                        <p class="small text-muted mb-3">
+                            Total expected goals: ${xgData.total_xg.toFixed(2)}
+                            (${xgData.over_under_2_5.prediction} 2.5 goals at ${xgData.over_under_2_5.over_probability}%)
+                        </p>
+                    `;
+                    
+                    // xG-based match result recommendation
+                    const xgResult = xgData.result_prediction;
+                    const xgResultText = xgResult.prediction === 'HOME_WIN' ? '🏠 Home Win' : 
+                                        xgResult.prediction === 'AWAY_WIN' ? '✈️ Away Win' : '🤝 Draw';
+                    html += `
+                        <div class="alert alert-primary mb-2">
+                            <strong>📊 xG Result Prediction:</strong> ${xgResultText}
+                            <br><span class="badge bg-primary">${xgResult.confidence}% confidence (based on xG data)</span>
+                            <br><small class="text-muted">Statistical prediction based on team attacking/defensive strength</small>
+                        </div>
+                    `;
+                    
+                    // xG-based Over/Under recommendation
+                    const xgOverUnder = xgData.over_under_2_5;
+                    html += `
+                        <div class="alert ${xgOverUnder.over_probability >= 60 ? 'alert-success' : 'alert-secondary'} mb-2">
+                            <strong>⚽ xG Over/Under 2.5:</strong> ${xgOverUnder.prediction}
+                            <br><span class="badge ${xgOverUnder.over_probability >= 60 ? 'bg-success' : 'bg-secondary'}">
+                                ${xgOverUnder.prediction === 'OVER' ? xgOverUnder.over_probability : xgOverUnder.under_probability}% probability
+                            </span>
+                            <br><small class="text-muted">Based on combined xG: ${xgData.total_xg.toFixed(2)} expected goals</small>
+                        </div>
+                    `;
+                    
+                    html += '<p class="small text-muted mt-2"><i class="fas fa-info-circle me-1"></i>xG (Expected Goals) is a statistical measure based on FBref data showing team offensive and defensive strength</p>';
+                    html += '</div>';
+                }
+                
                 return html;
             }
             
@@ -1672,8 +1788,8 @@
                     html += '</div>';
                 }
                 
-                // Add Betting Tips (include Over/Under data if available)
-                html += generateBettingTips(pred1x2, currentOverUnderData);
+                // Add Betting Tips (include Over/Under and xG data if available)
+                html += generateBettingTips(pred1x2, currentOverUnderData, currentXgData);
                 
                 bettingAnalysis.innerHTML = html;
             }
