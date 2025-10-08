@@ -1,15 +1,13 @@
 from flask import Flask, render_template, request, jsonify
 import os
 import json
-import pandas as pd
-import numpy as np
 from datetime import datetime
 import sys
 
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from football_data_api import get_competitions, get_upcoming_matches
+from football_data_api import get_competitions, get_upcoming_matches, RateLimitExceededError
 from rapidapi_football_prediction import get_rapidapi_predictions, RapidAPIPredictionError
 
 RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")

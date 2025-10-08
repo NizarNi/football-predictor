@@ -26,7 +26,7 @@ def get_rapidapi_predictions(match_id: str, market: str = "classic") -> dict:
     if not RAPIDAPI_KEY:
         raise RapidAPIPredictionError("RAPIDAPI_KEY environment variable not set.")
 
-    url = f"https://{{RAPIDAPI_HOST}}/api/v2/predictions/match/{{match_id}}?market={{market}}"
+    url = f"https://{RAPIDAPI_HOST}/api/v2/predictions/match/{match_id}?market={market}"
 
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
@@ -38,7 +38,7 @@ def get_rapidapi_predictions(match_id: str, market: str = "classic") -> dict:
         response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
         data = response.json()
         if data.get("status") == "error":
-            raise RapidAPIPredictionError(f"RapidAPI returned an error: {data.get(\'message\', \'Unknown error\')}")
+            raise RapidAPIPredictionError(f"RapidAPI returned an error: {data.get('message', 'Unknown error')}")
         return data
     except requests.exceptions.RequestException as e:
         raise RapidAPIPredictionError(f"Error fetching prediction from RapidAPI: {e}")

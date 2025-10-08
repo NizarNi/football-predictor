@@ -41,16 +41,16 @@ def _make_api_request(endpoint, params=None):
             time.sleep(1) # Add a 1-second delay between API calls to avoid rate limiting
             return response.json()
         except requests.exceptions.RequestException as e:
-            if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", 5)) # Default to 5 seconds
-
-                time.sleep(retry_after)
-                retries += 1
-            elif response.status_code == 403:
-
-                retries += 1 # Increment retries, but switch key immediately
+            if hasattr(e, 'response') and e.response is not None:
+                if e.response.status_code == 429:
+                    retry_after = int(e.response.headers.get("Retry-After", 5)) # Default to 5 seconds
+                    time.sleep(retry_after)
+                    retries += 1
+                elif e.response.status_code == 403:
+                    retries += 1 # Increment retries, but switch key immediately
+                else:
+                    return None
             else:
-
                 return None
 
     raise RateLimitExceededError(f"Rate limit exceeded for {endpoint} after {max_retries} retries.")
