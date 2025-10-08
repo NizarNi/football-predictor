@@ -5,6 +5,21 @@ A Flask-based web application providing football match predictions using real bo
 
 ## Recent Changes
 
+### Phase 4 - xG Trend Visualizations & Transparency (2025-10-08) ✅
+- **FIXED**: xG Diff calculation now shows per-game average instead of season total for accurate comparison
+- **COMPREHENSIVE TOOLTIPS**: Info icons throughout app explain all calculations, factors, and data sources
+- **MATCH-BY-MATCH DATA**: Backend fetches complete fixture logs from FBref with per-game xG, xGA, W/D/L results
+- **ROLLING AVERAGES**: Calculates rolling 5-match xG/xGA averages to show recent form trends
+- **FORM EXTRACTION**: Parses W/D/L results from match logs into visual form strings (e.g., "WWDLD")
+- **ENHANCED API**: `/match/<event_id>/xg` now returns rolling_5, form, and recent_matches arrays
+- **W/D/L INDICATORS**: Visual form display in Match Context with colored squares (🟩 Win, ⬜ Draw, 🟥 Loss)
+- **CHART.JS INTEGRATION**: Added Chart.js 4.4.0 CDN for interactive visualizations
+- **XG TREND CHARTS**: Mini line charts showing rolling 5-match xG/xGA evolution with green/red filled areas
+- **CHART INTEGRATION**: xG trend visualizations embedded in Match Context below team stats
+- **MEMORY MANAGEMENT**: Proper chart lifecycle (destroy old, create new) prevents memory leaks
+- **EN-DASH FIX**: Score parsing handles both hyphen (-) and en-dash (–) from FBref data
+- **GRACEFUL HANDLING**: All new features degrade gracefully when data unavailable (early season, unsupported leagues)
+
 ### Phase 3 - xG Analytics Integration (2025-10-08) ✅
 - **NEW BACKEND MODULE**: `xg_data_fetcher.py` fetches real Expected Goals data from FBref via soccerdata library
 - **REAL DATA**: Uses shooting stats (xGF), keeper_adv stats (PSxG for xGA), and standard stats (matches played)
