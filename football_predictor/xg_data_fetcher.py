@@ -166,7 +166,12 @@ def fetch_league_xg_stats(league_code, season=None):
     league_name = LEAGUE_MAPPING[league_code]
     
     try:
-        print(f"📊 Fetching xG stats for {league_name} (season {season}-{season+1})...")
+        # Handle season display (could be int like 2024 or string like "2024-2025")
+        if isinstance(season, int):
+            season_display = f"{season}-{season+1}"
+        else:
+            season_display = str(season)
+        print(f"📊 Fetching xG stats for {league_name} (season {season_display})...")
         
         # Fetch team stats from FBref
         fbref = sd.FBref(leagues=league_name, seasons=season)
@@ -319,7 +324,7 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         season: Season year (optional)
     
     Returns:
-        dict: Match xG prediction with expected goals and over/under likelihood
+        dict: Match xG prediction with expected goals, over/under likelihood, rolling averages, and form
     """
     home_stats = get_team_xg_stats(home_team, league_code, season)
     away_stats = get_team_xg_stats(away_team, league_code, season)
@@ -329,6 +334,55 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
             'available': False,
             'error': 'xG data not available for one or both teams'
         }
+    
+    # Get FBref team names for match logs
+    home_fbref_name = normalize_team_name_for_fbref(home_team)
+    away_fbref_name = normalize_team_name_for_fbref(away_team)
+    
+    # Fetch rolling averages, form, and recent matches (if available)
+    home_rolling = {'xg_for_rolling': None, 'xg_against_rolling': None, 'matches_count': 0}
+    away_rolling = {'xg_for_rolling': None, 'xg_against_rolling': None, 'matches_count': 0}
+    home_form = None
+    away_form = None
+    home_recent_matches = []
+    away_recent_matches = []
+    
+    try:
+        # Get match logs for rolling averages, form, and recent matches
+        home_matches = fetch_team_match_logs(home_fbref_name, league_code, season)
+        if home_matches:
+            # Always compute rolling averages and form (functions handle <5 matches gracefully)
+            home_rolling = calculate_rolling_averages(home_matches, 5)
+            home_form = extract_last_5_results(home_matches, 5)
+            # Include last 5 matches in response (convert datetime to string for JSON)
+            home_recent_matches = [{
+                'date': str(m['date']),
+                'opponent': m['opponent'],
+                'is_home': m['is_home'],
+                'xg_for': m['xg_for'],
+                'xg_against': m['xg_against'],
+                'result': m['result']
+            } for m in home_matches[:5]]
+    except Exception as e:
+        print(f"Could not fetch rolling data for {home_team}: {e}")
+    
+    try:
+        away_matches = fetch_team_match_logs(away_fbref_name, league_code, season)
+        if away_matches:
+            # Always compute rolling averages and form (functions handle <5 matches gracefully)
+            away_rolling = calculate_rolling_averages(away_matches, 5)
+            away_form = extract_last_5_results(away_matches, 5)
+            # Include last 5 matches in response
+            away_recent_matches = [{
+                'date': str(m['date']),
+                'opponent': m['opponent'],
+                'is_home': m['is_home'],
+                'xg_for': m['xg_for'],
+                'xg_against': m['xg_against'],
+                'result': m['result']
+            } for m in away_matches[:5]]
+    except Exception as e:
+        print(f"Could not fetch rolling data for {away_team}: {e}")
     
     # Calculate expected goals for the match
     # Home team expected goals = (home xGF + away xGA) / 2 * home advantage factor
@@ -365,12 +419,18 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         'home_stats': {
             'xg_for_per_game': home_stats['xg_for_per_game'],
             'xg_against_per_game': home_stats['xg_against_per_game'],
-            'xg_overperformance': home_stats['xg_overperformance']
+            'xg_overperformance': home_stats['xg_overperformance'],
+            'rolling_5': home_rolling,
+            'form': home_form,
+            'recent_matches': home_recent_matches
         },
         'away_stats': {
             'xg_for_per_game': away_stats['xg_for_per_game'],
             'xg_against_per_game': away_stats['xg_against_per_game'],
-            'xg_overperformance': away_stats['xg_overperformance']
+            'xg_overperformance': away_stats['xg_overperformance'],
+            'rolling_5': away_rolling,
+            'form': away_form,
+            'recent_matches': away_recent_matches
         },
         'over_under_2_5': {
             'prediction': 'OVER' if over_2_5_probability > 50 else 'UNDER',
