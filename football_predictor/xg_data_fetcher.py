@@ -246,10 +246,9 @@ def fetch_league_xg_stats(league_code, season=None):
                 xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
                 xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
                 
-                # Calculate xG overperformance (actual goals vs expected)
-                xg_data[team_name]['xg_overperformance'] = round(
-                    xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for'], 2
-                )
+                # Calculate xG overperformance per game (actual goals vs expected)
+                xg_overperformance_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
+                xg_data[team_name]['xg_overperformance'] = round(xg_overperformance_total / matches, 2)
             else:
                 xg_data[team_name]['xg_for_per_game'] = 0
                 xg_data[team_name]['xg_against_per_game'] = 0
