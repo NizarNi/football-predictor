@@ -209,27 +209,8 @@
             font-weight: 600;
         }
         
-        .match-card.safe-bet-match {
-            border: 2px solid #6366f1;
-            background: linear-gradient(135deg, #eff6ff 0%, var(--card-bg) 100%);
-        }
         
-        body.dark-theme .match-card.safe-bet-match {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, var(--card-bg) 100%);
-        }
         
-        .match-card.safe-bet-match::after {
-            content: "🎯 SAFE BET";
-            position: absolute;
-            top: -10px;
-            right: 10px;
-            background: #6366f1;
-            color: white;
-            padding: 2px 10px;
-            border-radius: 12px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
         
         .match-card {
             position: relative;
@@ -459,13 +440,6 @@
                                         <input class="form-check-input" type="checkbox" id="arbitrage-filter-checkbox">
                                         <label class="form-check-label" for="arbitrage-filter-checkbox">
                                             💰 Arbitrage Opportunities
-                                        </label>
-                                    </div>
-                                    
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="safe-bets-checkbox">
-                                        <label class="form-check-label" for="safe-bets-checkbox">
-                                            🎯 Safe Bet Opportunities (≥75%)
                                         </label>
                                     </div>
                                     
@@ -1394,14 +1368,9 @@
             
             // Filter control event listeners
             const arbitrageFilterCheckbox = document.getElementById('arbitrage-filter-checkbox');
-            const safeBetsCheckbox = document.getElementById('safe-bets-checkbox');
             
             if (arbitrageFilterCheckbox) {
                 arbitrageFilterCheckbox.addEventListener('change', applyFilters);
-            }
-            
-            if (safeBetsCheckbox) {
-                safeBetsCheckbox.addEventListener('change', applyFilters);
             }
             
             // Functions
@@ -1491,20 +1460,6 @@
             // Helper function to get maximum confidence from betting tips
             // Note: Only checks 1X2 predictions which are available upfront
             // Over/Under data is loaded on-demand when viewing a specific match
-            function getMaxBettingConfidence(match) {
-                if (!match.predictions) return 0;
-                
-                let maxConfidence = 0;
-                
-                // Check 1X2 predictions (always available)
-                if (match.predictions.probabilities) {
-                    const probs = match.predictions.probabilities;
-                    maxConfidence = Math.max(
-                        probs.HOME_WIN || 0,
-                        probs.DRAW || 0,
-                        probs.AWAY_WIN || 0
-                    );
-                }
                 
                 // Check Over/Under if it's embedded in the match object
                 // (Future enhancement: pre-load Over/Under for all matches to improve filtering)
@@ -1519,7 +1474,7 @@
             }
             
             // Update the filter badge with match counts
-            function updateFilterBadge(filteredCount, totalCount, arbitrageFilter, safeBetsFilter) {
+            function updateFilterBadge(filteredCount, totalCount, arbitrageFilter) {
                 const badge = document.getElementById('filter-badge');
                 
                 if (filteredCount === totalCount) {
@@ -1530,12 +1485,8 @@
                 badge.style.display = 'inline-block';
                 
                 let badgeText = '';
-                if (arbitrageFilter && safeBetsFilter) {
-                    badgeText = `${filteredCount} Match${filteredCount === 1 ? '' : 'es'} Found`;
-                } else if (arbitrageFilter) {
+                if (arbitrageFilter) {
                     badgeText = `${filteredCount} Arbitrage ${filteredCount === 1 ? 'Opportunity' : 'Opportunities'}`;
-                } else if (safeBetsFilter) {
-                    badgeText = `${filteredCount} Safe Bet ${filteredCount === 1 ? 'Opportunity' : 'Opportunities'}`;
                 }
                 
                 badge.textContent = badgeText;
@@ -1552,7 +1503,6 @@
                 
                 // Get current filter settings from the top filter bar
                 const arbitrageFilter = document.getElementById('arbitrage-filter-checkbox')?.checked || false;
-                const safeBetsFilter = document.getElementById('safe-bets-checkbox')?.checked || false;
                 
                 // Apply filters
                 let filteredMatches = matches;
@@ -1566,15 +1516,8 @@
                     );
                 }
                 
-                // Filter for safe bet opportunities (≥75% confidence)
-                if (safeBetsFilter) {
-                    filteredMatches = filteredMatches.filter(match => 
-                        getMaxBettingConfidence(match) >= 75
-                    );
-                }
-                
                 // Update filter badge
-                updateFilterBadge(filteredMatches.length, matches.length, arbitrageFilter, safeBetsFilter);
+                updateFilterBadge(filteredMatches.length, matches.length, arbitrageFilter);
                 
                 const popularTeams = [
                     'Bayern München', 'Paris Saint-Germain', 'Arsenal', 'Real Madrid', 'Liverpool FC',
@@ -1599,10 +1542,8 @@
                     const hasArbitrage = match.predictions && 
                                        match.predictions.arbitrage && 
                                        match.predictions.arbitrage.is_arbitrage;
-                    const hasSafeBet = getMaxBettingConfidence(match) >= 75;
                     const popularClass = isPopular ? ' popular-match' : '';
                     const arbitrageClass = hasArbitrage ? ' arbitrage-match' : '';
-                    const safeBetClass = hasSafeBet ? ' safe-bet-match' : '';
                     
                     // Find the original index in the full matches array
                     const originalIndex = matches.findIndex(m => 
@@ -1615,7 +1556,7 @@
                     const awayLogo = getTeamLogoUrl(match.away_team, match.league);
                     
                     html += `
-                        <div class="card match-card mb-2${popularClass}${arbitrageClass}${safeBetClass}" data-match-index="${originalIndex}">
+                        <div class="card match-card mb-2${popularClass}${arbitrageClass}" data-match-index="${originalIndex}">
                             <div class="card-body p-3">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div class="flex-grow-1">
