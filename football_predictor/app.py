@@ -256,7 +256,7 @@ def get_match(match_id):
         print(f"Error fetching match {match_id}: {e}")
         return jsonify({"error": f"Failed to fetch match details: {str(e)}"}), 500
 
-@app.route("/predict/<int:match_id>", methods=["GET"])
+@app.route("/predict/<match_id>", methods=["GET"])
 def predict_match(match_id):
     """Get predictions for a specific match"""
     try:

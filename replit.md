@@ -5,6 +5,20 @@ A Flask-based web application providing football match predictions using real bo
 
 ## Recent Changes
 
+### Phase 5 - Chart Clarity & Premier League Fixes (2025-10-08) ✅
+- **RENAMED**: "xG Diff" → "Scoring Clinicality" with backward compatibility for cached data
+- **CRITICAL FIX**: Flask route parameters changed from `<int:match_id>` to `<match_id>` to accept negative IDs from The Odds API
+- **LOGO FIX**: Added Southampton FC, Leicester City, and Ipswich Town (2024-25 promoted teams) to logo mappings
+- **CRYSTAL CLEAR CHARTS**: Prominent blue info box explains xG trend charts before display (green=xGF, red=xGA, interpretation guide)
+- **ENHANCED TOOLTIPS**: Chart tooltips now show opponent, score, result (e.g., "vs Arsenal (2-1) - W"), rolling avg AND actual match xG
+- **TOOLTIP FOOTER**: Automatic form interpretation on hover (✅ Good form / ❌ Struggling / ⚖️ Balanced)
+- **Y-AXIS LABEL**: Charts now labeled "Expected Goals per Game" for clarity
+- **VISIBLE ZERO-LINE**: Zero grid line thicker (2px) and darker (0.3 opacity) vs regular grid (1px, 0.05 opacity)
+- **SIDE-BY-SIDE COMPARISON**: Dedicated "xG Trend Comparison" section with charts displayed horizontally
+- **VS SEPARATOR**: Home (blue badge) + "VS" divider + Away (red badge) layout for instant form comparison
+- **TALLER CHARTS**: Comparison charts increased to 180px height for better visibility
+- **GRACEFUL LAYOUT**: Single chart gets full width if only one team has data
+
 ### Phase 4 - xG Trend Visualizations & Transparency (2025-10-08) ✅
 - **FIXED**: xG Diff calculation now shows per-game average instead of season total for accurate comparison
 - **COMPREHENSIVE TOOLTIPS**: Info icons throughout app explain all calculations, factors, and data sources
