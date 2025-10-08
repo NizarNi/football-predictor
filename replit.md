@@ -4,6 +4,16 @@
 A Flask-based web application that provides football match predictions using real bookmaker odds from The Odds API. The application fetches upcoming matches with live odds from 30+ bookmakers, converts odds to implied probabilities, detects arbitrage opportunities, and provides consensus predictions based on market data.
 
 ## Recent Changes
+- **2025-10-08**: Advanced Betting Analysis & UX Improvements (Latest)
+  - **NEW FEATURE**: On-demand Betting Analysis button (saves page load time, displays arbitrage/tips on click)
+  - **ENHANCED**: Arbitrage display now shows bookmaker names and odds for each stake (e.g., "Home: $40.05 @ Betfair (2.50)")
+  - **FILTERED**: Over/Under predictions to only show common lines (1.5, 2.5, 3.5 goals) - hides exotic Asian handicap lines
+  - **NEW FEATURE**: Intelligent betting tips with risk-based recommendations (Safest 60-80%, Balanced 30-50%, Value 15-30%)
+  - **IMPROVED**: Match Context error handling - shows partial data gracefully when teams not found in standings
+  - **NEW FEATURE**: Autocomplete search with 30+ teams supporting nicknames (PSG→Paris Saint Germain, Barca→Barcelona, Bayern→Bayern Munich)
+  - **ENHANCED**: Alias normalization - typing "PSG" and pressing Enter now correctly searches for "Paris Saint Germain"
+  - **UX**: Autocomplete dropdown shows team name, matched alias, and league with 8-result limit
+
 - **2025-10-08**: UI Bug Fixes and Code Cleanup
   - **REMOVED**: Exact Score component that was causing endless API loops (service not offered by The Odds API)
   - **REMOVED**: Dead fallback code - getMatchDetails(), getPredictions(), displayExactScorePrediction() functions
