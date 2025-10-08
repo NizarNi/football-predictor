@@ -238,7 +238,7 @@
         
         .autocomplete-dropdown {
             position: absolute;
-            z-index: 9999;
+            z-index: 99999;
             background: white;
             border: 1px solid #ddd;
             border-radius: 4px;
@@ -307,9 +307,9 @@
                     </div>
                     <div class="card-body">
                         <div class="row">
-                            <div class="col-md-6 mb-3" style="position: relative; z-index: 1000;">
+                            <div class="col-md-6 mb-3" style="position: relative; z-index: 10000;">
                                 <h5>Search by Team</h5>
-                                <div style="position: relative;">
+                                <div style="position: relative; z-index: 10001;">
                                     <div class="input-group">
                                         <input type="text" id="team-search" class="form-control" placeholder="Enter team name or nickname (PSG, Barca, Bayern)..." autocomplete="off">
                                         <button class="btn btn-primary" id="search-btn">
@@ -514,6 +514,70 @@
                 { name: "Lille", aliases: ["LOSC"], league: "Ligue 1" }
             ];
             
+            // Fuzzy team name normalization for logo matching (league-gated to prevent cross-league collisions)
+            function fuzzyNormalizeTeamName(apiName, league) {
+                apiName = apiName.trim();
+                const lower = apiName.toLowerCase();
+                
+                // Normalize league identifier to handle variations
+                const leagueLower = (league || '').toLowerCase();
+                const isPremierLeague = leagueLower.includes('premier') || leagueLower === 'epl';
+                const isLaLiga = leagueLower.includes('la liga') || leagueLower.includes('spain') || leagueLower === 'pd';
+                const isBundesliga = leagueLower.includes('bundesliga') || leagueLower.includes('germany') || leagueLower === 'bl1';
+                const isSerieA = leagueLower.includes('serie a') || leagueLower.includes('italy') || leagueLower === 'sa';
+                const isLigue1 = leagueLower.includes('ligue 1') || leagueLower.includes('france') || leagueLower === 'fl1';
+                
+                // League-specific patterns to avoid cross-league collisions (e.g., Inter Miami vs Inter Milan)
+                const patterns = [
+                    // Bundesliga teams
+                    { test: /^bayern/i, result: 'FC Bayern München', leagues: [isBundesliga] },
+                    
+                    // La Liga teams
+                    { test: /^bar[cç]a|^barcelona/i, result: 'FC Barcelona', leagues: [isLaLiga] },
+                    { test: /^real\s+madrid/i, result: 'Real Madrid CF', leagues: [isLaLiga] },
+                    { test: /^atl[eé]tico\s+madrid/i, result: 'Atlético de Madrid', leagues: [isLaLiga] },
+                    
+                    // Serie A teams (Inter/Milan only for Serie A to avoid Inter Miami collision)
+                    { test: /^inter(?:\s+milan)?$/i, result: 'FC Internazionale Milano', leagues: [isSerieA] },
+                    { test: /^(?:ac\s+)?milan$/i, result: 'AC Milan', leagues: [isSerieA] },
+                    { test: /^juve|^juventus/i, result: 'Juventus FC', leagues: [isSerieA] },
+                    
+                    // Ligue 1 teams (PSG only for Ligue 1 to avoid Paris FC collision)
+                    { test: /^psg$|^paris\s+saint/i, result: 'Paris Saint-Germain', leagues: [isLigue1] },
+                    
+                    // Premier League teams
+                    { test: /^arsenal$/i, result: 'Arsenal FC', leagues: [isPremierLeague] },
+                    { test: /^liverpool$/i, result: 'Liverpool FC', leagues: [isPremierLeague] },
+                    { test: /^chelsea$/i, result: 'Chelsea FC', leagues: [isPremierLeague] },
+                    { test: /^(?:man(?:chester)?\s+)?city$/i, result: 'Manchester City', leagues: [isPremierLeague] },
+                    { test: /^(?:man(?:chester)?\s+)?united$/i, result: 'Manchester United', leagues: [isPremierLeague] },
+                    { test: /^tottenham|^spurs$/i, result: 'Tottenham Hotspur', leagues: [isPremierLeague] },
+                    { test: /^newcastle/i, result: 'Newcastle United', leagues: [isPremierLeague] },
+                    { test: /^west\s+ham/i, result: 'West Ham United', leagues: [isPremierLeague] },
+                    { test: /^aston\s+villa$/i, result: 'Aston Villa', leagues: [isPremierLeague] },
+                    { test: /^brighton/i, result: 'Brighton & Hove Albion', leagues: [isPremierLeague] },
+                    { test: /^(?:afc\s+)?bournemouth$/i, result: 'AFC Bournemouth', leagues: [isPremierLeague] },
+                    { test: /^wolves|^wolverhampton/i, result: 'Wolverhampton Wanderers', leagues: [isPremierLeague] },
+                    { test: /^everton$/i, result: 'Everton FC', leagues: [isPremierLeague] },
+                    { test: /^brentford$/i, result: 'Brentford FC', leagues: [isPremierLeague] },
+                    { test: /^fulham$/i, result: 'Fulham FC', leagues: [isPremierLeague] },
+                    { test: /^crystal\s+palace$/i, result: 'Crystal Palace', leagues: [isPremierLeague] },
+                    { test: /^nottingham\s+forest$/i, result: 'Nottingham Forest', leagues: [isPremierLeague] },
+                ];
+                
+                // Check pattern matches with league gating
+                for (const pattern of patterns) {
+                    // Only apply pattern if ANY of the league conditions match
+                    const leagueMatches = pattern.leagues.some(condition => condition === true);
+                    if (leagueMatches && pattern.test.test(apiName)) {
+                        return pattern.result;
+                    }
+                }
+                
+                // If no pattern matched, return original (safe fallback)
+                return apiName;
+            }
+            
             // Team name to filename mapping (Odds API name → GitHub filename)
             function normalizeTeamNameForLogo(teamName) {
                 const nameMap = {
@@ -621,8 +685,13 @@
                     return '';
                 }
                 
-                // Normalize team name to match GitHub filename format
-                const normalizedTeamName = normalizeTeamNameForLogo(teamName);
+                // Try pattern-based fuzzy normalization first
+                let normalizedTeamName = fuzzyNormalizeTeamName(teamName, league);
+                
+                // If fuzzy didn't change it, try the explicit mapping table
+                if (normalizedTeamName === teamName) {
+                    normalizedTeamName = normalizeTeamNameForLogo(teamName);
+                }
                 
                 // Encode team name for URL (keep spaces, &, etc. as they appear in filenames)
                 const teamFileName = encodeURIComponent(normalizedTeamName + '.png');
