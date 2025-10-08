@@ -4,6 +4,17 @@
 A Flask-based web application that provides football match predictions using real bookmaker odds from The Odds API. The application fetches upcoming matches with live odds from 30+ bookmakers, converts odds to implied probabilities, detects arbitrage opportunities, and provides consensus predictions based on market data.
 
 ## Recent Changes
+- **2025-10-08**: On-Demand Over/Under Predictions & Match Context
+  - **ADDED**: `/match/<event_id>/totals` endpoint for on-demand Over/Under odds fetching
+  - **ADDED**: `calculate_totals_from_odds()` function to process totals market data
+  - **ADDED**: `/match/<match_id>/context` endpoint for league standings and team form
+  - **ADDED**: `get_league_standings()` function to fetch standings from football-data.org
+  - **ADDED**: `generate_match_narrative()` to create contextual match descriptions
+  - **NEW FEATURE**: "Show Over/Under Odds" button loads totals only when clicked (saves 50% API quota)
+  - **NEW FEATURE**: Match Context panel displays team positions, points, and form automatically
+  - **IMPROVED**: Over/Under predictions show multiple lines (2.5, 3.5 goals) with consensus probabilities
+  - **COST OPTIMIZATION**: Deferred totals fetching reduces API calls from 3 markets to 1 market per match view
+
 - **2025-10-08**: Major Architecture Update - The Odds API Integration
   - **REPLACED**: RapidAPI predictions with The Odds API real bookmaker odds
   - **ADDED**: `odds_api_client.py` for fetching odds from The Odds API with 3-key rotation
@@ -62,6 +73,8 @@ football_predictor/
    - `/upcoming` - Fetch upcoming matches from multiple leagues (with dual-API fallback)
    - `/match/<id>` - Get detailed match information by ID
    - `/predict/<id>` - Get predictions for a specific match (returns placeholder when unavailable)
+   - `/match/<event_id>/totals` - On-demand Over/Under odds fetching (saves API quota)
+   - `/match/<match_id>/context` - League standings and team form with narrative generation
    - `/search` - Search matches by team name
    - `/process_data` - Deprecated endpoint (returns error)
 
