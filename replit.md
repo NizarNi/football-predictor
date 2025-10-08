@@ -3,6 +3,30 @@
 ## Overview
 A Flask-based web application providing football match predictions using real bookmaker odds. It fetches upcoming matches and live odds from over 30 bookmakers, converts odds to implied probabilities, detects arbitrage opportunities, and offers consensus predictions based on market data. The project aims to empower users with data-driven insights for sports betting.
 
+## Recent Changes
+
+### Phase 2 - UI/Filter Improvements (2025-10-08) ✅
+- **REDESIGNED**: Top section with centered, larger search bar (80% width, prominent position)
+- **NEW FEATURE**: Unified filter bar with clean horizontal layout and centered alignment
+- **NEW FEATURE**: "Bet Opportunities" dropdown filter - Very Safe (≥88%), Safe (≥75%), Moderate (≥60%), All Matches
+- **INTELLIGENT**: Filter analyzes 1X2 predictions (HOME_WIN, DRAW, AWAY_WIN) to find high-confidence bets
+- **MOVED**: Arbitrage checkbox integrated into unified filter bar (removed from matches section)
+- **NEW FEATURE**: Dynamic filter badge showing count (e.g., "5 Very Safe Bets Found", "10 Arbitrage Opportunities")
+- **ENHANCED**: Filters work cumulatively (arbitrage + confidence threshold both apply)
+- **IMPROVED**: League buttons reorganized with "Browse by League:" label for better UX
+- **CODE CLEANUP**: Removed old filterHtml generation, toggleArbitrageFilter function, inline filter UI
+- **ARCHITECTURE**: New applyFilters() function reads current filter state from DOM and re-renders
+- **HELPER FUNCTIONS**: getMaxBettingConfidence() evaluates match confidence, updateFilterBadge() manages counter display
+- **FUTURE-READY**: Filter logic will automatically include Over/Under when backend pre-loads totals data
+
+### Phase 1 - Logo System Improvements (2025-10-08) ✅
+- **ENHANCED**: League-gated fuzzy team name normalization prevents cross-league collisions (Inter Miami ≠ Inter Milan, Paris FC ≠ PSG)
+- **ADDED**: `fuzzyNormalizeTeamName()` function with 25+ regex patterns for common team name variations
+- **IMPROVED**: League detection handles variations (Premier League/EPL/epl, La Liga/Spain/PD, etc.)
+- **FIXED**: Autocomplete dropdown z-index significantly increased (parent: 10000, dropdown: 99999) for proper stacking above matches section
+- **ARCHITECTURE**: Logo URL generation flow: fuzzyNormalizeTeamName → normalizeTeamNameForLogo → fallback to original name
+- **SAFE**: Returns original team name if no pattern matches (graceful degradation for unknown teams/leagues)
+
 ## User Preferences
 I prefer detailed explanations. Ask before making major changes. I want iterative development. I prefer simple language.
 
@@ -10,7 +34,11 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 
 ### UI/UX Decisions
 - **Responsive UI:** Utilizes Bootstrap for a responsive design.
-- **Team Logos:** Displays team logos from a GitHub repository on match cards and prediction views.
+- **Centered Search:** Large, prominent search bar at top-center (80% width) with autocomplete for team names and nicknames.
+- **Unified Filter Bar:** Clean horizontal filter bar with "Bet Opportunities" dropdown and arbitrage checkbox.
+- **Intelligent Filtering:** "Bet Opportunities" filter finds high-confidence bets (≥60%, ≥75%, ≥88%) across 1X2 predictions.
+- **Dynamic Badges:** Shows filtered match counts (e.g., "5 Very Safe Bets Found") with auto-hiding when no filters active.
+- **Team Logos:** Displays team logos from a GitHub repository on match cards and prediction views with league-gated fuzzy matching.
 - **Visual Cues:** Uses colored form indicators (🟩 Win, ⬜ Draw, 🟥 Loss) and a visual 💰 ARBITRAGE badge with a green gradient border for easy identification.
 - **Autocomplete Search:** Features an autocomplete search bar with team nicknames, displaying team name, matched alias, and league with an 8-result limit.
 - **Popular Match Highlighting:** Highlights Champions League and Europa League fixtures with a golden badge.
