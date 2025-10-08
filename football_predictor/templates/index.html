@@ -614,21 +614,37 @@
             }
             
             function loadOverUnderPredictions() {
-                if (!currentMatchData) return;
+                console.log('loadOverUnderPredictions called');
+                console.log('currentMatchData:', currentMatchData);
+                
+                if (!currentMatchData) {
+                    console.error('No currentMatchData available');
+                    predictionOverUnder.innerHTML = '<p class="text-danger">No match data available</p>';
+                    return;
+                }
                 
                 predictionOverUnder.innerHTML = loadingSpinner();
                 
                 const eventId = currentMatchData.event_id;
                 const sportKey = currentMatchData.sport_key;
                 
+                console.log('eventId:', eventId, 'sportKey:', sportKey);
+                
                 if (!eventId || !sportKey) {
-                    predictionOverUnder.innerHTML = '<p class="text-danger">Unable to load over/under odds for this match</p>';
+                    predictionOverUnder.innerHTML = '<p class="text-danger">Unable to load over/under odds for this match (missing event_id or sport_key)</p>';
                     return;
                 }
                 
-                fetch(`/match/${eventId}/totals?sport_key=${sportKey}`)
-                .then(response => response.json())
+                const url = `/match/${eventId}/totals?sport_key=${sportKey}`;
+                console.log('Fetching:', url);
+                
+                fetch(url)
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    return response.json();
+                })
                 .then(data => {
+                    console.log('Response data:', data);
                     if (data.error) {
                         predictionOverUnder.innerHTML = `<p class="text-danger">${data.error}</p>`;
                         return;
@@ -637,8 +653,8 @@
                     displayTotalsData(data.totals);
                 })
                 .catch(error => {
-                    console.error('Error:', error);
-                    predictionOverUnder.innerHTML = '<p class="text-danger">Failed to load over/under odds</p>';
+                    console.error('Error fetching over/under:', error);
+                    predictionOverUnder.innerHTML = `<p class="text-danger">Failed to load over/under odds: ${error.message}</p>`;
                 });
             }
             

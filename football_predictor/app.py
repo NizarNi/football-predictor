@@ -32,6 +32,15 @@ def index():
     """Render the home page"""
     return render_template("index.html")
 
+@app.route("/demo")
+def demo():
+    """Demo page to showcase Over/Under and Match Context features (static version)"""
+    try:
+        with open('/tmp/demo_static.html', 'r') as f:
+            return f.read()
+    except:
+        return "Demo page not available", 404
+
 @app.route("/upcoming", methods=["GET"])
 def upcoming():
     """Get upcoming matches with predictions using The Odds API (primary) and football-data.org (fallback)"""
