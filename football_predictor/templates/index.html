@@ -433,6 +433,7 @@
                                     <div class="card">
                                         <div class="card-header bg-primary text-white">
                                             <i class="fas fa-trophy me-2"></i> 1X2 Prediction
+                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Based on 30+ bookmaker odds. Considers: team form, injuries, head-to-head records, betting market movements. Source: The Odds API" style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
                                             <div id="prediction-1x2">
@@ -452,6 +453,7 @@
                                     <div class="card">
                                         <div class="card-header bg-secondary text-white">
                                             <i class="fas fa-chart-line me-2"></i> Match Context
+                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Team standings, recent form, and Expected Goals (xG) statistics. Form and xG data: FBref. Standings: football-data.org" style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
                                             <div id="match-context">
@@ -467,6 +469,7 @@
                                     <div class="card">
                                         <div class="card-header bg-primary text-white">
                                             <i class="fas fa-exchange-alt me-2"></i> Over/Under Predictions
+                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Averaged across 2.25, 2.5, and 2.75 goal lines from 30+ bookmakers for more robust predictions. Source: The Odds API" style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
                                             <div id="prediction-over-under">
@@ -1432,12 +1435,12 @@
                         // Add xG metrics if available
                         if (contextData.xg && contextData.xg.home_stats) {
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For:</td><td><strong>${contextData.xg.home_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA:</td><td><strong>${contextData.xg.home_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals created per game based on shot quality and positions" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals conceded per game (Post-Shot xG faced by goalkeeper)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                             if (contextData.xg.home_stats.xg_overperformance) {
                                 const overperf = contextData.xg.home_stats.xg_overperformance;
                                 const overPerfClass = overperf > 0 ? 'text-success' : 'text-danger';
-                                html += `<tr><td class="text-muted">xG Diff:</td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong></td></tr>`;
+                                html += `<tr><td class="text-muted">xG Diff: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = overperforming, Negative = underperforming" style="cursor: help; font-size: 0.8em;"></i></td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
                         }
                         html += `</tbody></table>`;
@@ -1464,12 +1467,12 @@
                         // Add xG metrics if available
                         if (contextData.xg && contextData.xg.away_stats) {
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For:</td><td><strong>${contextData.xg.away_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA:</td><td><strong>${contextData.xg.away_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals created per game based on shot quality and positions" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals conceded per game (Post-Shot xG faced by goalkeeper)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                             if (contextData.xg.away_stats.xg_overperformance) {
                                 const overperf = contextData.xg.away_stats.xg_overperformance;
                                 const overPerfClass = overperf > 0 ? 'text-success' : 'text-danger';
-                                html += `<tr><td class="text-muted">xG Diff:</td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong></td></tr>`;
+                                html += `<tr><td class="text-muted">xG Diff: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = overperforming, Negative = underperforming" style="cursor: help; font-size: 0.8em;"></i></td><td class="${overPerfClass}"><strong>${overperf > 0 ? '+' : ''}${overperf}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
                         }
                         html += `</tbody></table>`;
@@ -1482,6 +1485,9 @@
                 }
                 
                 matchContext.innerHTML = html;
+                
+                // Reinitialize tooltips for dynamically added content
+                initTooltips();
             }
             
             function display1X2Prediction(prediction) {
@@ -1694,7 +1700,7 @@
                 // Add xG-based insights if available
                 if (xgData && xgData.available) {
                     html += '<div class="analysis-section mb-3" style="border: 2px solid #6366f1; background-color: #f0f4ff;">';
-                    html += '<div class="analysis-title" style="color: #6366f1;"><i class="fas fa-chart-line me-2"></i>xG Analysis</div>';
+                    html += '<div class="analysis-title" style="color: #6366f1;"><i class="fas fa-chart-line me-2"></i>xG Analysis <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Statistical predictions based on Expected Goals (xG). Considers: team attacking strength (xGF), defensive strength (xGA). Source: FBref via soccerdata" style="cursor: help; font-size: 0.85em;"></i></div>';
                     
                     html += `
                         <p class="mb-2">
@@ -1768,7 +1774,7 @@
                 
                 if (arbitrage && arbitrage.is_arbitrage) {
                     html += '<div class="analysis-section mb-3" style="border: 2px solid #10b981; background-color: #d1fae5;">';
-                    html += '<div class="analysis-title" style="color: #10b981;">✅ Arbitrage Opportunity!</div>';
+                    html += '<div class="analysis-title" style="color: #10b981;">✅ Arbitrage Opportunity! <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Risk-free profit by exploiting odds differences across bookmakers. Bet on all outcomes to guarantee profit regardless of result." style="cursor: help; font-size: 0.85em;"></i></div>';
                     html += `<p><strong>Profit Margin:</strong> ${arbitrage.profit_margin}%</p>`;
                     html += `<p><strong>Optimal Stakes (per $100):</strong></p>`;
                     html += `<ul style="list-style: none; padding-left: 0;">`;
@@ -1792,6 +1798,9 @@
                 html += generateBettingTips(pred1x2, currentOverUnderData, currentXgData);
                 
                 bettingAnalysis.innerHTML = html;
+                
+                // Reinitialize tooltips for dynamically added content
+                initTooltips();
             }
             
             function displayBettingAnalysis(match) {
@@ -1825,6 +1834,15 @@
                     </div>
                 `;
             }
+            
+            // Initialize Bootstrap tooltips
+            function initTooltips() {
+                const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+                [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+            }
+            
+            // Call it on page load
+            initTooltips();
             
             // Auto-load popular upcoming matches on page load
             getUpcomingMatches('CL');
