@@ -103,27 +103,34 @@
             color: white;
         }
         
-        /* Tooltip styling - wider to prevent text wrapping */
+        /* Tooltip styling - wider to prevent text wrapping and enable multi-line */
         .tooltip-inner {
             min-width: 250px !important;
             max-width: 350px !important;
             text-align: left;
+            white-space: pre-line !important;
         }
         
-        /* Match Context table - remove ALL padding to prevent right shift */
-        #match-context .table td,
-        #match-context .table th {
-            padding: 0 !important;
+        /* Match Context - CSS Grid layout for stable display */
+        .match-context-grid {
+            display: grid;
+            grid-template-columns: minmax(120px, auto) 1fr;
+            gap: 0.5rem 1rem;
+            align-items: center;
         }
         
-        #match-context .table-borderless td:first-child,
-        #match-context .table-borderless th:first-child {
-            padding: 0 !important;
+        .match-context-label {
+            color: #6c757d;
+            font-size: 0.9rem;
+            white-space: nowrap;
         }
         
-        /* Ensure text-muted cells have no padding */
-        #match-context .text-muted {
-            padding: 0 !important;
+        body.dark-theme .match-context-label {
+            color: #94a3b8 !important;
+        }
+        
+        .match-context-value {
+            font-weight: 500;
         }
         
         body {
@@ -1506,71 +1513,131 @@
         }
         
         function displayTeamStats(teamData, xgStats) {
-            let html = `<table class="table table-sm table-borderless mb-0"><tbody>`;
+            let html = `<div class="match-context-grid">`;
             if (teamData.position) {
-                html += `<tr><td class="text-muted" style="width: 80px;">Position:</td><td><span class="badge bg-secondary">${teamData.position}</span></td></tr>`;
+                html += `<div class="match-context-label">Position:</div><div class="match-context-value"><span class="badge bg-secondary">${teamData.position}</span></div>`;
             }
             if (teamData.points !== null && teamData.points !== undefined) {
-                html += `<tr><td class="text-muted">Points:</td><td><strong>${teamData.points}</strong></td></tr>`;
+                html += `<div class="match-context-label">Points:</div><div class="match-context-value"><strong>${teamData.points}</strong></div>`;
             }
             
             // Form display: Use FBref with opponents if available, fallback to Understat
             const hasFBrefForm = xgStats && xgStats.recent_matches && xgStats.recent_matches.length > 0;
             if (hasFBrefForm) {
                 const formDisplay = formatFormWithOpponents(xgStats.recent_matches);
-                html += `<tr><td class="text-muted">Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref with opponents (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td>${formDisplay}</td></tr>`;
+                html += `<div class="match-context-label">Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref with opponents (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value">${formDisplay}</div>`;
             } else if (teamData.form) {
                 // Fallback to Understat form if FBref unavailable
-                html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(teamData.form)}</td></tr>`;
+                html += `<div class="match-context-label">Form:</div><div class="match-context-value">${formatFormIndicators(teamData.form)}</div>`;
             }
             
             // Add Elo rating if available
             if (teamData.elo_rating !== null && teamData.elo_rating !== undefined) {
                 const eloClass = teamData.elo_rating >= 1900 ? 'text-success' : teamData.elo_rating >= 1700 ? 'text-primary' : 'text-muted';
-                html += `<tr><td class="text-muted">⚡ Elo Rating: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="ClubElo.com rating based on historical performance from 2010 to present, updated twice daily (5am/5pm UTC). Ranges: 1900+ = Elite (top European clubs), 1700-1900 = Strong (Europa League quality), 1500-1700 = Average (mid-table), <1500 = Weak" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></td><td class="${eloClass}"><strong>${teamData.elo_rating.toFixed(0)}</strong></td></tr>`;
+                html += `<div class="match-context-label">⚡ Elo Rating: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="ClubElo.com rating based on historical performance from 2010 to present, updated twice daily (5am/5pm UTC). Ranges: 1900+ = Elite (top European clubs), 1700-1900 = Strong (Europa League quality), 1500-1700 = Average (mid-table), <1500 = Weak" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value ${eloClass}"><strong>${teamData.elo_rating.toFixed(0)}</strong></div>`;
             }
             
             // Add PPDA prominently if available
             if (teamData.ppda_coef !== null && teamData.ppda_coef !== undefined) {
-                html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes Per Defensive Action - measures pressing intensity. <8.0 = Extreme High Press (Klopp/Guardiola style), 8-12 = High Press (modern attacking teams), 12-15 = Medium Press (balanced), 15-20 = Low/Passive Block (defensive teams), >20 = Extremely Passive (deep defending). Lower = more aggressive pressing." style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></td><td><strong class="text-primary">${teamData.ppda_coef}</strong></td></tr>`;
+                html += `<div style="grid-column: 1 / -1;"><hr class="my-1"></div>`;
+                html += `<div class="match-context-label"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes Per Defensive Action - measures pressing intensity. <8.0 = Extreme High Press (Klopp/Guardiola style), 8-12 = High Press (modern attacking teams), 12-15 = Medium Press (balanced), 15-20 = Low/Passive Block (defensive teams), >20 = Extremely Passive (deep defending). Lower = more aggressive pressing." style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong class="text-primary">${teamData.ppda_coef}</strong></div>`;
             }
             if (teamData.xG !== null && teamData.xG !== undefined) {
-                console.log('🔍 xG Tooltip Debug - teamData:', teamData);
                 const gamesPlayed = teamData.played || 0;
-                console.log('🔍 Games played:', gamesPlayed, 'xG:', teamData.xG);
                 const xgPerGame = gamesPlayed > 0 ? (teamData.xG / gamesPlayed).toFixed(2) : '0.00';
-                const xgTooltip = gamesPlayed > 0 
-                    ? `${teamData.xG} xG in ${gamesPlayed} games (avg ${xgPerGame}/game). League avg: 1.3-1.5 per game. Based on shot quality (position, angle, defensive pressure).`
-                    : `Cumulative Expected Goals for 2024/25 season from Understat. Based on shot quality.`;
-                console.log('🔍 xG Tooltip generated:', xgTooltip);
-                html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xG}</strong></td></tr>`;
+                
+                // Build rich xG tooltip with attack strength analysis
+                let xgTooltip = `📊 Season xG: ${teamData.xG.toFixed(1)} over ${gamesPlayed} games (${xgPerGame}/game)`;
+                
+                // Add attack rating and context
+                if (teamData.attack_rating) {
+                    const ratingEmoji = teamData.attack_rating === 'Elite' ? '🔥' : teamData.attack_rating === 'Strong' ? '💪' : teamData.attack_rating === 'Average' ? '⚽' : teamData.attack_rating === 'Weak' ? '⚠️' : '📉';
+                    xgTooltip += `\n\n${ratingEmoji} Attack Strength: ${teamData.attack_rating}`;
+                }
+                
+                // Add league ranking context
+                if (teamData.xg_percentile !== null && teamData.xg_percentile !== undefined && teamData.position) {
+                    const percentileRank = Math.round(teamData.xg_percentile);
+                    const contextPhrase = percentileRank >= 75 ? 'Top attacking team' : percentileRank >= 50 ? 'Above average attack' : percentileRank >= 25 ? 'Below average attack' : 'Weak attack';
+                    xgTooltip += `\n📈 League Rank: ${contextPhrase} (${percentileRank}th percentile)`;
+                }
+                
+                // Add league comparison
+                if (teamData.league_stats && teamData.league_stats.xg_mean) {
+                    const leagueAvg = teamData.league_stats.xg_mean.toFixed(2);
+                    const vsLeague = parseFloat(xgPerGame) > parseFloat(leagueAvg) ? `+${(parseFloat(xgPerGame) - parseFloat(leagueAvg)).toFixed(2)} above` : `${(parseFloat(xgPerGame) - parseFloat(leagueAvg)).toFixed(2)} below`;
+                    xgTooltip += `\n⚖️ vs League Avg: ${vsLeague} league average (${leagueAvg}/game)`;
+                }
+                
+                // Add trend indicator
+                if (teamData.recent_trend) {
+                    const trendEmoji = teamData.recent_trend === 'above' ? '📈' : teamData.recent_trend === 'below' ? '📉' : '➡️';
+                    const trendText = teamData.recent_trend === 'above' ? 'Recent form ABOVE season average' : teamData.recent_trend === 'below' ? 'Recent form BELOW season average' : 'Recent form matches season average';
+                    xgTooltip += `\n${trendEmoji} Trend: ${trendText}`;
+                }
+                
+                // Add match impact prediction
+                xgTooltip += `\n\n💡 Impact: ${parseFloat(xgPerGame) >= 1.8 ? 'High goal threat - expect multiple chances' : parseFloat(xgPerGame) >= 1.2 ? 'Decent attacking threat - should create chances' : parseFloat(xgPerGame) >= 0.8 ? 'Moderate threat - limited chances expected' : 'Low scoring threat - struggle to create'}`;
+                
+                html += `<div class="match-context-label">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgTooltip}" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong>${teamData.xG.toFixed(1)}</strong></div>`;
             }
             if (teamData.xGA !== null && teamData.xGA !== undefined) {
-                console.log('🔍 xGA Tooltip Debug - teamData:', teamData);
                 const gamesPlayed = teamData.played || 0;
-                console.log('🔍 Games played:', gamesPlayed, 'xGA:', teamData.xGA);
                 const xgaPerGame = gamesPlayed > 0 ? (teamData.xGA / gamesPlayed).toFixed(2) : '0.00';
-                const xgaTooltip = gamesPlayed > 0 
-                    ? `${teamData.xGA} xGA in ${gamesPlayed} games (avg ${xgaPerGame}/game). League avg: 1.3-1.5 per game. Measures defensive quality - lower is better.`
-                    : `Cumulative Expected Goals Against for 2024/25 season from Understat.`;
-                console.log('🔍 xGA Tooltip generated:', xgaTooltip);
-                html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xGA}</strong></td></tr>`;
+                
+                // Build rich xGA tooltip with defensive strength analysis
+                let xgaTooltip = `🛡️ Season xGA: ${teamData.xGA.toFixed(1)} over ${gamesPlayed} games (${xgaPerGame}/game)`;
+                
+                // Add defense rating and context
+                if (teamData.defense_rating) {
+                    const ratingEmoji = teamData.defense_rating === 'Elite' ? '🏰' : teamData.defense_rating === 'Strong' ? '💪' : teamData.defense_rating === 'Average' ? '🛡️' : teamData.defense_rating === 'Weak' ? '⚠️' : '🚨';
+                    xgaTooltip += `\n\n${ratingEmoji} Defense Strength: ${teamData.defense_rating}`;
+                }
+                
+                // Add league ranking context
+                if (teamData.xga_percentile !== null && teamData.xga_percentile !== undefined) {
+                    const percentileRank = Math.round(teamData.xga_percentile);
+                    const contextPhrase = percentileRank >= 75 ? 'Elite defense' : percentileRank >= 50 ? 'Solid defense' : percentileRank >= 25 ? 'Porous defense' : 'Leaky defense';
+                    xgaTooltip += `\n📊 League Rank: ${contextPhrase} (${percentileRank}th percentile - lower xGA is better)`;
+                }
+                
+                // Add clean sheet probability estimate
+                const cleanSheetProb = parseFloat(xgaPerGame) < 0.8 ? 'High (50-60%)' : parseFloat(xgaPerGame) < 1.2 ? 'Moderate (30-40%)' : parseFloat(xgaPerGame) < 1.6 ? 'Low (15-25%)' : 'Very Low (<15%)';
+                xgaTooltip += `\n🧤 Clean Sheet Chance: ${cleanSheetProb}`;
+                
+                // Add league comparison
+                if (teamData.league_stats && teamData.league_stats.xga_mean) {
+                    const leagueAvg = teamData.league_stats.xga_mean.toFixed(2);
+                    const vsLeague = parseFloat(xgaPerGame) < parseFloat(leagueAvg) ? `${(parseFloat(leagueAvg) - parseFloat(xgaPerGame)).toFixed(2)} better than` : `${(parseFloat(xgaPerGame) - parseFloat(leagueAvg)).toFixed(2)} worse than`;
+                    xgaTooltip += `\n⚖️ vs League Avg: ${vsLeague} league average (${leagueAvg}/game)`;
+                }
+                
+                // Add defensive form context
+                if (teamData.recent_trend) {
+                    const trendEmoji = teamData.recent_trend === 'below' ? '📉✅' : teamData.recent_trend === 'above' ? '📈⚠️' : '➡️';
+                    const trendText = teamData.recent_trend === 'below' ? 'Recent defense IMPROVING (conceding less)' : teamData.recent_trend === 'above' ? 'Recent defense DECLINING (conceding more)' : 'Recent defense stable';
+                    xgaTooltip += `\n${trendEmoji} Trend: ${trendText}`;
+                }
+                
+                // Add match context analysis
+                xgaTooltip += `\n\n💡 Match Impact: ${parseFloat(xgaPerGame) < 0.9 ? 'Very tight defense - opponent will struggle to score' : parseFloat(xgaPerGame) < 1.3 ? 'Decent defense - opponent may get limited chances' : parseFloat(xgaPerGame) < 1.7 ? 'Vulnerable defense - opponent likely to create chances' : 'Weak defense - opponent expected to score easily'}`;
+                
+                html += `<div class="match-context-label">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgaTooltip}" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong>${teamData.xGA.toFixed(1)}</strong></div>`;
             }
             
             // Add xG metrics from FBref if available
             if (xgStats) {
-                html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals trends per game from FBref" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${xgStats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals Against per game from FBref" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${xgStats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                html += `<div style="grid-column: 1 / -1;"><hr class="my-1"></div>`;
+                html += `<div class="match-context-label"><i class="fas fa-chart-line me-1"></i>xG For (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals trends per game from FBref" style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value"><strong>${xgStats.xg_for_per_game}</strong> <small class="text-muted">/game</small></div>`;
+                html += `<div class="match-context-label"><i class="fas fa-shield-alt me-1"></i>xGA (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals Against per game from FBref" style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value"><strong>${xgStats.xg_against_per_game}</strong> <small class="text-muted">/game</small></div>`;
                 if (xgStats.scoring_clinicality !== undefined && xgStats.scoring_clinicality !== null) {
                     const clinicality = xgStats.scoring_clinicality;
                     const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
-                    html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
+                    html += `<div class="match-context-label">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value ${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></div>`;
                 }
                 // Form is now displayed above with opponents, no need to duplicate here
             }
-            html += `</tbody></table>`;
+            html += `</div>`;
             return html;
         }
         
