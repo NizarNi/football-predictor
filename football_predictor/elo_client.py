@@ -129,9 +129,8 @@ def get_team_elo(team_name):
             print(f"✅ Partial match '{team_name}' → '{elo_team_name}' (Elo: {elo_rating:.1f})")
             return elo_rating
     
-    # Log unmatched team for diagnostics
-    print(f"❌ UNMATCHED TEAM: '{team_name}' not found in Elo database")
-    print(f"   Available teams (sample): {list(elo_ratings.keys())[:10]}")
+    # Team not found - this is expected for smaller teams/leagues not tracked by ClubElo
+    print(f"ℹ️  Elo rating unavailable for '{team_name}' (team not in ClubElo database)")
     return None
 
 
