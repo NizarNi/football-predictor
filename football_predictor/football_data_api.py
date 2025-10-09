@@ -43,14 +43,18 @@ def _make_api_request(endpoint, params=None):
         except requests.exceptions.RequestException as e:
             if hasattr(e, 'response') and e.response is not None:
                 if e.response.status_code == 429:
+                    print(f"⏳ Rate limit hit for {endpoint}, retrying after {e.response.headers.get('Retry-After', 5)}s...")
                     retry_after = int(e.response.headers.get("Retry-After", 5)) # Default to 5 seconds
                     time.sleep(retry_after)
                     retries += 1
                 elif e.response.status_code == 403:
+                    print(f"🔑 403 Forbidden for {endpoint}, switching API key...")
                     retries += 1 # Increment retries, but switch key immediately
                 else:
+                    print(f"❌ football-data.org error for {endpoint}: HTTP {e.response.status_code} - {e.response.text[:200]}")
                     return None
             else:
+                print(f"❌ football-data.org connection error for {endpoint}: {str(e)}")
                 return None
 
     raise RateLimitExceededError(f"Rate limit exceeded for {endpoint} after {max_retries} retries.")
