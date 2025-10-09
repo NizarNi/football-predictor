@@ -7,6 +7,7 @@ import requests
 import csv
 from datetime import datetime, timedelta
 from io import StringIO
+from typing import Optional, Dict, Any
 import os
 
 # ClubElo.com API - Original source for Elo ratings
@@ -15,7 +16,7 @@ import os
 
 # Cache configuration
 CACHE_DURATION_HOURS = 6
-_elo_cache = {
+_elo_cache: Dict[str, Optional[Any]] = {
     "data": None,
     "timestamp": None
 }
@@ -28,7 +29,7 @@ HYBRID_MARKET_WEIGHT = 0.40
 TEAM_NAME_MAP = {
     # Premier League
     "Manchester City": "Man City",
-    "Manchester United": "Man Utd",
+    "Manchester United": "Man United",
     "Tottenham": "Spurs",
     "Tottenham Hotspur": "Spurs",
     "Wolverhampton": "Wolves",
@@ -44,7 +45,8 @@ TEAM_NAME_MAP = {
     "Leicester City": "Leicester",
     
     # La Liga
-    "Atletico Madrid": "Ath Madrid",
+    "Atletico Madrid": "Atletico",
+    "Atlético Madrid": "Atletico",  # With accent
     "Athletic Bilbao": "Ath Bilbao",
     "Real Sociedad": "R Sociedad",
     "Celta Vigo": "Celta",
