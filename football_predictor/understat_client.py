@@ -76,22 +76,31 @@ def _get_defense_rating(xga_per_game: float) -> str:
         return "Poor"
 
 def _calculate_league_stats(teams_data: List[Dict]) -> Dict:
-    """Calculate league-wide statistics for xG and xGA"""
-    xg_values = [team.get('xG', 0) for team in teams_data if team.get('xG')]
-    xga_values = [team.get('xGA', 0) for team in teams_data if team.get('xGA')]
+    """Calculate league-wide statistics for xG and xGA per game"""
+    # Calculate per-game values for each team
+    xg_per_game_values = []
+    xga_per_game_values = []
     
-    if not xg_values or not xga_values:
+    for team in teams_data:
+        matches = team.get('match_count', team.get('played', 0))
+        if matches > 0:
+            if team.get('xG'):
+                xg_per_game_values.append(team['xG'] / matches)
+            if team.get('xGA'):
+                xga_per_game_values.append(team['xGA'] / matches)
+    
+    if not xg_per_game_values or not xga_per_game_values:
         return {}
     
     return {
-        'xg_mean': round(statistics.mean(xg_values), 2),
-        'xg_median': round(statistics.median(xg_values), 2),
-        'xg_min': round(min(xg_values), 2),
-        'xg_max': round(max(xg_values), 2),
-        'xga_mean': round(statistics.mean(xga_values), 2),
-        'xga_median': round(statistics.median(xga_values), 2),
-        'xga_min': round(min(xga_values), 2),
-        'xga_max': round(max(xga_values), 2)
+        'xg_mean': round(statistics.mean(xg_per_game_values), 2),
+        'xg_median': round(statistics.median(xg_per_game_values), 2),
+        'xg_min': round(min(xg_per_game_values), 2),
+        'xg_max': round(max(xg_per_game_values), 2),
+        'xga_mean': round(statistics.mean(xga_per_game_values), 2),
+        'xga_median': round(statistics.median(xga_per_game_values), 2),
+        'xga_min': round(min(xga_per_game_values), 2),
+        'xga_max': round(max(xga_per_game_values), 2)
     }
 
 def _calculate_recent_trend(team_history: List[Dict], season_avg_xg: float) -> str:
