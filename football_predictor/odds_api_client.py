@@ -5,9 +5,11 @@ from datetime import datetime, timedelta, timezone
 API_KEYS = [
     os.environ.get("ODDS_API_KEY_1"),
     os.environ.get("ODDS_API_KEY_2"),
-    os.environ.get("ODDS_API_KEY_3")
+    os.environ.get("ODDS_API_KEY_3"),
+    os.environ.get("ODDS_API_KEY_4")
 ]
 API_KEYS = [key for key in API_KEYS if key]
+invalid_keys = set()  # Track invalid keys to skip them
 
 BASE_URL = "https://api.the-odds-api.com/v4"
 current_key_index = 0
