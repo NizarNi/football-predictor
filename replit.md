@@ -21,7 +21,9 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Dark Mode:** Complete dark theme with a toggle for seamless switching, localStorage persistence, and theme-aware chart colors.
 - **Enhanced Tooltips:** Comprehensive tooltip system with min-width: 250px styling to prevent text wrapping, featuring detailed explanations for xG (2024/25 season context, shot quality factors), Elo ratings (ClubElo 2010-present, 5am/5pm updates), and PPDA pressing intensity guide (<8 Extreme High Press, 8-12 High Press, 12-15 Medium, 15-20 Low, >20 Passive).
 - **Enhanced Form Display:** Form indicators show opponent context with chronological flow (e.g., "🟩 vs ARS → 🟥 @ MCI → ⬜ vs CHE ← newest"). Uses FBref data with opponent names as primary source, falls back to Understat simple indicators when unavailable. Home games show "vs" prefix, away games show "@" prefix.
-- **Responsive Match Context:** Fully responsive layout with col-12 col-md-6 classes for mobile/desktop optimization, text-truncate for overflow prevention, and border-md-end for proper visual separation on tablets/desktop only.
+- **Responsive Match Context:** Fully responsive layout with col-12 col-md-6 classes for mobile/desktop optimization, text-truncate for overflow prevention, and border-md-end for proper visual separation on tablets/desktop only. Custom CSS removes table cell left padding to prevent data shift.
+- **Dynamic xG Tooltips:** Season xG/xGA tooltips dynamically display games played and per-game averages (e.g., "45.2 xG in 10 games (avg 4.5/game). League avg: 1.3-1.5 per game") using Understat's 'played' field for contextual information.
+- **Tooltip Timing Fix:** Uses requestAnimationFrame to ensure Bootstrap tooltips initialize after DOM updates, fixing bug where Match Context tooltips only worked after visiting other sections.
 
 ### Technical Implementations
 - **Team Name Normalization:** Implements `fuzzyNormalizeTeamName()` and `normalizeTeamNameForLogo()` with extensive regex patterns and mappings to handle variations and generate correct logo URLs.
