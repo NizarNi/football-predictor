@@ -1,11 +1,28 @@
 import requests
 import os
+import re
 from datetime import datetime, timedelta
 import time
 import random
 
 class RateLimitExceededError(Exception):
     """Custom exception for API rate limit exceeded errors."""
+
+def sanitize_error_message(message):
+    """
+    Remove API keys from error messages to prevent security leaks.
+    Handles patterns: apiKey=XXX, X-Auth-Token: XXX
+    Supports alphanumeric keys plus common special chars (., -, _)
+    """
+    if not message:
+        return message
+    
+    # Remove API keys from query parameters (broader character set)
+    sanitized = re.sub(r'apiKey=[A-Za-z0-9._-]+', 'apiKey=***', str(message))
+    # Remove X-Auth-Token headers (broader character set)
+    sanitized = re.sub(r'X-Auth-Token[:\s]+[A-Za-z0-9._-]+', 'X-Auth-Token: ***', sanitized)
+    
+    return sanitized
 
 # API credentials for football-data.org from environment
 API_KEYS = [
@@ -51,10 +68,12 @@ def _make_api_request(endpoint, params=None):
                     print(f"🔑 403 Forbidden for {endpoint}, switching API key...")
                     retries += 1 # Increment retries, but switch key immediately
                 else:
-                    print(f"❌ football-data.org error for {endpoint}: HTTP {e.response.status_code} - {e.response.text[:200]}")
+                    error_msg = sanitize_error_message(str(e))
+                    print(f"❌ football-data.org error for {endpoint}: HTTP {e.response.status_code} - {error_msg}")
                     return None
             else:
-                print(f"❌ football-data.org connection error for {endpoint}: {str(e)}")
+                error_msg = sanitize_error_message(str(e))
+                print(f"❌ football-data.org connection error for {endpoint}: {error_msg}")
                 return None
 
     raise RateLimitExceededError(f"Rate limit exceeded for {endpoint} after {max_retries} retries.")

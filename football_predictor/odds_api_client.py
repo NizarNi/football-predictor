@@ -1,5 +1,6 @@
 import requests
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 API_KEYS = [
@@ -12,6 +13,22 @@ invalid_keys = set()  # Track invalid keys to skip them
 
 BASE_URL = "https://api.the-odds-api.com/v4"
 current_key_index = 0
+
+def sanitize_error_message(message):
+    """
+    Remove API keys from error messages to prevent security leaks.
+    Handles patterns: apiKey=XXX, X-Auth-Token: XXX
+    Supports alphanumeric keys plus common special chars (., -, _)
+    """
+    if not message:
+        return message
+    
+    # Remove API keys from query parameters (broader character set)
+    sanitized = re.sub(r'apiKey=[A-Za-z0-9._-]+', 'apiKey=***', str(message))
+    # Remove X-Auth-Token headers (broader character set)
+    sanitized = re.sub(r'X-Auth-Token[:\s]+[A-Za-z0-9._-]+', 'X-Auth-Token: ***', sanitized)
+    
+    return sanitized
 
 LEAGUE_CODE_MAPPING = {
     "PL": "soccer_epl",
@@ -44,7 +61,8 @@ def get_available_sports():
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        raise OddsAPIError(f"Error fetching sports: {e}")
+        error_msg = sanitize_error_message(str(e))
+        raise OddsAPIError(f"Error fetching sports: {error_msg}")
 
 def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format="decimal"):
     global invalid_keys
@@ -80,18 +98,21 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
             if e.response.status_code == 401:
                 # Invalid/expired key - mark it and try next
                 invalid_keys.add(api_key)
-                masked_key = api_key[:8] + '...' + api_key[-4:] if len(api_key) > 12 else '***'
-                print(f"❌ INVALID API KEY detected: {masked_key} - marked as invalid, trying next key...")
+                key_position = attempt + 1
+                total_keys = len(valid_keys)
+                print(f"❌ API key #{key_position}/{total_keys} validation failed - trying alternate key...")
                 last_error = e
                 continue
             else:
-                raise OddsAPIError(f"Error fetching odds for {sport_key}: {e}")
+                error_msg = sanitize_error_message(str(e))
+                raise OddsAPIError(f"Error fetching odds for {sport_key}: {error_msg}")
         except requests.exceptions.RequestException as e:
             last_error = e
             continue
     
     # If we get here, all keys failed
-    raise OddsAPIError(f"Error fetching odds for {sport_key}: {last_error}")
+    error_msg = sanitize_error_message(str(last_error)) if last_error else "All API keys exhausted"
+    raise OddsAPIError(f"Error fetching odds for {sport_key}: {error_msg}")
 
 def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
     if league_codes is None:
@@ -133,10 +154,12 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
             print(f"✅ Found {len([m for m in all_matches if m['sport_key'] == sport_key])} matches for {league_code}")
             
         except OddsAPIError as e:
-            print(f"⚠️  Error fetching {league_code}: {e}")
+            error_msg = sanitize_error_message(str(e))
+            print(f"⚠️  Error fetching {league_code}: {error_msg}")
             continue
         except Exception as e:
-            print(f"⚠️  Unexpected error for {league_code}: {e}")
+            error_msg = sanitize_error_message(str(e))
+            print(f"⚠️  Unexpected error for {league_code}: {error_msg}")
             continue
     
     if not all_matches:
@@ -161,4 +184,5 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        raise OddsAPIError(f"Error fetching event odds: {e}")
+        error_msg = sanitize_error_message(str(e))
+        raise OddsAPIError(f"Error fetching event odds: {error_msg}")
