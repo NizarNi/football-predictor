@@ -59,11 +59,5 @@ app.log
 .DS_Store
 Thumbs.db
 
-# Application specific
-scraped_data/
-processed_data/
-models/
-static/
-
-# UV
-uv.lock
+# Application specific - Cache files only
+football_predictor/processed_data/xg_cache/*.json

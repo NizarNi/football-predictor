@@ -4,17 +4,9 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
-    "beautifulsoup4>=4.14.2",
-    "chromedriver-autoinstaller>=0.6.4",
-    "fake-useragent>=2.2.0",
     "flask==3.1.2",
     "gunicorn==21.2.0",
-    "lxml==5.3.0",
-    "python-dateutil>=2.9.0.post0",
     "requests==2.31.0",
-    "selenium>=4.36.0",
-    "selenium-wire>=5.1.0",
     "soccerdata>=1.8.2",
     "understat>=0.1.4",
-    "unidecode>=1.4.0",
 ]
