@@ -1,0 +1,55 @@
+The Golden Rule of Value Betting
+You bet when you believe the true chance of an outcome is greater than the chance the bookmaker is offering.
+
+✅ The Betting Opportunity: Elo Probability > Market Probability
+Scenario: Your Elo model gives Team A a 60% chance to win.
+The bookmaker's odds imply Team A has only a 50% chance to win.
+
+Analysis: Your model suggests Team A is more likely to win than the market believes. The bookmaker is offering you odds that are more generous than they should be, based on your analysis.
+
+This is a VALUE BET. You believe the true likelihood is higher than the price reflects.
+
+Example:
+
+Elo Probability for Team A Win: 60% (Your "True" Probability)
+
+Bookmaker's Implied Probability: 50%
+
+Calculation: Your Probability (60%) > Market Probability (50%) = Value Bet
+
+❌ The Opposite: Elo Probability < Market Probability
+Scenario: Your Elo model gives Team A a 40% chance to win.
+The bookmaker's odds imply Team A has a 50% chance to win.
+
+Analysis: The market is overvaluing Team A. The bookmaker's odds are worse (shorter) than they should be, according to your model. The potential payout is not enough for the risk you're taking.
+
+This is NOT a betting opportunity. You should avoid this bet.
+
+Example:
+
+Elo Probability for Team A Win: 40% (Your "True" Probability)
+
+Bookmaker's Implied Probability: 50%
+
+Calculation: Your Probability (40%) < Market Probability (50%) = No Value / Bad Bet
+
+
+
+
+
+
+
+
+
+
+
+
+💡 Why This Works in the Long Run
+The goal isn't to win every single bet. The goal is to consistently find situations where the odds are in your favor.
+
+If you only place bets where you have a positive edge (your probability is higher than the market's), you will be profitable over a large number of bets, even if you lose some individual wagers.
+
+In one sentence: You are looking for outcomes that are more likely to happen than the bookmaker's price suggests.
+
+This response is AI-generated, for reference only.
+
