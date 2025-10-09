@@ -36,6 +36,14 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Match Context:** Displays league standings, team form, Elo ratings, and xG metrics for competing teams.
 - **Value Bet Identification:** Highlights matches with significant divergence between Elo and Market probabilities.
 
+### Data Availability by Competition
+- **Domestic Leagues (PL, La Liga, Bundesliga, Serie A, Ligue 1):**
+  - ✅ Full support: Market odds, Elo ratings, xG metrics, team form, league standings
+- **Champions League & Europa League:**
+  - ✅ Supported: Market odds from 30+ bookmakers, Elo ratings (when available)
+  - ❌ Limited: xG data (FBref only supports domestic leagues), league standings (Understat only tracks domestic leagues)
+  - 📝 Note: Some smaller CL teams may not have Elo ratings (ClubElo focuses on major clubs)
+
 ### System Design Choices
 - **Flask Application:** Core web framework for the backend.
 - **Modular Structure:** Organized code for API clients, odds calculations, and the main Flask application.

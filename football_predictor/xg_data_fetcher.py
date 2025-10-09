@@ -17,14 +17,17 @@ CACHE_DIR = "processed_data/xg_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 # League mappings for soccerdata
+# League code mapping (Our codes → FBref league names)
+# Note: FBref only supports the Big 5 European leagues
+# Champions League and Europa League are NOT supported by FBref
 LEAGUE_MAPPING = {
     "PL": "ENG-Premier League",
     "PD": "ESP-La Liga",
     "BL1": "GER-Bundesliga",
     "SA": "ITA-Serie A",
     "FL1": "FRA-Ligue 1",
-    "CL": "INT-Champions League",
-    "EL": "INT-Europa League"
+    # "CL": Not supported by FBref
+    # "EL": Not supported by FBref
 }
 
 
@@ -334,6 +337,13 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     away_stats = get_team_xg_stats(away_team, league_code, season)
     
     if not home_stats or not away_stats:
+        # Provide specific messaging for unsupported leagues
+        if league_code in ['CL', 'EL']:
+            league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
+            return {
+                'available': False,
+                'error': f'xG data not available for {league_name} (FBref only supports domestic leagues: Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
+            }
         return {
             'available': False,
             'error': 'xG data not available for one or both teams'
