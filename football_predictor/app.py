@@ -7,7 +7,7 @@ import sys
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from football_data_api import get_competitions, get_upcoming_matches, get_match_details, RateLimitExceededError
+# football-data.org API removed - using Understat as primary source for standings
 from odds_api_client import get_upcoming_matches_with_odds, OddsAPIError, LEAGUE_CODE_MAPPING
 from odds_calculator import calculate_predictions_from_odds
 from xg_data_fetcher import get_match_xg_prediction
@@ -23,8 +23,7 @@ os.makedirs("static", exist_ok=True)
 os.makedirs("templates", exist_ok=True)
 
 # Global variables
-# Supported league codes for football-data.org API
-SUPPORTED_LEAGUES = ["PL", "PD", "BL1", "SA", "FL1", "CL", "EL"]
+# Note: Matches fetched from The Odds API, standings from Understat
 
 
 
@@ -91,49 +90,10 @@ def upcoming():
                 })
         except OddsAPIError as e:
             print(f"⚠️  The Odds API unavailable: {e}")
+            return jsonify({"error": f"The Odds API unavailable: {str(e)}"}), 503
         except Exception as e:
             print(f"⚠️  The Odds API error: {e}")
-        
-        # Fallback to football-data.org (no predictions)
-        print(f"🔄 Falling back to football-data.org...")
-        
-        if league_code:
-            if league_code not in SUPPORTED_LEAGUES:
-                return jsonify({"error": f"League code \"{league_code}\" not supported"}), 404
-            leagues_to_fetch = [league_code]
-        else:
-            leagues_to_fetch = SUPPORTED_LEAGUES
-
-        all_upcoming_matches = []
-        for league in leagues_to_fetch:
-            try:
-                matches = get_upcoming_matches(league, next_n_days=next_n_days)
-                if matches:
-                    all_upcoming_matches.extend(matches)
-                    print(f"Found {len(matches)} matches for {league}")
-            except RateLimitExceededError as api_e:
-                print(f"Rate limit exceeded for {league}: {api_e}")
-                continue
-            except Exception as api_e:
-                print(f"Error fetching matches for {league}: {api_e}")
-        
-        if not all_upcoming_matches:
-            return jsonify({"error": "No upcoming matches found"}), 404
-        
-        # Sort and format matches
-        upcoming_matches = sorted(all_upcoming_matches, key=lambda x: x["timestamp"])
-        
-        for match in upcoming_matches:
-            match["datetime"] = datetime.fromtimestamp(match["timestamp"]).strftime("%Y-%m-%d %H:%M")
-            match["predictions"] = {
-                "note": "Predictions unavailable - using fallback data source"
-            }
-
-        return jsonify({
-            "matches": upcoming_matches,
-            "total_matches": len(upcoming_matches),
-            "source": "football-data.org (fallback)"
-        })
+            return jsonify({"error": f"Unable to fetch matches: {str(e)}"}), 500
         
     except Exception as e:
         print(f"❌ Critical error: {e}")
@@ -218,43 +178,8 @@ def search():
 @app.route("/match/<match_id>", methods=["GET"])
 def get_match(match_id):
     """Get detailed information about a specific match"""
-    try:
-        # Try to get match details from football-data.org
-        match_details = get_match_details(match_id)
-        
-        if not match_details:
-            return jsonify({"error": f"Match with ID {match_id} not found"}), 404
-        
-        # Format the response to match frontend expectations
-        response = {
-            "match": {
-                "id": match_details.get("id"),
-                "home": {
-                    "name": match_details.get("home_team", {}).get("name", "Unknown")
-                },
-                "away": {
-                    "name": match_details.get("away_team", {}).get("name", "Unknown")
-                },
-                "stage": match_details.get("league", "Unknown"),
-                "date": match_details.get("date"),
-                "timestamp": match_details.get("timestamp"),
-                "datetime": datetime.fromtimestamp(match_details.get("timestamp", 0)).strftime("%Y-%m-%d %H:%M") if match_details.get("timestamp") else "TBD",
-                "status": match_details.get("status", "SCHEDULED"),
-                "venue": match_details.get("venue", "Unknown")
-            }
-        }
-        
-        # Add score if available
-        if "score" in match_details:
-            response["match"]["score"] = match_details["score"]
-        
-        return jsonify(response)
-        
-    except RateLimitExceededError as e:
-        return jsonify({"error": f"Rate limit exceeded: {str(e)}"}), 429
-    except Exception as e:
-        print(f"Error fetching match {match_id}: {e}")
-        return jsonify({"error": f"Failed to fetch match details: {str(e)}"}), 500
+    # Endpoint deprecated - match details now come from The Odds API in /upcoming
+    return jsonify({"error": "This endpoint is deprecated. Match details are included in the /upcoming endpoint."}), 410
 
 @app.route("/predict/<match_id>", methods=["GET"])
 def predict_match(match_id):
@@ -432,27 +357,13 @@ def get_match_context(match_id):
         if not league_code:
             return jsonify({"error": "league parameter required"}), 400
         
-        from football_data_api import get_league_standings
         from understat_client import fetch_understat_standings
         
         try:
-            # Try football-data.org first (primary source)
-            standings = []
-            source = None
-            
-            try:
-                standings = get_league_standings(league_code) if league_code else []
-                if standings:
-                    source = "football-data.org"
-            except Exception as fd_error:
-                print(f"⚠️  football-data.org error: {fd_error}")
-            
-            # If no data from football-data.org, try Understat as fallback
-            if not standings:
-                print(f"📊 Trying Understat fallback for standings...")
-                standings = fetch_understat_standings(league_code, 2024)
-                if standings:
-                    source = "Understat"
+            # Use Understat as primary source for standings
+            print(f"📊 Fetching standings from Understat...")
+            standings = fetch_understat_standings(league_code, 2024)
+            source = "Understat" if standings else None
             
             home_data = None
             away_data = None
