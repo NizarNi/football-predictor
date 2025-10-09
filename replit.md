@@ -23,7 +23,9 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Enhanced Form Display:** Form indicators show opponent context with chronological flow (e.g., "🟩 vs ARS → 🟥 @ MCI → ⬜ vs CHE ← newest"). Uses FBref data with opponent names as primary source, falls back to Understat simple indicators when unavailable. Home games show "vs" prefix, away games show "@" prefix.
 - **Responsive Match Context:** Fully responsive layout with col-12 col-md-6 classes for mobile/desktop optimization, text-truncate for overflow prevention, and border-md-end for proper visual separation on tablets/desktop only. Custom CSS removes table cell left padding to prevent data shift.
 - **Dynamic xG Tooltips:** Season xG/xGA tooltips dynamically display games played and per-game averages (e.g., "45.2 xG in 10 games (avg 4.5/game). League avg: 1.3-1.5 per game") using Understat's 'played' field for contextual information.
-- **Tooltip Timing Fix:** Uses requestAnimationFrame to ensure Bootstrap tooltips initialize after DOM updates, fixing bug where Match Context tooltips only worked after visiting other sections.
+- **Global Tooltip System:** MutationObserver-based tooltip initialization automatically detects and initializes tooltips for any dynamically added content, eliminating race conditions and ensuring tooltips work on first load without requiring prior interactions.
+- **Horizontal Form Display:** Team form shown horizontally newest→oldest (left to right) for both FBref (with opponents) and Understat (simple indicators) formats for better chronological readability.
+- **Enlarged xG Charts:** xG Trend visualizations increased to 300px height (67% larger) with 320px containers for improved curve plotting space and data visualization clarity.
 
 ### Technical Implementations
 - **Team Name Normalization:** Implements `fuzzyNormalizeTeamName()` and `normalizeTeamNameForLogo()` with extensive regex patterns and mappings to handle variations and generate correct logo URLs.
@@ -40,7 +42,8 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Value Bet Detection:** Automatically identifies betting opportunities where Elo and Market predictions diverge by ≥10%, highlighting potential market inefficiencies in Betting Tips section with divergence percentage.
 - **Prediction Comparison Display:** Shows side-by-side comparison of Market Odds, Elo Model, and Hybrid predictions with visual indicators for value bets and recommended outcomes.
 - **Enhanced Betting Tips:** AI-powered recommendations using Hybrid Model that detect value bets, showing Elo vs Market divergence with specific percentages (e.g., "Elo 72% vs Market 58% = 14% divergence").
-- **1X2 Prediction Comparison Table:** Side-by-side display of Market Odds, Elo Model, and Hybrid (60/40) predictions in the 1X2 section. Shows divergence indicators (⬆️/⬇️) when Elo differs from Market by ≥10%, with comprehensive tooltips explaining each prediction model.
+- **1X2 Prediction Comparison Table:** Side-by-side display of Market Odds, Elo Model, and Hybrid (60/40) predictions in the 1X2 section. Shows divergence indicators (⬆️/⬇️) when Elo differs from Market by ≥10%, with clear explanation: "Betting Opportunities: ⬆️ = Elo higher than Market (potential value) | ⬇️ = Elo lower (market overvaluing)".
+- **Dynamic Season Calculation:** Automatically calculates current football season based on month (Aug-Dec uses current year, Jan-Jul uses previous year) via get_current_season() helper function, ensuring accurate season data for Understat standings and xG metrics.
 - **Form Display Intelligence:** Eliminates duplicate form indicators by prioritizing FBref data with match-by-match opponent context. Only displays Understat form as fallback when FBref unavailable, maintaining single source of truth for form data.
 
 ### Feature Specifications
