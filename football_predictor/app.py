@@ -403,7 +403,15 @@ def get_match_context(match_id):
                     "oppda_coef": home_data.get('oppda_coef') if home_data else None,
                     "xG": home_data.get('xG') if home_data else None,
                     "xGA": home_data.get('xGA') if home_data else None,
-                    "elo_rating": home_elo  # Add Elo rating
+                    "elo_rating": home_elo,
+                    "played": home_data.get('match_count', home_data.get('played', 0)) if home_data else 0,
+                    "xg_percentile": home_data.get('xg_percentile') if home_data else None,
+                    "xga_percentile": home_data.get('xga_percentile') if home_data else None,
+                    "ppda_percentile": home_data.get('ppda_percentile') if home_data else None,
+                    "attack_rating": home_data.get('attack_rating') if home_data else None,
+                    "defense_rating": home_data.get('defense_rating') if home_data else None,
+                    "league_stats": home_data.get('league_stats') if home_data else None,
+                    "recent_trend": home_data.get('recent_trend') if home_data else None
                 },
                 "away_team": {
                     "position": away_data.get('position') if away_data else None,
@@ -414,12 +422,20 @@ def get_match_context(match_id):
                     "oppda_coef": away_data.get('oppda_coef') if away_data else None,
                     "xG": away_data.get('xG') if away_data else None,
                     "xGA": away_data.get('xGA') if away_data else None,
-                    "elo_rating": away_elo  # Add Elo rating
+                    "elo_rating": away_elo,
+                    "played": away_data.get('match_count', away_data.get('played', 0)) if away_data else 0,
+                    "xg_percentile": away_data.get('xg_percentile') if away_data else None,
+                    "xga_percentile": away_data.get('xga_percentile') if away_data else None,
+                    "ppda_percentile": away_data.get('ppda_percentile') if away_data else None,
+                    "attack_rating": away_data.get('attack_rating') if away_data else None,
+                    "defense_rating": away_data.get('defense_rating') if away_data else None,
+                    "league_stats": away_data.get('league_stats') if away_data else None,
+                    "recent_trend": away_data.get('recent_trend') if away_data else None
                 },
-                "elo_predictions": elo_probs,  # Add Elo-based predictions
+                "elo_predictions": elo_probs,
                 "narrative": narrative,
                 "has_data": bool(home_data or away_data),
-                "source": source  # Track which API provided the data
+                "source": source
             }
             
             if elo_probs:

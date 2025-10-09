@@ -1489,25 +1489,22 @@
                 window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
             }
             
-            // Reinitialize tooltips after DOM updates with proper timing
-            requestAnimationFrame(() => {
-                setTimeout(() => {
-                    initTooltips();
-                }, 50); // Small delay to ensure DOM is fully rendered
-            });
+            // Reinitialize tooltips after DOM updates - use multiple approaches for reliability
+            initTooltips(); // Immediate init
+            setTimeout(() => initTooltips(), 0); // Next event loop
+            setTimeout(() => initTooltips(), 100); // Delayed fallback
         }
         
         function formatFormWithOpponents(recentMatches) {
             if (!recentMatches || recentMatches.length === 0) return '';
             
-            // Keep chronological order: oldest → newest (left to right)
+            // Horizontal format: oldest → newest (left to right)
             const formHTML = recentMatches.map((match, index) => {
                 const indicator = match.result === 'W' ? '🟩' : match.result === 'D' ? '⬜' : '🟥';
                 const oppAbbr = match.opponent.substring(0, 3).toUpperCase();
                 const vsPrefix = match.home_away === 'away' ? '@' : 'vs';
-                const newest = index === recentMatches.length - 1 ? ' <small class="text-muted">(← newest)</small>' : '';
-                return `${indicator} ${vsPrefix} ${oppAbbr}${newest}`;
-            }).join(' → ');
+                return `${indicator} ${vsPrefix} ${oppAbbr}`;
+            }).join(' | ');
             
             return formHTML;
         }
@@ -2613,12 +2610,10 @@
                     window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
                 }
                 
-                // Reinitialize tooltips after DOM updates with proper timing
-                requestAnimationFrame(() => {
-                    setTimeout(() => {
-                        initTooltips();
-                    }, 50); // Small delay to ensure DOM is fully rendered
-                });
+                // Reinitialize tooltips after DOM updates - use multiple approaches for reliability
+                initTooltips(); // Immediate init
+                setTimeout(() => initTooltips(), 0); // Next event loop
+                setTimeout(() => initTooltips(), 100); // Delayed fallback
             }
             
             function display1X2Prediction(prediction, eloPredictions) {
