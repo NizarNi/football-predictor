@@ -57,3 +57,36 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **aiohttp:** Async HTTP client.
 - **Bootstrap 5.3:** Frontend framework.
 - **Chart.js 4.4.0:** JavaScript library for data visualizations.
+
+## Recent Updates (October 2025)
+
+### Critical Fixes
+- **Manchester United Elo:** Fixed mapping to "Man United" (ClubElo name), Elo 1802.2 confirmed working
+- **Atlético Madrid:** Added accented/unaccented versions mapping to "Atletico"  
+- **Burnley Integration:** Added to logo system with #6C1D45 claret color
+- **Bundesliga Logos:** Expanded with 10 teams (Wolfsburg, Stuttgart, Hoffenheim, Mainz, etc.)
+- **Dark Mode WCAG AAA:** Proper semantic color overrides achieving ≥4.5:1 contrast
+
+### Educational Content
+- **Learn Analytics Page (`/learn`):** Comprehensive guide with glossary (xG, Elo, PPDA, arbitrage, value bets), beginner's tutorial, curated resources, and SEO meta tags
+- **Navigation:** Added "Learn Analytics" button to navbar (responsive design)
+
+## Deployment Configuration
+
+### Replit Autoscale Production Setup
+- **Type:** Autoscale (stateless, scales to zero when idle)
+- **Server:** Gunicorn WSGI - 2 workers, 120s timeout, port reuse
+- **Command:** `gunicorn --bind=0.0.0.0:$PORT --workers=2 --timeout=120 --reuse-port football_predictor.app:app`
+- **Port:** Uses Replit's $PORT variable (typically 8000) for health checks
+- **Secrets:** 4 API keys configured (ODDS_API_KEY_1-4) with rotation
+- **Cost:** $1-3/month for low traffic (auto-scales with demand)
+- **Domain:** Free .replit.app subdomain, custom domain available (~$12/year)
+
+### Production Checklist
+✅ Deployment configured (Autoscale + Gunicorn)  
+✅ API key rotation with 4 keys  
+✅ Caching: Elo (6h), Understat (30min)  
+✅ Dark mode WCAG AAA compliant  
+✅ SEO meta tags on /learn page  
+⏳ Update OG/Twitter image URLs after deployment  
+⏳ User clicks "Deploy" to publish
