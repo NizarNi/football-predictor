@@ -1495,15 +1495,20 @@
         function formatFormWithOpponents(recentMatches) {
             if (!recentMatches || recentMatches.length === 0) return '';
             
-            // Horizontal format: oldest → newest (left to right)
-            const formHTML = recentMatches.map((match, index) => {
+            // Horizontal format with line break after 2 matches: oldest → newest (left to right)
+            const formItems = recentMatches.map((match, index) => {
                 const indicator = match.result === 'W' ? '🟩' : match.result === 'D' ? '⬜' : '🟥';
                 const oppAbbr = match.opponent.substring(0, 3).toUpperCase();
                 const vsPrefix = match.home_away === 'away' ? '@' : 'vs';
                 return `${indicator} ${vsPrefix} ${oppAbbr}`;
-            }).join(' | ');
+            });
             
-            return `<div style="white-space: nowrap; overflow-x: auto; max-width: 100%; text-overflow: ellipsis;">${formHTML}</div>`;
+            // Split into 2 lines: first 2 matches, then remaining 3
+            const firstLine = formItems.slice(0, 2).join(' | ');
+            const secondLine = formItems.slice(2).join(' | ');
+            const formHTML = secondLine ? `${firstLine}<br>${secondLine}` : firstLine;
+            
+            return `<div style="max-width: 100%;">${formHTML}</div>`;
         }
         
         function displayTeamStats(teamData, xgStats) {
@@ -1556,11 +1561,12 @@
                     xgTooltip += `\n📈 League Rank: ${contextPhrase} (${percentileRank}th percentile)`;
                 }
                 
-                // Add league comparison
+                // Add league comparison (HIGHER xG = BETTER attack)
                 if (teamData.league_stats && teamData.league_stats.xg_mean) {
                     const leagueAvg = teamData.league_stats.xg_mean.toFixed(2);
-                    const vsLeague = parseFloat(xgPerGame) > parseFloat(leagueAvg) ? `+${(parseFloat(xgPerGame) - parseFloat(leagueAvg)).toFixed(2)} above` : `${(parseFloat(xgPerGame) - parseFloat(leagueAvg)).toFixed(2)} below`;
-                    xgTooltip += `\n⚖️ vs League Avg: ${vsLeague} league average (${leagueAvg}/game)`;
+                    const diff = parseFloat(xgPerGame) - parseFloat(leagueAvg);
+                    const vsLeague = diff > 0 ? `+${diff.toFixed(2)} above avg ✅ (stronger attack)` : diff < 0 ? `${diff.toFixed(2)} below avg ⚠️ (weaker attack)` : 'At league average';
+                    xgTooltip += `\n⚖️ vs League Avg (${leagueAvg}/game): ${vsLeague}`;
                 }
                 
                 // Add trend indicator
@@ -1599,11 +1605,12 @@
                 const cleanSheetProb = parseFloat(xgaPerGame) < 0.8 ? 'High (50-60%)' : parseFloat(xgaPerGame) < 1.2 ? 'Moderate (30-40%)' : parseFloat(xgaPerGame) < 1.6 ? 'Low (15-25%)' : 'Very Low (<15%)';
                 xgaTooltip += `\n🧤 Clean Sheet Chance: ${cleanSheetProb}`;
                 
-                // Add league comparison
+                // Add league comparison (LOWER xGA = BETTER defense - opposite of xG!)
                 if (teamData.league_stats && teamData.league_stats.xga_mean) {
                     const leagueAvg = teamData.league_stats.xga_mean.toFixed(2);
-                    const vsLeague = parseFloat(xgaPerGame) < parseFloat(leagueAvg) ? `${(parseFloat(leagueAvg) - parseFloat(xgaPerGame)).toFixed(2)} better than` : `${(parseFloat(xgaPerGame) - parseFloat(leagueAvg)).toFixed(2)} worse than`;
-                    xgaTooltip += `\n⚖️ vs League Avg: ${vsLeague} league average (${leagueAvg}/game)`;
+                    const diff = parseFloat(xgaPerGame) - parseFloat(leagueAvg);
+                    const vsLeague = diff < 0 ? `${Math.abs(diff).toFixed(2)} below avg ✅ (stronger defense)` : diff > 0 ? `+${diff.toFixed(2)} above avg ⚠️ (weaker defense)` : 'At league average';
+                    xgaTooltip += `\n⚖️ vs League Avg (${leagueAvg}/game): ${vsLeague}`;
                 }
                 
                 // Add defensive form context
