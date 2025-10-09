@@ -1470,6 +1470,21 @@
             initTooltips();
         }
         
+        function formatFormWithOpponents(recentMatches) {
+            if (!recentMatches || recentMatches.length === 0) return '';
+            
+            // Keep chronological order: oldest → newest (left to right)
+            const formHTML = recentMatches.map((match, index) => {
+                const indicator = match.result === 'W' ? '🟩' : match.result === 'D' ? '⬜' : '🟥';
+                const oppAbbr = match.opponent.substring(0, 3).toUpperCase();
+                const vsPrefix = match.home_away === 'away' ? '@' : 'vs';
+                const newest = index === recentMatches.length - 1 ? ' <small class="text-muted">(← newest)</small>' : '';
+                return `${indicator} ${vsPrefix} ${oppAbbr}${newest}`;
+            }).join(' → ');
+            
+            return formHTML;
+        }
+        
         function displayTeamStats(teamData, xgStats) {
             let html = `<table class="table table-sm table-borderless mb-0"><tbody>`;
             if (teamData.position) {
@@ -1478,7 +1493,14 @@
             if (teamData.points !== null && teamData.points !== undefined) {
                 html += `<tr><td class="text-muted">Points:</td><td><strong>${teamData.points}</strong></td></tr>`;
             }
-            if (teamData.form) {
+            
+            // Form display: Use FBref with opponents if available, fallback to Understat
+            const hasFBrefForm = xgStats && xgStats.recent_matches && xgStats.recent_matches.length > 0;
+            if (hasFBrefForm) {
+                const formDisplay = formatFormWithOpponents(xgStats.recent_matches);
+                html += `<tr><td class="text-muted">Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref with opponents (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td>${formDisplay}</td></tr>`;
+            } else if (teamData.form) {
+                // Fallback to Understat form if FBref unavailable
                 html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(teamData.form)}</td></tr>`;
             }
             
@@ -1510,9 +1532,7 @@
                     const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
                     html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
                 }
-                if (xgStats.form) {
-                    html += `<tr><td class="text-muted">Recent Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td>${formatFormIndicators(xgStats.form)}</td></tr>`;
-                }
+                // Form is now displayed above with opponents, no need to duplicate here
             }
             html += `</tbody></table>`;
             return html;
@@ -2045,9 +2065,9 @@
                 // Show on-demand Match Context button instead of auto-loading
                 showMatchContextButton(match);
                 
-                // Display predictions from Odds API
+                // Display predictions from Odds API with Elo if available
                 if (match.predictions && match.predictions['1x2']) {
-                    display1X2Prediction(match.predictions['1x2']);
+                    display1X2Prediction(match.predictions['1x2'], match.elo_predictions);
                     resetOverUnderButton();
                     resetBettingAnalysisButton();
                 } else {
@@ -2266,12 +2286,12 @@
                 if (hasHomeData || hasAwayData) {
                     html += `<div class="row">`;
                     
-                    // Home team column
-                    html += `<div class="col-md-6 ${hasAwayData ? 'border-end' : ''}">`;
+                    // Home team column  
+                    html += `<div class="col-12 col-md-6 mb-3 mb-md-0 ${hasAwayData ? 'border-md-end' : ''}">`;
                     const homeLogoUrl = getTeamLogoUrl(currentMatchData.home_team, currentMatchData.league);
                     const homeBrandColor = getTeamBrandColor(currentMatchData.home_team);
                     const homeColorData = homeBrandColor ? ensureColorContrast(homeBrandColor, isDarkTheme()) : { color: 'var(--primary-color)', shadow: '' };
-                    html += `<h6 class="fw-bold mb-2" style="color: ${homeColorData.color}; ${homeColorData.shadow}"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
+                    html += `<h6 class="fw-bold mb-2 text-truncate" style="color: ${homeColorData.color}; ${homeColorData.shadow}"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
                     
                     if (hasHomeData) {
                         html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
@@ -2281,20 +2301,26 @@
                         if (contextData.home_team.points !== null && contextData.home_team.points !== undefined) {
                             html += `<tr><td class="text-muted">Points:</td><td><strong>${contextData.home_team.points}</strong></td></tr>`;
                         }
-                        if (contextData.home_team.form) {
+                        // Form display: Use FBref with opponents if available, fallback to Understat
+                        const hasHomeFBrefForm = contextData.xg && contextData.xg.home_stats && contextData.xg.home_stats.recent_matches && contextData.xg.home_stats.recent_matches.length > 0;
+                        if (hasHomeFBrefForm) {
+                            const formDisplay = formatFormWithOpponents(contextData.xg.home_stats.recent_matches);
+                            html += `<tr><td class="text-muted">Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref with opponents (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td class="small">${formDisplay}</td></tr>`;
+                        } else if (contextData.home_team.form) {
+                            // Fallback to Understat form if FBref unavailable
                             html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.home_team.form)}</td></tr>`;
                         }
                         
                         // Add PPDA prominently if available from Understat
                         if (contextData.home_team.ppda_coef !== null && contextData.home_team.ppda_coef !== undefined) {
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                            html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes allowed Per Defensive Action - Lower = more intense pressing. Measures defensive pressure." style="cursor: help; font-size: 0.8em;"></i></td><td><strong class="text-primary">${contextData.home_team.ppda_coef}</strong></td></tr>`;
+                            html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes Per Defensive Action - measures pressing intensity. <8.0 = Extreme High Press (Klopp/Guardiola style), 8-12 = High Press (modern attacking teams), 12-15 = Medium Press (balanced), 15-20 = Low/Passive Block (defensive teams), >20 = Extremely Passive (deep defending). Lower = more aggressive pressing." style="cursor: help; font-size: 0.8em;"></i></td><td><strong class="text-primary">${contextData.home_team.ppda_coef}</strong></td></tr>`;
                         }
                         if (contextData.home_team.xG !== null && contextData.home_team.xG !== undefined) {
-                            html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Total Expected Goals this season (Understat)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xG}</strong></td></tr>`;
+                            html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Cumulative Expected Goals for 2024/25 season from Understat. Based on shot quality (position, angle, defensive pressure) across all matches played. League average: 1.3-1.5 xG per game. Higher values indicate better attacking quality." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xG}</strong></td></tr>`;
                         }
                         if (contextData.home_team.xGA !== null && contextData.home_team.xGA !== undefined) {
-                            html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Total Expected Goals Against this season (Understat)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
+                            html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Cumulative Expected Goals Against for 2024/25 season from Understat. Measures defensive quality - how many high-quality chances opponents create. League average: 1.3-1.5 xGA per game. Lower values indicate stronger defense." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
                         }
                         
                         // Add xG metrics if available
@@ -2307,10 +2333,7 @@
                                 const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
                                 html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
-                            // Add xG-based form (Last 5 matches from FBref)
-                            if (contextData.xg.home_stats.form) {
-                                html += `<tr><td class="text-muted">Recent Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td>${formatFormIndicators(contextData.xg.home_stats.form)}</td></tr>`;
-                            }
+                            // Form is now displayed above with opponents, no need to duplicate here
                         }
                         html += `</tbody></table>`;
                     } else {
@@ -2319,11 +2342,11 @@
                     html += `</div>`;
                     
                     // Away team column
-                    html += `<div class="col-md-6">`;
+                    html += `<div class="col-12 col-md-6">`;
                     const awayLogoUrl = getTeamLogoUrl(currentMatchData.away_team, currentMatchData.league);
                     const awayBrandColor = getTeamBrandColor(currentMatchData.away_team);
                     const awayColorData = awayBrandColor ? ensureColorContrast(awayBrandColor, isDarkTheme()) : { color: '#ef4444', shadow: '' };
-                    html += `<h6 class="fw-bold mb-2" style="color: ${awayColorData.color}; ${awayColorData.shadow}"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
+                    html += `<h6 class="fw-bold mb-2 text-truncate" style="color: ${awayColorData.color}; ${awayColorData.shadow}"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
                     
                     if (hasAwayData) {
                         html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
@@ -2333,7 +2356,13 @@
                         if (contextData.away_team.points !== null && contextData.away_team.points !== undefined) {
                             html += `<tr><td class="text-muted">Points:</td><td><strong>${contextData.away_team.points}</strong></td></tr>`;
                         }
-                        if (contextData.away_team.form) {
+                        // Form display: Use FBref with opponents if available, fallback to Understat
+                        const hasAwayFBrefForm = contextData.xg && contextData.xg.away_stats && contextData.xg.away_stats.recent_matches && contextData.xg.away_stats.recent_matches.length > 0;
+                        if (hasAwayFBrefForm) {
+                            const formDisplay = formatFormWithOpponents(contextData.xg.away_stats.recent_matches);
+                            html += `<tr><td class="text-muted">Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref with opponents (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td class="small">${formDisplay}</td></tr>`;
+                        } else if (contextData.away_team.form) {
+                            // Fallback to Understat form if FBref unavailable
                             html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.away_team.form)}</td></tr>`;
                         }
                         
@@ -2359,10 +2388,7 @@
                                 const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
                                 html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
-                            // Add xG-based form (Last 5 matches from FBref)
-                            if (contextData.xg.away_stats.form) {
-                                html += `<tr><td class="text-muted">Recent Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td>${formatFormIndicators(contextData.xg.away_stats.form)}</td></tr>`;
-                            }
+                            // Form is now displayed above with opponents, no need to duplicate here
                         }
                         html += `</tbody></table>`;
                     } else {
@@ -2468,7 +2494,7 @@
                 initTooltips();
             }
             
-            function display1X2Prediction(prediction) {
+            function display1X2Prediction(prediction, eloPredictions) {
                 if (!prediction) {
                     prediction1x2.innerHTML = `<p class="text-muted">No prediction available</p>`;
                     return;
@@ -2476,6 +2502,14 @@
                 
                 const safetyClass = prediction.is_safe_bet ? 'safe-bet' : 'risky-bet';
                 const safetyText = prediction.is_safe_bet ? 'Safe Bet' : 'Risky Bet';
+                
+                // Calculate hybrid if Elo available
+                let hybridHome, hybridDraw, hybridAway;
+                if (eloPredictions) {
+                    hybridHome = (eloPredictions.home_win * 0.6) + (prediction.probabilities.HOME_WIN * 0.4);
+                    hybridDraw = (eloPredictions.draw * 0.6) + (prediction.probabilities.DRAW * 0.4);
+                    hybridAway = (eloPredictions.away_win * 0.6) + (prediction.probabilities.AWAY_WIN * 0.4);
+                }
                 
                 let html = `
                     <div class="text-center mb-3">
@@ -2485,40 +2519,88 @@
                             ${safetyText}
                         </span>
                     </div>
-                    
-                    <div class="mt-3">
-                        <h6>Probability Breakdown:</h6>
-                        <div class="mb-2">
-                            <div class="d-flex justify-content-between">
-                                <span>Home Win:</span>
-                                <span>${(prediction.probabilities.HOME_WIN * 100).toFixed(1)}%</span>
-                            </div>
-                            <div class="probability-bar">
-                                <div class="probability-fill" style="width: ${prediction.probabilities.HOME_WIN * 100}%; background-color: ${getThemeColors().primary};"></div>
-                            </div>
-                        </div>
-                        <div class="mb-2">
-                            <div class="d-flex justify-content-between">
-                                <span>Draw:</span>
-                                <span>${(prediction.probabilities.DRAW * 100).toFixed(1)}%</span>
-                            </div>
-                            <div class="probability-bar">
-                                <div class="probability-fill" style="width: ${prediction.probabilities.DRAW * 100}%; background-color: ${getThemeColors().muted};"></div>
-                            </div>
-                        </div>
-                        <div class="mb-2">
-                            <div class="d-flex justify-content-between">
-                                <span>Away Win:</span>
-                                <span>${(prediction.probabilities.AWAY_WIN * 100).toFixed(1)}%</span>
-                            </div>
-                            <div class="probability-bar">
-                                <div class="probability-fill" style="width: ${prediction.probabilities.AWAY_WIN * 100}%; background-color: ${getThemeColors().secondary};"></div>
-                            </div>
-                        </div>
-                    </div>
                 `;
                 
+                // Show comparison table if Elo available
+                if (eloPredictions) {
+                    const homeDiv = Math.abs(eloPredictions.home_win - prediction.probabilities.HOME_WIN);
+                    const drawDiv = Math.abs(eloPredictions.draw - prediction.probabilities.DRAW);
+                    const awayDiv = Math.abs(eloPredictions.away_win - prediction.probabilities.AWAY_WIN);
+                    
+                    html += `
+                        <div class="table-responsive mb-3">
+                            <table class="table table-sm table-bordered text-center">
+                                <thead>
+                                    <tr class="table-active">
+                                        <th>Outcome</th>
+                                        <th>Market Odds <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Bookmaker consensus from 30+ bookmakers" style="cursor: help; font-size: 0.7em;"></i></th>
+                                        <th>Elo Model <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical performance from ClubElo (2010-present)" style="cursor: help; font-size: 0.7em;"></i></th>
+                                        <th>Hybrid (60/40) <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="60% Elo + 40% Market for balanced predictions" style="cursor: help; font-size: 0.7em;"></i></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>🏠 Home Win</strong></td>
+                                        <td>${(prediction.probabilities.HOME_WIN * 100).toFixed(1)}%</td>
+                                        <td>${(eloPredictions.home_win * 100).toFixed(1)}% ${homeDiv >= 0.10 ? (eloPredictions.home_win > prediction.probabilities.HOME_WIN ? '⬆️' : '⬇️') : ''}</td>
+                                        <td><strong>${(hybridHome * 100).toFixed(1)}%</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>🤝 Draw</strong></td>
+                                        <td>${(prediction.probabilities.DRAW * 100).toFixed(1)}%</td>
+                                        <td>${(eloPredictions.draw * 100).toFixed(1)}% ${drawDiv >= 0.10 ? (eloPredictions.draw > prediction.probabilities.DRAW ? '⬆️' : '⬇️') : ''}</td>
+                                        <td><strong>${(hybridDraw * 100).toFixed(1)}%</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>✈️ Away Win</strong></td>
+                                        <td>${(prediction.probabilities.AWAY_WIN * 100).toFixed(1)}%</td>
+                                        <td>${(eloPredictions.away_win * 100).toFixed(1)}% ${awayDiv >= 0.10 ? (eloPredictions.away_win > prediction.probabilities.AWAY_WIN ? '⬆️' : '⬇️') : ''}</td>
+                                        <td><strong>${(hybridAway * 100).toFixed(1)}%</strong></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <p class="small text-muted text-center mb-0"><i class="fas fa-arrow-up me-1"></i>⬆️ = Elo higher than Market by ≥10% | ⬇️ = Elo lower than Market by ≥10%</p>
+                        </div>
+                    `;
+                } else {
+                    // Fallback to original display if no Elo
+                    html += `
+                        <div class="mt-3">
+                            <h6>Probability Breakdown:</h6>
+                            <div class="mb-2">
+                                <div class="d-flex justify-content-between">
+                                    <span>Home Win:</span>
+                                    <span>${(prediction.probabilities.HOME_WIN * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="probability-bar">
+                                    <div class="probability-fill" style="width: ${prediction.probabilities.HOME_WIN * 100}%; background-color: ${getThemeColors().primary};"></div>
+                                </div>
+                            </div>
+                            <div class="mb-2">
+                                <div class="d-flex justify-content-between">
+                                    <span>Draw:</span>
+                                    <span>${(prediction.probabilities.DRAW * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="probability-bar">
+                                    <div class="probability-fill" style="width: ${prediction.probabilities.DRAW * 100}%; background-color: ${getThemeColors().muted};"></div>
+                                </div>
+                            </div>
+                            <div class="mb-2">
+                                <div class="d-flex justify-content-between">
+                                    <span>Away Win:</span>
+                                    <span>${(prediction.probabilities.AWAY_WIN * 100).toFixed(1)}%</span>
+                                </div>
+                                <div class="probability-bar">
+                                    <div class="probability-fill" style="width: ${prediction.probabilities.AWAY_WIN * 100}%; background-color: ${getThemeColors().secondary};"></div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
                 prediction1x2.innerHTML = html;
+                // Reinitialize tooltips for new elements
+                initTooltips();
             }
             
             function displayOverUnderPredictions(predictions) {
