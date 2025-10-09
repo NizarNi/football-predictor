@@ -68,16 +68,37 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 
 ## Recent Updates (October 2025)
 
-### Critical Fixes
+### Security Hardening (Oct 9)
+- **API Key Protection:** Sanitized all logging to prevent API key exposure in URLs and error messages
+- **Error Message Sanitization:** Removed all technical exception details from 7 API endpoints - users now see friendly messages like "Unable to load data. Please try again later."
+- **Zero Information Leakage:** No internal errors, stack traces, or sensitive data exposed to clients
+
+### Error Handling & User Experience (Oct 9)
+- **Missing Elo Data:** Changed from alarming "❌ UNMATCHED TEAM" to informative "ℹ️ Elo rating unavailable (team not in ClubElo database)"
+- **Champions League Support:** Clear messaging that xG data is unavailable for CL/EL (FBref only supports domestic leagues)
+- **Graceful Degradation:** All data sources return empty data gracefully when unavailable - matches still display with available information
+- **User-Friendly Messaging:** Consistent, professional error messages across all endpoints
+
+### Code Quality & Architecture (Oct 9)
+- **Centralized Configuration (`config.py`):** 85+ constants for timeouts, cache durations, model weights, betting thresholds
+- **Shared Utilities (`utils.py`):** Eliminated 170+ lines of duplicate code - season calculation, team normalization, fuzzy matching
+- **Zero Magic Numbers:** All hardcoded values replaced with named constants
+- **Clean Imports:** Removed 8 unused packages (beautifulsoup4, selenium, etc.) - 64% reduction in dependencies
+- **Modular Structure:** Single source of truth for all configuration and utility functions
+
+### Data Availability & Documentation (Oct 9)
+- **FBref League Support:** Removed CL/EL from LEAGUE_MAPPING (not supported) to avoid unnecessary API calls
+- **Understat Coverage:** Clearly documented domestic-only support (PL, La Liga, Bundesliga, Serie A, Ligue 1)
+- **ClubElo Limitations:** Documented that smaller teams (Pafos FC, FC Copenhagen, Union Saint-Gilloise, Qarabağ FK) aren't tracked
+- **Data Availability Table:** Added clear documentation of which features work for which competitions
+
+### Previous Updates
 - **Manchester United Elo:** Fixed mapping to "Man United" (ClubElo name), Elo 1802.2 confirmed working
 - **Atlético Madrid:** Added accented/unaccented versions mapping to "Atletico"  
 - **Burnley Integration:** Added to logo system with #6C1D45 claret color
 - **Bundesliga Logos:** Expanded with 10 teams (Wolfsburg, Stuttgart, Hoffenheim, Mainz, etc.)
 - **Dark Mode WCAG AAA:** Proper semantic color overrides achieving ≥4.5:1 contrast
-
-### Educational Content
-- **Learn Analytics Page (`/learn`):** Comprehensive guide with glossary (xG, Elo, PPDA, arbitrage, value bets), beginner's tutorial, curated resources, and SEO meta tags
-- **Navigation:** Added "Learn Analytics" button to navbar (responsive design)
+- **Learn Analytics Page (`/learn`):** Comprehensive guide with glossary, beginner's tutorial, curated resources, SEO meta tags
 
 ## Deployment Configuration
 
