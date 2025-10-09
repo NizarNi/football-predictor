@@ -144,6 +144,7 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
                     "event_id": event['id'],
                     "sport_key": event['sport_key'],
                     "league": event.get('sport_title', league_code),
+                    "league_code": league_code,  # Store the code for API calls
                     "home_team": event['home_team'],
                     "away_team": event['away_team'],
                     "commence_time": event['commence_time'],

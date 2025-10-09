@@ -1422,7 +1422,11 @@
             // Show initial progress
             updateProgressStatus('🔍 Initiating data fetch...', 'search');
             
-            const leagueMap = {
+            // Use league_code from match data (added in odds_api_client.py)
+            const leagueCode = match.league_code || match.league;
+            
+            // Fallback mapping for older data without league_code
+            const leagueMapFallback = {
                 'UEFA Champions League': 'CL',
                 'EPL': 'PL',
                 'Premier League': 'PL',
@@ -1430,6 +1434,7 @@
                 'La Liga': 'PD',
                 'Spanish La Liga': 'PD',
                 'Spain La Liga': 'PD',
+                'La Liga - Spain': 'PD',
                 'Bundesliga': 'BL1',
                 'German Bundesliga': 'BL1',
                 'Germany Bundesliga': 'BL1',
@@ -1443,7 +1448,8 @@
                 'UEFA Europa League': 'EL'
             };
             
-            const leagueCode = leagueMap[match.league] || match.league;
+            // Apply fallback mapping if league code is a display name
+            const finalLeagueCode = leagueMapFallback[leagueCode] || leagueCode;
             
             // Update progress: Fetching from Understat
             setTimeout(() => updateProgressStatus('📊 Fetching standings from Understat...', 'database'), 100);
@@ -1454,7 +1460,7 @@
             );
             
             // Start context fetch
-            const contextFetch = fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
+            const contextFetch = fetch(`/match/${match.id}/context?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
                 .then(r => r.json())
                 .then(data => {
                     updateProgressStatus('📈 Calculating xG metrics from FBref...', 'chart-line');
@@ -1462,7 +1468,7 @@
                 });
             
             // Start xG fetch after context starts
-            const xgFetch = fetch(`/match/${match.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
+            const xgFetch = fetch(`/match/${match.id}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
                 .then(r => r.json())
                 .then(data => {
                     updateProgressStatus('🎯 Processing PPDA coefficients...', 'bullseye');
@@ -2350,6 +2356,9 @@
                 
                 // Fetch xG data if not already loaded (from Match Context)
                 if (!currentXgData && currentMatchData.league) {
+                    // Use league_code from match data
+                    const leagueCode = currentMatchData.league_code || currentMatchData.league;
+                    
                     const leagueMap = {
                         'UEFA Champions League': 'CL',
                         'EPL': 'PL',
@@ -2358,6 +2367,7 @@
                         'La Liga': 'PD',
                         'Spanish La Liga': 'PD',
                         'Spain La Liga': 'PD',
+                        'La Liga - Spain': 'PD',
                         'Bundesliga': 'BL1',
                         'German Bundesliga': 'BL1',
                         'Germany Bundesliga': 'BL1',
@@ -2371,9 +2381,9 @@
                         'UEFA Europa League': 'EL'
                     };
                     
-                    const leagueCode = leagueMap[currentMatchData.league] || currentMatchData.league;
+                    const finalLeagueCode = leagueMap[leagueCode] || leagueCode;
                     
-                    fetch(`/match/${currentMatchData.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(currentMatchData.home_team)}&away_team=${encodeURIComponent(currentMatchData.away_team)}`)
+                    fetch(`/match/${currentMatchData.id}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(currentMatchData.home_team)}&away_team=${encodeURIComponent(currentMatchData.away_team)}`)
                     .then(r => r.json())
                     .then(xgData => {
                         currentXgData = xgData.xg || null;
