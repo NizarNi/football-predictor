@@ -42,10 +42,25 @@
             --autocomplete-border: #475569;
         }
         
-        /* Dark mode - ALL text white for visibility */
+        /* Dark mode - Text white for visibility, except light background elements */
         body.dark-theme,
         body.dark-theme * {
             color: #ffffff !important;
+        }
+        
+        /* Fix text visibility on light background elements - use dark text */
+        body.dark-theme .match-card.arbitrage-match *,
+        body.dark-theme .match-card.arbitrage-match::after {
+            color: #0f172a !important;
+        }
+        
+        body.dark-theme .analysis-section[style*="background-color: #d1fae5"] *,
+        body.dark-theme .analysis-section[style*="background: #d1fae5"] * {
+            color: #065f46 !important;
+        }
+        
+        body.dark-theme .betting-tip-card * {
+            color: var(--text-color) !important;
         }
         
         body.dark-theme .text-muted {

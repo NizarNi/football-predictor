@@ -423,7 +423,7 @@ def fuzzy_team_match(team1, team2):
 
 @app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
-    """Get match context including standings and form (hybrid: football-data.org primary, RapidAPI fallback)"""
+    """Get match context including standings and form (hybrid: football-data.org primary, Understat fallback)"""
     try:
         league_code = request.args.get("league")
         home_team = request.args.get("home_team")
@@ -433,7 +433,7 @@ def get_match_context(match_id):
             return jsonify({"error": "league parameter required"}), 400
         
         from football_data_api import get_league_standings
-        from rapidapi_football import fetch_standings_from_rapidapi
+        from understat_client import fetch_understat_standings
         
         try:
             # Try football-data.org first (primary source)
@@ -447,12 +447,12 @@ def get_match_context(match_id):
             except Exception as fd_error:
                 print(f"⚠️  football-data.org error: {fd_error}")
             
-            # If no data from football-data.org, try RapidAPI as fallback
+            # If no data from football-data.org, try Understat as fallback
             if not standings:
-                print(f"📊 Trying RapidAPI fallback for standings...")
-                standings = fetch_standings_from_rapidapi(league_code)
+                print(f"📊 Trying Understat fallback for standings...")
+                standings = fetch_understat_standings(league_code, 2024)
                 if standings:
-                    source = "RapidAPI (API-Football)"
+                    source = "Understat"
             
             home_data = None
             away_data = None

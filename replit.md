@@ -28,7 +28,8 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Enhanced Over/Under Calculation:** Averages data from 2.25, 2.5, and 2.75 goal lines for more robust Over/Under 2.5 predictions.
 - **Intelligent Betting Tips:** Provides risk-based recommendations (Safest 60-80%, Balanced 30-50%, Value 15-30%).
 - **xG Trend Visualizations:** Integrates Chart.js to display rolling 5-match xG/xGA trends with per-game data, form extraction, and clear tooltips.
-- **Critical Fixes:** Includes timeout mechanisms for API calls to prevent infinite loading and ensures dark mode text visibility across the application.
+- **Critical Fixes:** Includes timeout mechanisms for API calls to prevent infinite loading and ensures dark mode text visibility across the application (light backgrounds excluded from white text rule).
+- **Understat Integration:** Async-based fallback for standings with 30-minute caching, 10-second timeouts, and aggregated xG metrics (total xG, xGA, PPDA coefficients).
 
 ### Feature Specifications
 - **Odds-Based Predictions:** Predictions derived from real bookmaker consensus.
@@ -47,12 +48,15 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 
 ## External Dependencies
 - **The Odds API:** Primary source for live bookmaker odds from 30+ bookmakers.
-- **football-data.org:** Fallback API for match schedules, league standings, and team form.
+- **football-data.org:** API for match schedules, league standings, and team form (primary source, occasional SSL/500 errors).
+- **Understat (via understat library):** Fallback source for league standings with comprehensive xG metrics (PL, La Liga, Bundesliga, Serie A, Ligue 1). Includes 30-minute caching to optimize performance.
 - **FBref (via soccerdata):** Real Expected Goals (xG) statistics from FBref.com for top 5 European leagues.
 - **luukhopman/football-logos (GitHub Repo):** Source for team logos displayed in the application.
 - **Flask:** Python web framework.
 - **gunicorn:** WSGI HTTP server.
 - **requests:** HTTP library for making API calls.
 - **soccerdata:** Python library for fetching football statistics from various sources including FBref.
+- **understat:** Async Python library for Understat.com data (team stats, match results, win probabilities).
+- **aiohttp:** Async HTTP client for Understat integration.
 - **Bootstrap 5.3:** Frontend framework for responsive UI design.
 - **Chart.js 4.4.0:** JavaScript library for interactive data visualizations.

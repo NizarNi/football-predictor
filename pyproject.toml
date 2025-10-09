@@ -15,5 +15,6 @@ dependencies = [
     "selenium>=4.36.0",
     "selenium-wire>=5.1.0",
     "soccerdata>=1.8.2",
+    "understat>=0.1.4",
     "unidecode>=1.4.0",
 ]
