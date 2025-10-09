@@ -1471,8 +1471,10 @@
                 window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
             }
             
-            // Reinitialize tooltips
-            initTooltips();
+            // Reinitialize tooltips after DOM updates
+            requestAnimationFrame(() => {
+                initTooltips();
+            });
         }
         
         function formatFormWithOpponents(recentMatches) {
@@ -2525,8 +2527,10 @@
                     window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
                 }
                 
-                // Reinitialize tooltips for dynamically added content
-                initTooltips();
+                // Reinitialize tooltips after DOM updates
+                requestAnimationFrame(() => {
+                    initTooltips();
+                });
             }
             
             function display1X2Prediction(prediction, eloPredictions) {
