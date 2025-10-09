@@ -170,20 +170,45 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
     return all_matches
 
 def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
-    api_key = get_next_api_key()
+    global invalid_keys
     url = f"{BASE_URL}/sports/{sport_key}/events/{event_id}/odds"
     
-    params = {
-        "apiKey": api_key,
-        "regions": regions,
-        "markets": markets,
-        "oddsFormat": "decimal"
-    }
+    # Get valid keys (excluding known invalid ones)
+    valid_keys = [k for k in API_KEYS if k not in invalid_keys]
     
-    try:
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        error_msg = sanitize_error_message(str(e))
-        raise OddsAPIError(f"Error fetching event odds: {error_msg}")
+    if not valid_keys:
+        raise OddsAPIError("All API keys are invalid. Please check your ODDS_API_KEY configurations.")
+    
+    # Try each valid key until one works
+    last_error = None
+    for attempt, api_key in enumerate(valid_keys):
+        params = {
+            "apiKey": api_key,
+            "regions": regions,
+            "markets": markets,
+            "oddsFormat": "decimal"
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=API_TIMEOUT_ODDS)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                # Invalid/expired key - mark it and try next
+                invalid_keys.add(api_key)
+                key_position = attempt + 1
+                total_keys = len(valid_keys)
+                print(f"❌ API key #{key_position}/{total_keys} validation failed for event odds - trying alternate key...")
+                last_error = e
+                continue
+            else:
+                error_msg = sanitize_error_message(str(e))
+                raise OddsAPIError(f"Error fetching event odds: {error_msg}")
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            continue
+    
+    # If we get here, all keys failed
+    error_msg = sanitize_error_message(str(last_error)) if last_error else "All API keys exhausted"
+    raise OddsAPIError(f"Error fetching event odds: {error_msg}")
