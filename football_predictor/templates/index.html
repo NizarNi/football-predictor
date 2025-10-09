@@ -1534,19 +1534,25 @@
                 html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes Per Defensive Action - measures pressing intensity. <8.0 = Extreme High Press (Klopp/Guardiola style), 8-12 = High Press (modern attacking teams), 12-15 = Medium Press (balanced), 15-20 = Low/Passive Block (defensive teams), >20 = Extremely Passive (deep defending). Lower = more aggressive pressing." style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></td><td><strong class="text-primary">${teamData.ppda_coef}</strong></td></tr>`;
             }
             if (teamData.xG !== null && teamData.xG !== undefined) {
+                console.log('🔍 xG Tooltip Debug - teamData:', teamData);
                 const gamesPlayed = teamData.played || 0;
+                console.log('🔍 Games played:', gamesPlayed, 'xG:', teamData.xG);
                 const xgPerGame = gamesPlayed > 0 ? (teamData.xG / gamesPlayed).toFixed(2) : '0.00';
                 const xgTooltip = gamesPlayed > 0 
                     ? `${teamData.xG} xG in ${gamesPlayed} games (avg ${xgPerGame}/game). League avg: 1.3-1.5 per game. Based on shot quality (position, angle, defensive pressure).`
                     : `Cumulative Expected Goals for 2024/25 season from Understat. Based on shot quality.`;
+                console.log('🔍 xG Tooltip generated:', xgTooltip);
                 html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xG}</strong></td></tr>`;
             }
             if (teamData.xGA !== null && teamData.xGA !== undefined) {
+                console.log('🔍 xGA Tooltip Debug - teamData:', teamData);
                 const gamesPlayed = teamData.played || 0;
+                console.log('🔍 Games played:', gamesPlayed, 'xGA:', teamData.xGA);
                 const xgaPerGame = gamesPlayed > 0 ? (teamData.xGA / gamesPlayed).toFixed(2) : '0.00';
                 const xgaTooltip = gamesPlayed > 0 
                     ? `${teamData.xGA} xGA in ${gamesPlayed} games (avg ${xgaPerGame}/game). League avg: 1.3-1.5 per game. Measures defensive quality - lower is better.`
                     : `Cumulative Expected Goals Against for 2024/25 season from Understat.`;
+                console.log('🔍 xGA Tooltip generated:', xgaTooltip);
                 html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xGA}</strong></td></tr>`;
             }
             
