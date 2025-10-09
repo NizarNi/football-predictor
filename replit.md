@@ -5,6 +5,19 @@ A Flask-based web application providing football match predictions using real bo
 
 ## Recent Changes
 
+### Critical Bug Fix - JavaScript Syntax Error (2025-10-09) ✅
+- **ROOT CAUSE**: Orphaned code block (lines 1460-1474) left after sed deletion of safe bet filter function
+- **SYMPTOMS**: All JavaScript crashed - infinite loop in matches section, dark mode toggle broken, search bar non-functional
+- **ORPHANED CODE**: Contained `return` statement outside function, if/else blocks without wrapper, closing brace mismatch
+- **FIX**: Deleted entire orphaned block (15 lines including comments and logic fragments)
+- **VERIFICATION**: LSP diagnostics clean (no syntax errors), all features restored
+- **RESTORED FEATURES**:
+  - ✅ Matches display properly (18 Champions League matches loading correctly)
+  - ✅ Dark mode toggle functional (toggleTheme() intact, lines 2425-2460)
+  - ✅ Search autocomplete working (dropdown logic intact, lines 1298-1360)
+  - ✅ Arbitrage filter operational (updateFilterBadge() functional)
+- **LESSON LEARNED**: Avoid sed deletions for complex function removal - use Edit tool with precise string matching instead
+
 ### Phase 6 - Dark Theme & Toggle (2025-10-08) ✅
 - **COMPLETE DARK THEME**: Modern navy/charcoal color palette with CSS variables for seamless light/dark switching
 - **THEME TOGGLE**: Button in navbar with moon/sun icon, smooth 0.3s transitions, localStorage persistence across sessions
