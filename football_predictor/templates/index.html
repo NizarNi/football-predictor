@@ -1482,9 +1482,11 @@
                 window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
             }
             
-            // Reinitialize tooltips after DOM updates
+            // Reinitialize tooltips after DOM updates with proper timing
             requestAnimationFrame(() => {
-                initTooltips();
+                setTimeout(() => {
+                    initTooltips();
+                }, 50); // Small delay to ensure DOM is fully rendered
             });
         }
         
@@ -2544,9 +2546,11 @@
                     window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
                 }
                 
-                // Reinitialize tooltips after DOM updates
+                // Reinitialize tooltips after DOM updates with proper timing
                 requestAnimationFrame(() => {
-                    initTooltips();
+                    setTimeout(() => {
+                        initTooltips();
+                    }, 50); // Small delay to ensure DOM is fully rendered
                 });
             }
             
@@ -2997,7 +3001,20 @@
             
             // Initialize Bootstrap tooltips
             function initTooltips() {
+                console.log('🔧 Initializing tooltips...');
+                
+                // First, dispose all existing tooltips to prevent duplicates
+                const existingTooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+                existingTooltips.forEach(el => {
+                    const existingTooltip = bootstrap.Tooltip.getInstance(el);
+                    if (existingTooltip) {
+                        existingTooltip.dispose();
+                    }
+                });
+                
+                // Then create new tooltips
                 const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+                console.log(`🔧 Creating ${tooltipTriggerList.length} new tooltips`);
                 [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
             }
             
