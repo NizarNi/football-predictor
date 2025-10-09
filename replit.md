@@ -20,6 +20,8 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Popular Match Highlighting:** Highlights Champions League and Europa League fixtures with a golden badge.
 - **Dark Mode:** Complete dark theme with a toggle for seamless switching, localStorage persistence, and theme-aware chart colors.
 - **Enhanced Tooltips:** Comprehensive tooltip system with min-width: 250px styling to prevent text wrapping, featuring detailed explanations for xG (2024/25 season context, shot quality factors), Elo ratings (ClubElo 2010-present, 5am/5pm updates), and PPDA pressing intensity guide (<8 Extreme High Press, 8-12 High Press, 12-15 Medium, 15-20 Low, >20 Passive).
+- **Enhanced Form Display:** Form indicators show opponent context with chronological flow (e.g., "🟩 vs ARS → 🟥 @ MCI → ⬜ vs CHE ← newest"). Uses FBref data with opponent names as primary source, falls back to Understat simple indicators when unavailable. Home games show "vs" prefix, away games show "@" prefix.
+- **Responsive Match Context:** Fully responsive layout with col-12 col-md-6 classes for mobile/desktop optimization, text-truncate for overflow prevention, and border-md-end for proper visual separation on tablets/desktop only.
 
 ### Technical Implementations
 - **Team Name Normalization:** Implements `fuzzyNormalizeTeamName()` and `normalizeTeamNameForLogo()` with extensive regex patterns and mappings to handle variations and generate correct logo URLs.
@@ -36,6 +38,8 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Value Bet Detection:** Automatically identifies betting opportunities where Elo and Market predictions diverge by ≥10%, highlighting potential market inefficiencies in Betting Tips section with divergence percentage.
 - **Prediction Comparison Display:** Shows side-by-side comparison of Market Odds, Elo Model, and Hybrid predictions with visual indicators for value bets and recommended outcomes.
 - **Enhanced Betting Tips:** AI-powered recommendations using Hybrid Model that detect value bets, showing Elo vs Market divergence with specific percentages (e.g., "Elo 72% vs Market 58% = 14% divergence").
+- **1X2 Prediction Comparison Table:** Side-by-side display of Market Odds, Elo Model, and Hybrid (60/40) predictions in the 1X2 section. Shows divergence indicators (⬆️/⬇️) when Elo differs from Market by ≥10%, with comprehensive tooltips explaining each prediction model.
+- **Form Display Intelligence:** Eliminates duplicate form indicators by prioritizing FBref data with match-by-match opponent context. Only displays Understat form as fallback when FBref unavailable, maintaining single source of truth for form data.
 
 ### Feature Specifications
 - **Odds-Based Predictions:** Predictions derived from real bookmaker consensus.
