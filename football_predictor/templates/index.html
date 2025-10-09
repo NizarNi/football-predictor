@@ -551,7 +551,7 @@
                                     <div class="card">
                                         <div class="card-header bg-primary text-white">
                                             <i class="fas fa-trophy me-2"></i> 1X2 Prediction
-                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Based on 30+ bookmaker odds. Considers: team form, injuries, head-to-head records, betting market movements. Source: The Odds API" style="cursor: help; font-size: 0.9em;"></i>
+                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Hybrid Model: 60% Elo (ClubElo historical ratings) + 40% Market (30+ bookmaker consensus). Combines historical performance with current market sentiment for balanced predictions. Source: ClubElo.com + The Odds API" style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
                                             <div id="prediction-1x2">
@@ -674,8 +674,8 @@
             if (!formString) return '';
             
             const colors = getThemeColors();
-            // Keep original order for newest→oldest (left to right)
-            const formArray = formString.split('');
+            // Reverse to show oldest→newest (left to right)
+            const formArray = formString.split('').reverse();
             return `<div style="display: inline-flex; gap: 2px; white-space: nowrap;">` + formArray.map(result => {
                 let bgColor = '';
                 
@@ -695,8 +695,8 @@
         function createXgTrendChart(canvasId, recentMatches, teamName) {
             if (!recentMatches || recentMatches.length === 0) return null;
             
-            // Reverse to show oldest→newest (left to right chronological)
-            const matches = [...recentMatches].reverse();
+            // Keep original order for oldest→newest (left to right chronological)
+            const matches = [...recentMatches];
             const colors = getThemeColors();
             
             const rollingWindow = 5;
@@ -1495,16 +1495,15 @@
         function formatFormWithOpponents(recentMatches) {
             if (!recentMatches || recentMatches.length === 0) return '';
             
-            // Horizontal format: newest → oldest (left to right)
-            const reversedMatches = [...recentMatches].reverse();
-            const formHTML = reversedMatches.map((match, index) => {
+            // Horizontal format: oldest → newest (left to right)
+            const formHTML = recentMatches.map((match, index) => {
                 const indicator = match.result === 'W' ? '🟩' : match.result === 'D' ? '⬜' : '🟥';
                 const oppAbbr = match.opponent.substring(0, 3).toUpperCase();
                 const vsPrefix = match.home_away === 'away' ? '@' : 'vs';
                 return `${indicator} ${vsPrefix} ${oppAbbr}`;
             }).join(' | ');
             
-            return formHTML;
+            return `<div style="white-space: nowrap; overflow-x: auto;">${formHTML}</div>`;
         }
         
         function displayTeamStats(teamData, xgStats) {
@@ -2676,9 +2675,13 @@
                                     </tr>
                                 </tbody>
                             </table>
-                            <p class="small text-muted text-center mb-0">
-                                <strong>Betting Opportunities:</strong> ⬆️ = Elo higher than Market by ≥10% (potential value on home/draw/away) | ⬇️ = Elo lower than Market by ≥10% (market may be overvaluing this outcome)
-                            </p>
+                            <div class="alert alert-info small mb-0 mt-2">
+                                <strong>📊 Betting Opportunities Explained:</strong>
+                                <ul class="mb-0 mt-1">
+                                    <li><strong>⬆️ Higher than Market (≥10%):</strong> Elo model sees more value than bookmakers suggest potential betting opportunity on this outcome</li>
+                                    <li><strong>⬇️ Lower than Market (≥10%):</strong> Market may be overvaluing this outcome - consider betting against it</li>
+                                </ul>
+                            </div>
                         </div>
                     `;
                 } else {
@@ -2728,9 +2731,11 @@
                     return;
                 }
                 
-                let html = `<div class="row">`;
-                
                 const thresholds = ['0.5', '1.5', '2.5', '3.5'];
+                const availablePredictions = thresholds.filter(t => predictions[t]);
+                const isSinglePrediction = availablePredictions.length === 1;
+                
+                let html = `<div class="row${isSinglePrediction ? ' justify-content-center' : ''}">`;
                 
                 thresholds.forEach(threshold => {
                     const prediction = predictions[threshold];
@@ -2740,7 +2745,7 @@
                     const safetyText = prediction.is_safe_bet ? 'Safe Bet' : 'Risky Bet';
                     
                     html += `
-                        <div class="col-md-6 mb-3">
+                        <div class="col-md-${isSinglePrediction ? '8' : '6'} mb-3">
                             <div class="card">
                                 <div class="card-header bg-secondary text-white">
                                     Over/Under ${threshold}

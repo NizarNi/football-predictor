@@ -48,28 +48,51 @@ def get_available_sports():
         raise OddsAPIError(f"Error fetching sports: {e}")
 
 def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format="decimal"):
-    api_key = get_next_api_key()
+    global invalid_keys
     url = f"{BASE_URL}/sports/{sport_key}/odds"
     
-    params = {
-        "apiKey": api_key,
-        "regions": regions,
-        "markets": markets,
-        "oddsFormat": odds_format
-    }
+    # Get valid keys (excluding known invalid ones)
+    valid_keys = [k for k in API_KEYS if k not in invalid_keys]
     
-    try:
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
-        data = response.json()
+    if not valid_keys:
+        raise OddsAPIError("All API keys are invalid. Please check your ODDS_API_KEY configurations.")
+    
+    # Try each valid key until one works
+    last_error = None
+    for attempt, api_key in enumerate(valid_keys):
+        params = {
+            "apiKey": api_key,
+            "regions": regions,
+            "markets": markets,
+            "oddsFormat": odds_format
+        }
         
-        quota_remaining = response.headers.get('x-requests-remaining', 'unknown')
-        quota_used = response.headers.get('x-requests-used', 'unknown')
-        print(f"📊 Odds API quota: {quota_remaining} remaining, {quota_used} used")
-        
-        return data
-    except requests.exceptions.RequestException as e:
-        raise OddsAPIError(f"Error fetching odds for {sport_key}: {e}")
+        try:
+            response = requests.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            quota_remaining = response.headers.get('x-requests-remaining', 'unknown')
+            quota_used = response.headers.get('x-requests-used', 'unknown')
+            print(f"📊 Odds API quota: {quota_remaining} remaining, {quota_used} used")
+            
+            return data
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                # Invalid/expired key - mark it and try next
+                invalid_keys.add(api_key)
+                masked_key = api_key[:8] + '...' + api_key[-4:] if len(api_key) > 12 else '***'
+                print(f"❌ INVALID API KEY detected: {masked_key} - marked as invalid, trying next key...")
+                last_error = e
+                continue
+            else:
+                raise OddsAPIError(f"Error fetching odds for {sport_key}: {e}")
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            continue
+    
+    # If we get here, all keys failed
+    raise OddsAPIError(f"Error fetching odds for {sport_key}: {last_error}")
 
 def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
     if league_codes is None:
