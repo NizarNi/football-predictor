@@ -1,0 +1,17 @@
+The FPL-Elo-Insights repository makes predictions by combining real-world data, a classic rating system for team strength, and machine learning. Its approach differs significantly from bookmakers' odds, focusing on historical performance data rather than market sentiment.
+
+Here is a comparison of these different forecasting methods:
+
+Feature	FPL-Elo-Insights & Data-Driven Models	Bookmakers' Odds
+Primary Input	Historical performance data (goals, xG, passes, etc.) and Elo ratings	Market-driven probabilities, adjusted for public betting and bookmaker margin
+Core Method	Statistical and Machine Learning models trained on past data	Implied probability derived from betting odds
+Key Output	Expected points, goals, assists for FPL	Anytime scorer probability, clean sheet odds, match winner
+Best For	Long-term FPL planning, identifying underlying player performance	Short-term (next match) decisions, captaincy picks, bench order
+🧠 How FPL-Elo-Insights Makes Predictions
+The project builds its forecasts on a foundation of diverse data and modeling techniques.
+
+Data Sources: The model fuses three powerful streams of information: the official FPL API (for points, cost, form), manually curated match stats (for detailed, Opta-like metrics), and dynamic team Elo ratings from ClubElo.com. This provides a rich dataset for analysis.
+
+Team Strength with Elo: The system uses the Elo rating system to dynamically quantify team strength. A team's rating increases with a win and decreases with a loss, with the amount of change depending on the match result and the opponent's strength. This provides a powerful, context-aware metric for fixture difficulty analysis.
+
+Machine Learning Models: Advanced models, like the "Massive Data Model" mentioned in search results, are machine learning algorithms fed with performance data over various timeframes. They are context-aware, factoring in a player's role, set-piece duties, and finishing history to make predictions that are more descriptive of a player's true underlying performance level.
