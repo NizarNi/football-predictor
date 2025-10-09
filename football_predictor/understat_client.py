@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from functools import lru_cache
 import threading
+import statistics
 
 # Map league codes to Understat league names
 LEAGUE_MAP = {
@@ -32,6 +33,84 @@ def sync_understat_call(async_func):
         return [] if 'standings' in async_func.__name__ else None
     finally:
         loop.close()
+
+def _calculate_percentile(value: float, all_values: List[float], lower_is_better: bool = False) -> float:
+    """Calculate percentile rank for a value (0-100, where 100 is best)"""
+    if not all_values or value is None:
+        return 0.0
+    
+    sorted_values = sorted(all_values, reverse=not lower_is_better)
+    try:
+        rank = sorted_values.index(value) + 1
+    except ValueError:
+        rank = len(sorted_values)
+    
+    percentile = (rank / len(all_values)) * 100
+    return round(percentile, 1)
+
+def _get_attack_rating(xg_per_game: float) -> str:
+    """Get attack strength rating based on xG per game"""
+    if xg_per_game >= 2.0:
+        return "Elite"
+    elif xg_per_game >= 1.5:
+        return "Strong"
+    elif xg_per_game >= 1.0:
+        return "Average"
+    elif xg_per_game >= 0.7:
+        return "Weak"
+    else:
+        return "Poor"
+
+def _get_defense_rating(xga_per_game: float) -> str:
+    """Get defense strength rating based on xGA per game (lower is better)"""
+    if xga_per_game < 0.7:
+        return "Elite"
+    elif xga_per_game < 1.0:
+        return "Strong"
+    elif xga_per_game < 1.5:
+        return "Average"
+    elif xga_per_game < 2.0:
+        return "Weak"
+    else:
+        return "Poor"
+
+def _calculate_league_stats(teams_data: List[Dict]) -> Dict:
+    """Calculate league-wide statistics for xG and xGA"""
+    xg_values = [team.get('xG', 0) for team in teams_data if team.get('xG')]
+    xga_values = [team.get('xGA', 0) for team in teams_data if team.get('xGA')]
+    
+    if not xg_values or not xga_values:
+        return {}
+    
+    return {
+        'xg_mean': round(statistics.mean(xg_values), 2),
+        'xg_median': round(statistics.median(xg_values), 2),
+        'xg_min': round(min(xg_values), 2),
+        'xg_max': round(max(xg_values), 2),
+        'xga_mean': round(statistics.mean(xga_values), 2),
+        'xga_median': round(statistics.median(xga_values), 2),
+        'xga_min': round(min(xga_values), 2),
+        'xga_max': round(max(xga_values), 2)
+    }
+
+def _calculate_recent_trend(team_history: List[Dict], season_avg_xg: float) -> str:
+    """Calculate if team's recent 5 games xG is above or below season average"""
+    if not team_history or season_avg_xg == 0:
+        return "neutral"
+    
+    recent_matches = team_history[-5:]
+    if len(recent_matches) < 3:
+        return "neutral"
+    
+    recent_xg = sum(float(match.get('xG', 0)) for match in recent_matches)
+    recent_avg = recent_xg / len(recent_matches)
+    
+    if recent_avg > season_avg_xg * 1.1:
+        return "above"
+    elif recent_avg < season_avg_xg * 0.9:
+        return "below"
+    else:
+        return "neutral"
 
 async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[Dict]:
     """Async function to fetch league standings from Understat"""
@@ -131,6 +210,8 @@ async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[
             
             # Merge with xG data from teams endpoint (aggregated from matches)
             team_xg_map = {}
+            team_history_map = {}
+            
             for team_data in teams:
                 team_name = team_data.get('title')
                 if not team_name:
@@ -146,6 +227,8 @@ async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[
                 match_count = 0
                 
                 history = team_data.get('history', [])
+                team_history_map[team_name] = history
+                
                 for match in history:
                     total_xg += float(match.get('xG', 0))
                     total_xga += float(match.get('xGA', 0))
@@ -175,7 +258,8 @@ async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[
                         'npxG': round(total_npxg, 2),
                         'npxGA': round(total_npxga, 2),
                         'ppda_coef': round(sum(ppda_values) / len(ppda_values), 2) if ppda_values else 0,
-                        'oppda_coef': round(sum(oppda_values) / len(oppda_values), 2) if oppda_values else 0
+                        'oppda_coef': round(sum(oppda_values) / len(oppda_values), 2) if oppda_values else 0,
+                        'match_count': match_count
                     }
             
             # Merge xG data
@@ -183,6 +267,43 @@ async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[
                 team_name = team['name']
                 if team_name in team_xg_map:
                     team.update(team_xg_map[team_name])
+            
+            # Calculate league-wide statistics
+            league_stats = _calculate_league_stats(standings_list)
+            
+            # Collect values for percentile calculations
+            xg_values = [team.get('xG', 0) for team in standings_list if team.get('xG')]
+            xga_values = [team.get('xGA', 0) for team in standings_list if team.get('xGA')]
+            ppda_values = [team.get('ppda_coef', 0) for team in standings_list if team.get('ppda_coef')]
+            
+            # Add enhanced metrics to each team
+            for team in standings_list:
+                team_name = team['name']
+                xg = team.get('xG', 0)
+                xga = team.get('xGA', 0)
+                ppda = team.get('ppda_coef', 0)
+                match_count = team.get('match_count', team.get('played', 1))
+                
+                # Calculate per-game averages
+                xg_per_game = xg / match_count if match_count > 0 else 0
+                xga_per_game = xga / match_count if match_count > 0 else 0
+                
+                # Calculate percentiles (lower is better for xGA and PPDA)
+                team['xg_percentile'] = _calculate_percentile(xg, xg_values, lower_is_better=False)
+                team['xga_percentile'] = _calculate_percentile(xga, xga_values, lower_is_better=True)
+                team['ppda_percentile'] = _calculate_percentile(ppda, ppda_values, lower_is_better=True)
+                
+                # Calculate performance ratings
+                team['attack_rating'] = _get_attack_rating(xg_per_game)
+                team['defense_rating'] = _get_defense_rating(xga_per_game)
+                
+                # Add league context
+                team['league_stats'] = league_stats
+                
+                # Calculate recent trend
+                history = team_history_map.get(team_name, [])
+                season_avg_xg = xg_per_game
+                team['recent_trend'] = _calculate_recent_trend(history, season_avg_xg)
             
             print(f"✅ Understat: Retrieved {len(standings_list)} teams for {league_code}")
             return standings_list
