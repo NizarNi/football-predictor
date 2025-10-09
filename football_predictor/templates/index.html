@@ -1457,22 +1457,6 @@
                 });
             }
             
-            // Helper function to get maximum confidence from betting tips
-            // Note: Only checks 1X2 predictions which are available upfront
-            // Over/Under data is loaded on-demand when viewing a specific match
-                
-                // Check Over/Under if it's embedded in the match object
-                // (Future enhancement: pre-load Over/Under for all matches to improve filtering)
-                if (match.totals && match.totals.predictions) {
-                    Object.values(match.totals.predictions).forEach(pred => {
-                        if (pred.over) maxConfidence = Math.max(maxConfidence, pred.over);
-                        if (pred.under) maxConfidence = Math.max(maxConfidence, pred.under);
-                    });
-                }
-                
-                return maxConfidence * 100; // Convert to percentage
-            }
-            
             // Update the filter badge with match counts
             function updateFilterBadge(filteredCount, totalCount, arbitrageFilter) {
                 const badge = document.getElementById('filter-badge');
