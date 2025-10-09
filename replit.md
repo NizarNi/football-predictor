@@ -1,7 +1,7 @@
 # Football Prediction - Safe Bet Analyzer
 
 ## Overview
-A Flask-based web application providing football match predictions using real bookmaker odds. It fetches upcoming matches and live odds from over 30 bookmakers, converts odds to implied probabilities, detects arbitrage opportunities, and offers consensus predictions based on market data. The project aims to empower users with data-driven insights for sports betting.
+A Flask-based web application providing football match predictions using real bookmaker odds. It fetches upcoming matches and live odds, converts odds to implied probabilities, detects arbitrage opportunities, and offers consensus predictions based on market data. The project aims to empower users with data-driven insights for sports betting, covering key European leagues and competitions.
 
 ## User Preferences
 I prefer detailed explanations. Ask before making major changes. I want iterative development. I prefer simple language.
@@ -9,74 +9,51 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 ## System Architecture
 
 ### UI/UX Decisions
-- **Responsive UI:** Utilizes Bootstrap for a responsive design with optimized 40/60 layout split (matches panel: col-lg-5, predictions panel: col-lg-7) for better readability on desktop.
-- **Centered Search:** Large, prominent search bar at top-center (80% width) with autocomplete for team names and nicknames.
-- **Unified Filter Bar:** Clean horizontal filter bar with "Bet Opportunities" dropdown and arbitrage checkbox.
-- **Intelligent Filtering:** "Bet Opportunities" filter finds high-confidence bets (≥60%, ≥75%, ≥88%) across 1X2 predictions.
-- **Dynamic Badges:** Shows filtered match counts (e.g., "5 Very Safe Bets Found") with auto-hiding when no filters active.
-- **Team Logos:** Displays team logos from a GitHub repository on match cards and prediction views with league-gated fuzzy matching.
-- **Visual Cues:** Uses colored form indicators (🟩 Win, ⬜ Draw, 🟥 Loss) and a visual 💰 ARBITRAGE badge with a green gradient border for easy identification.
-- **Autocomplete Search:** Features an autocomplete search bar with team nicknames, displaying team name, matched alias, and league with an 8-result limit.
-- **Popular Match Highlighting:** Highlights Champions League and Europa League fixtures with a golden badge.
-- **Dark Mode:** Complete dark theme with a toggle for seamless switching, localStorage persistence, and theme-aware chart colors.
-- **Enhanced Tooltips:** Comprehensive tooltip system with min-width: 250px styling to prevent text wrapping, featuring detailed explanations for xG (2024/25 season context, shot quality factors), Elo ratings (ClubElo 2010-present, 5am/5pm updates), and PPDA pressing intensity guide (<8 Extreme High Press, 8-12 High Press, 12-15 Medium, 15-20 Low, >20 Passive).
-- **Enhanced Form Display:** Form indicators show opponent context with chronological flow (e.g., "🟩 vs ARS → 🟥 @ MCI → ⬜ vs CHE ← newest"). Uses FBref data with opponent names as primary source, falls back to Understat simple indicators when unavailable. Home games show "vs" prefix, away games show "@" prefix.
-- **Responsive Match Context:** Fully responsive layout with col-12 col-md-6 classes for mobile/desktop optimization, text-truncate for overflow prevention, and border-md-end for proper visual separation on tablets/desktop only. Custom CSS removes table cell left padding to prevent data shift.
-- **Dynamic xG Tooltips:** Season xG/xGA tooltips dynamically display games played and per-game averages (e.g., "45.2 xG in 10 games (avg 4.5/game). League avg: 1.3-1.5 per game") using Understat's 'played' field for contextual information.
-- **Global Tooltip System:** MutationObserver-based tooltip initialization automatically detects and initializes tooltips for any dynamically added content, eliminating race conditions and ensuring tooltips work on first load without requiring prior interactions.
-- **Horizontal Form Display:** Team form shown horizontally oldest→newest (left to right) for chronological flow. FBref format includes opponent context (e.g., "🟩 vs ARS | 🟥 @ MCI"), Understat shows simple indicators. Split into 2 lines after 2 matches to prevent overlap between home/away columns.
-- **Enlarged xG Charts:** xG Trend visualizations increased to 300px height (67% larger) with 320px containers, displaying matches chronologically oldest→newest (left to right) for intuitive time-series visualization.
-- **Corrected xG/xGA Tooltips:** All xGA (Expected Goals Against) tooltips now clearly explain "Lower xGA = Stronger Defense 🛡️, Higher xGA = Weaker Defense ⚠️" - opposite interpretation from xG where higher attacking values are better. Fixed Oct 2025 to prevent user confusion. League comparison tooltips show explicit context: xG shows "+0.3 above avg ✅ (stronger attack)" or "-0.2 below avg ⚠️ (weaker attack)", while xGA shows "0.4 below avg ✅ (stronger defense)" or "+0.3 above avg ⚠️ (weaker defense)".
+- **Responsive Design:** Utilizes Bootstrap for responsiveness, with an optimized layout for desktop and mobile.
+- **Search & Filtering:** Features a prominent, centered search bar with autocomplete and a unified horizontal filter bar for bet opportunities and arbitrage.
+- **Visual Cues:** Dynamic badges, team logos, colored form indicators (Win, Draw, Loss), and an arbitrage badge with visual emphasis.
+- **Enhanced Tooltips:** Comprehensive tooltips for xG, Elo ratings, and PPDA, styled for readability and dynamic content.
+- **Dark Mode:** Complete dark theme with a toggle, localStorage persistence, and theme-aware chart colors, ensuring WCAG AAA contrast.
+- **Form Display:** Chronological display of team form with opponent context, prioritizing FBref data and falling back to Understat.
+- **xG Visualizations:** Enlarged Chart.js visualizations for xG/xGA trends, displaying data chronologically.
 
 ### Technical Implementations
-- **Team Name Normalization:** Implements `fuzzyNormalizeTeamName()` and `normalizeTeamNameForLogo()` with extensive regex patterns and mappings to handle variations and generate correct logo URLs.
-- **Odds Calculation:** Converts decimal/American odds to implied probabilities, averages probabilities for consensus, detects arbitrage opportunities, and calculates optimal stake distribution.
-- **API Key Rotation:** Implements robust API key rotation with automatic retry logic for The Odds API. Detects invalid keys (401 errors), marks them as invalid, and automatically tries next available key. Includes masked logging for security (e.g., "affc55a1...05a5"). System uses 3 API keys (ODDS_API_KEY_1, ODDS_API_KEY_2, ODDS_API_KEY_3) and continues operation even when some keys fail.
-- **On-Demand Data Fetching:** Features "Show Over/Under Odds" and "Betting Analysis" buttons to load data only when clicked, optimizing API quota usage.
-- **Enhanced Over/Under Calculation:** Averages data from 2.25, 2.5, and 2.75 goal lines for more robust Over/Under 2.5 predictions.
-- **Intelligent Betting Tips:** Provides risk-based recommendations (Safest 60-80%, Balanced 30-50%, Value 15-30%).
-- **xG Trend Visualizations:** Integrates Chart.js to display rolling 5-match xG/xGA trends with per-game data, form extraction, and clear tooltips.
-- **Critical Fixes:** Includes timeout mechanisms for API calls to prevent infinite loading and ensures dark mode text visibility across the application (light backgrounds excluded from white text rule).
-- **Understat Integration:** Async-based fallback for standings with 30-minute caching, 10-second timeouts, and aggregated xG metrics (total xG, xGA, PPDA coefficients). PPDA calculated correctly as per-match ratio (passes allowed / defensive actions) then averaged.
-- **Elo Rating System:** Integrates ClubElo.com API for objective team strength ratings with 6-hour caching, comprehensive team name alias mapping (Man City/Manchester City, Paris SG/PSG, etc.), and diagnostic logging for unmatched teams.
-- **Hybrid Prediction Model:** Combines Elo ratings (60%) with Market odds (40%) for balanced predictions that merge historical performance with current market sentiment.
-- **Value Bet Detection:** Automatically identifies TRUE value bets following the golden rule: only flags opportunities when Elo probability > Market probability (≥10% divergence). Displays alert only when model sees higher chance than bookmakers, indicating potential betting value. Fixed Oct 2025 to prevent false positives.
-- **Prediction Comparison Display:** Shows side-by-side comparison of Market Odds, Elo Model, and Hybrid predictions with visual indicators for value bets and recommended outcomes. 1X2 main prediction badge displays the highest hybrid percentage outcome (not market-based), ensuring consistency with the 60/40 model.
-- **Enhanced Betting Tips:** AI-powered recommendations using Hybrid Model that detect value bets, showing Elo vs Market divergence with specific percentages (e.g., "Elo 72% vs Market 58% = 14% divergence").
-- **1X2 Prediction Comparison Table:** Side-by-side display of Market Odds, Elo Model, and Hybrid (60/40) predictions in the 1X2 section. Shows divergence indicators (⬆️/⬇️) when Elo differs from Market by ≥10%, with clear explanation: "Betting Opportunities: ⬆️ = Elo higher than Market (potential value) | ⬇️ = Elo lower (market overvaluing)".
-- **Dynamic Season Calculation:** Automatically calculates current football season based on month (Aug-Dec uses current year, Jan-Jul uses previous year) via get_current_season() helper function, ensuring accurate season data for Understat standings and xG metrics.
-- **Form Display Intelligence:** Eliminates duplicate form indicators by prioritizing FBref data with match-by-match opponent context. Only displays Understat form as fallback when FBref unavailable, maintaining single source of truth for form data.
+- **Data Normalization:** Robust team name normalization for consistent data processing and logo mapping.
+- **Odds Processing:** Conversion of various odds formats to implied probabilities, arbitrage detection, and optimal stake calculation.
+- **API Key Management:** Robust API key rotation and retry logic for external services to ensure continuous operation.
+- **On-Demand Data Loading:** Optimizes API usage by loading detailed data (e.g., Over/Under odds, betting analysis) only when requested.
+- **Prediction Models:** Integrates Elo ratings (ClubElo) and market odds into a hybrid model (60% Elo, 40% Market) for balanced predictions.
+- **Value Bet Identification:** Automatically flags potential value bets where the Elo model's probability significantly exceeds market probability (≥10% divergence).
+- **xG Analytics:** Integrates FBref and Understat data for Expected Goals (xG), Expected Goals Against (xGA), and PPDA (Passes Per Defensive Action) metrics.
+- **Dynamic Season Calculation:** Automatically determines the current football season for accurate data retrieval.
 
 ### Feature Specifications
-- **Odds-Based Predictions:** Predictions derived from real bookmaker consensus.
-- **Arbitrage Detection:** Identifies arbitrage opportunities with profit margins and displays bookmaker names/odds for each stake.
-- **Best Odds Display:** Shows the highest available odds for each outcome across all bookmakers.
-- **Prediction Types:** Includes 1X2 (Home Win/Draw/Away Win) with implied probabilities, confidence scores, and bookmaker count.
-- **Multi-League Support:** Covers Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Champions League, and Europa League.
-- **Match Context:** Displays league standings, team positions, points, form, Elo ratings, and xG metrics (xGF, xGA, overperformance) for both teams.
-- **xG Analytics:** Real Expected Goals data from FBref showing team attacking/defensive strength, xG-based match predictions, and Over/Under 2.5 recommendations (available for top 5 leagues only).
-- **Elo-Based Predictions:** Objective win probabilities calculated from historical Elo ratings using standard Elo probability formula.
-- **Hybrid Model:** 60/40 weighted combination of Elo (historical) and Market (sentiment) predictions for optimal accuracy.
-- **Value Bet Identification:** Highlights matches where Elo and Market diverge significantly (≥10%), indicating potential betting value.
+- **Odds-Based Predictions:** Derived from real bookmaker consensus.
+- **Arbitrage Detection:** Identifies arbitrage opportunities with profit margins and bookmaker details.
+- **Best Odds Display:** Shows the highest available odds for each outcome.
+- **Prediction Types:** Includes 1X2 (Home Win/Draw/Away Win) with probabilities and confidence scores.
+- **Multi-League Support:** Covers major European leagues (Premier League, La Liga, Bundesliga, Serie A, Ligue 1) and European competitions (Champions League, Europa League).
+- **Match Context:** Displays league standings, team form, Elo ratings, and xG metrics for competing teams.
+- **Value Bet Identification:** Highlights matches with significant divergence between Elo and Market probabilities.
 
 ### System Design Choices
 - **Flask Application:** Core web framework for the backend.
-- **Modular Structure:** Organized into distinct files for API clients, odds calculation, and the main Flask application.
-- **Gunicorn:** Used for production deployment with multiple worker processes for scalability.
-- **Asynchronous Data Loading:** Deferring loading of "Over/Under" and "Betting Analysis" data to improve initial page load times and conserve API quota.
+- **Modular Structure:** Organized code for API clients, odds calculations, and the main Flask application.
+- **Gunicorn:** Used for production deployment to ensure scalability.
+- **Asynchronous Data Loading:** Improves initial page load times and conserves API quotas.
 
 ## External Dependencies
-- **The Odds API:** Primary source for live bookmaker odds from 30+ bookmakers.
-- **football-data.org:** API for match schedules, league standings, and team form (primary source, occasional SSL/500 errors).
-- **Understat (via understat library):** Fallback source for league standings with comprehensive xG metrics (PL, La Liga, Bundesliga, Serie A, Ligue 1). Includes 30-minute caching to optimize performance.
-- **FBref (via soccerdata):** Real Expected Goals (xG) statistics from FBref.com for top 5 European leagues.
-- **ClubElo.com:** Historical Elo ratings for 630+ global football teams, updated twice daily (5am/5pm UTC). Used for objective team strength assessment and value bet detection.
-- **luukhopman/football-logos (GitHub Repo):** Source for team logos displayed in the application.
+- **The Odds API:** Primary source for live bookmaker odds.
+- **football-data.org:** API for match schedules, league standings, and team form.
+- **Understat (via understat library):** Fallback for league standings and comprehensive xG metrics with caching.
+- **FBref (via soccerdata):** Real Expected Goals (xG) statistics for top European leagues.
+- **ClubElo.com:** Historical Elo ratings for team strength assessment.
+- **luukhopman/football-logos (GitHub Repo):** Source for team logos.
 - **Flask:** Python web framework.
 - **gunicorn:** WSGI HTTP server.
-- **requests:** HTTP library for making API calls.
-- **soccerdata:** Python library for fetching football statistics from various sources including FBref.
-- **understat:** Async Python library for Understat.com data (team stats, match results, win probabilities).
-- **aiohttp:** Async HTTP client for Understat integration.
-- **Bootstrap 5.3:** Frontend framework for responsive UI design.
-- **Chart.js 4.4.0:** JavaScript library for interactive data visualizations.
+- **requests:** HTTP library.
+- **soccerdata:** Python library for football statistics.
+- **understat:** Async Python library for Understat.com data.
+- **aiohttp:** Async HTTP client.
+- **Bootstrap 5.3:** Frontend framework.
+- **Chart.js 4.4.0:** JavaScript library for data visualizations.

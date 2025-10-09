@@ -72,4 +72,4 @@ externalPort = 4200
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["gunicorn", "--config", "football_predictor/gunicorn_config.py", "--chdir", "football_predictor", "app:app"]
+run = ["gunicorn", "--bind=0.0.0.0:$PORT", "--workers=2", "--timeout=120", "--reuse-port", "football_predictor.app:app"]
