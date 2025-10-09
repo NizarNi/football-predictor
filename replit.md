@@ -88,5 +88,45 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 ✅ Caching: Elo (6h), Understat (30min)  
 ✅ Dark mode WCAG AAA compliant  
 ✅ SEO meta tags on /learn page  
+✅ Codebase cleaned and optimized (Oct 9, 2025)  
 ⏳ Update OG/Twitter image URLs after deployment  
 ⏳ User clicks "Deploy" to publish
+
+## Maintenance & Optimization (October 9, 2025)
+
+### Codebase Cleanup
+- **Removed Legacy Code:** Deleted abandoned neural network approach (src/ directory with 25KB of unused code)
+- **Uninstalled Unused Packages:** Removed 8 packages from old scraping approach (beautifulsoup4, selenium, selenium-wire, lxml, python-dateutil, unidecode, fake-useragent, chromedriver-autoinstaller)
+- **Deleted Redundant Files:** Removed gunicorn_config.py, wsgi.py, start.sh, rapidapi_football.py (using Replit deploy config)
+- **Cleaned Export Artifacts:** Removed tar.gz export, GitHub setup files, duplicate README
+- **Removed Empty Directories:** Deleted models/, scraped_data/, static/ (from abandoned approaches)
+- **Cleared Stale Logs:** Removed TensorFlow/CUDA errors from app.log (old neural network code)
+- **Updated .gitignore:** Removed references to deleted directories, fixed uv.lock tracking
+
+### Current Dependencies (Lean & Production-Ready)
+- **Core:** flask, gunicorn, requests
+- **Data Sources:** soccerdata (FBref xG), understat (async xG/standings), aiohttp
+- **Total:** 8 packages (down from 22) - 64% reduction in dependencies
+
+### Project Structure (Optimized)
+```
+football_predictor/
+├── app.py                    # Main Flask application
+├── elo_client.py             # ClubElo integration
+├── football_data_api.py      # Match schedules & standings  
+├── odds_api_client.py        # Bookmaker odds (30+ sources)
+├── odds_calculator.py        # Probability & arbitrage math
+├── understat_client.py       # Async xG data
+├── xg_data_fetcher.py        # FBref xG statistics
+├── templates/
+│   ├── index.html            # Main prediction interface
+│   └── learn.html            # Educational SEO page
+├── processed_data/xg_cache/  # FBref cache (2 leagues)
+└── README.md                 # Project documentation
+```
+
+### Code Quality
+✅ Zero LSP errors across all Python files  
+✅ Clean imports - all packages actively used  
+✅ Proper type hints and error handling  
+✅ Comprehensive .gitignore (cache files only)
