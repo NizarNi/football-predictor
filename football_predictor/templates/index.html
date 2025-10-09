@@ -1503,7 +1503,7 @@
                 return `${indicator} ${vsPrefix} ${oppAbbr}`;
             }).join(' | ');
             
-            return `<div style="white-space: nowrap; overflow-x: auto;">${formHTML}</div>`;
+            return `<div style="white-space: nowrap; overflow-x: auto; max-width: 100%; text-overflow: ellipsis;">${formHTML}</div>`;
         }
         
         function displayTeamStats(teamData, xgStats) {
@@ -1579,8 +1579,8 @@
                 const gamesPlayed = teamData.played || 0;
                 const xgaPerGame = gamesPlayed > 0 ? (teamData.xGA / gamesPlayed).toFixed(2) : '0.00';
                 
-                // Build rich xGA tooltip with defensive strength analysis
-                let xgaTooltip = `🛡️ Season xGA: ${teamData.xGA.toFixed(1)} over ${gamesPlayed} games (${xgaPerGame}/game)`;
+                // Build rich xGA tooltip with defensive strength analysis (LOWER is BETTER for defense)
+                let xgaTooltip = `🛡️ Season xGA: ${teamData.xGA.toFixed(1)} over ${gamesPlayed} games (${xgaPerGame}/game)\n\nLower xGA = Stronger Defense 🛡️\nHigher xGA = Weaker Defense ⚠️`;
                 
                 // Add defense rating and context
                 if (teamData.defense_rating) {
@@ -2425,8 +2425,8 @@
                             const homeGamesPlayed = contextData.home_team.played || 0;
                             const homeXgaPerGame = homeGamesPlayed > 0 ? (contextData.home_team.xGA / homeGamesPlayed).toFixed(2) : '0.00';
                             const homeXgaTooltip = homeGamesPlayed > 0 
-                                ? `${contextData.home_team.xGA} xGA in ${homeGamesPlayed} games (avg ${homeXgaPerGame}/game). League avg: 1.3-1.5 per game. Lower is better.`
-                                : `Cumulative Expected Goals Against for 2024/25 season from Understat.`;
+                                ? `${contextData.home_team.xGA} xGA in ${homeGamesPlayed} games (avg ${homeXgaPerGame}/game).\n\nLeague avg: 1.3-1.5/game\nLower xGA = Stronger Defense 🛡️\nHigher xGA = Weaker Defense ⚠️`
+                                : `Cumulative Expected Goals Against for 2024/25 season from Understat.\n\nLower xGA = Stronger Defense`;
                             html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${homeXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
                         }
                         
@@ -2490,8 +2490,8 @@
                             const awayGamesPlayed = contextData.away_team.played || 0;
                             const awayXgaPerGame = awayGamesPlayed > 0 ? (contextData.away_team.xGA / awayGamesPlayed).toFixed(2) : '0.00';
                             const awayXgaTooltip = awayGamesPlayed > 0 
-                                ? `${contextData.away_team.xGA} xGA in ${awayGamesPlayed} games (avg ${awayXgaPerGame}/game). League avg: 1.3-1.5 per game. Lower is better.`
-                                : `Cumulative Expected Goals Against for 2024/25 season from Understat.`;
+                                ? `${contextData.away_team.xGA} xGA in ${awayGamesPlayed} games (avg ${awayXgaPerGame}/game).\n\nLeague avg: 1.3-1.5/game\nLower xGA = Stronger Defense 🛡️\nHigher xGA = Weaker Defense ⚠️`
+                                : `Cumulative Expected Goals Against for 2024/25 season from Understat.\n\nLower xGA = Stronger Defense`;
                             html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${awayXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xGA}</strong></td></tr>`;
                         }
                         
@@ -2616,22 +2616,38 @@
                     return;
                 }
                 
-                const safetyClass = prediction.is_safe_bet ? 'safe-bet' : 'risky-bet';
-                const safetyText = prediction.is_safe_bet ? 'Safe Bet' : 'Risky Bet';
-                
                 // Calculate hybrid if Elo available
                 let hybridHome, hybridDraw, hybridAway;
+                let finalPrediction = prediction.prediction;
+                let finalConfidence = prediction.confidence;
+                
                 if (eloPredictions) {
                     hybridHome = (eloPredictions.home_win * 0.6) + (prediction.probabilities.HOME_WIN * 0.4);
                     hybridDraw = (eloPredictions.draw * 0.6) + (prediction.probabilities.DRAW * 0.4);
                     hybridAway = (eloPredictions.away_win * 0.6) + (prediction.probabilities.AWAY_WIN * 0.4);
+                    
+                    // Determine prediction based on highest hybrid percentage
+                    const maxHybrid = Math.max(hybridHome, hybridDraw, hybridAway);
+                    if (maxHybrid === hybridHome) {
+                        finalPrediction = 'HOME_WIN';
+                        finalConfidence = hybridHome * 100;
+                    } else if (maxHybrid === hybridDraw) {
+                        finalPrediction = 'DRAW';
+                        finalConfidence = hybridDraw * 100;
+                    } else {
+                        finalPrediction = 'AWAY_WIN';
+                        finalConfidence = hybridAway * 100;
+                    }
                 }
+                
+                const safetyClass = finalConfidence >= 60 ? 'safe-bet' : 'risky-bet';
+                const safetyText = finalConfidence >= 60 ? 'Safe Bet' : 'Risky Bet';
                 
                 let html = `
                     <div class="text-center mb-3">
                         <span class="prediction-badge ${safetyClass}">
-                            ${prediction.prediction} (${prediction.confidence.toFixed(1)}%)
-                            <i class="fas ${prediction.is_safe_bet ? 'fa-shield-alt' : 'fa-exclamation-triangle'} ms-1"></i>
+                            ${finalPrediction} (${finalConfidence.toFixed(1)}%)
+                            <i class="fas ${finalConfidence >= 60 ? 'fa-shield-alt' : 'fa-exclamation-triangle'} ms-1"></i>
                             ${safetyText}
                         </span>
                     </div>
@@ -2678,8 +2694,8 @@
                             <div class="alert alert-info small mb-0 mt-2">
                                 <strong>📊 Betting Opportunities Explained:</strong>
                                 <ul class="mb-0 mt-1">
-                                    <li><strong>⬆️ Higher than Market (≥10%):</strong> Elo model sees more value than bookmakers suggest potential betting opportunity on this outcome</li>
-                                    <li><strong>⬇️ Lower than Market (≥10%):</strong> Market may be overvaluing this outcome - consider betting against it</li>
+                                    <li><strong>⬆️ Elo Higher than Market (≥10%):</strong> Elo model sees higher probability - potential VALUE BET opportunity</li>
+                                    <li><strong>⬇️ Elo Lower than Market (≥10%):</strong> Market overvaluing this outcome - avoid or bet against</li>
                                 </ul>
                             </div>
                         </div>
@@ -2875,15 +2891,14 @@
                 let html = '<div class="analysis-section mb-3">';
                 html += '<div class="analysis-title">💡 Betting Tips <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="AI-powered recommendations using Hybrid Model (60% Elo historical data + 40% Market odds). Identifies value bets where Elo and Market diverge ≥10%. Source: ClubElo.com + 30+ bookmakers" style="cursor: help; font-size: 0.85em;"></i></div>';
                 
-                // Show value bet alert if Elo divergence detected
-                if (hasEloDivergence && valueBetOutcome) {
-                    const eloHigher = valueBetOutcome.eloProb > valueBetOutcome.marketProb;
+                // Show value bet alert ONLY if Elo > Market (true value bet)
+                if (hasEloDivergence && valueBetOutcome && valueBetOutcome.eloProb > valueBetOutcome.marketProb) {
                     const divergencePercent = (valueBetOutcome.divergence * 100).toFixed(1);
                     html += `
                         <div class="alert alert-warning mb-3" style="border: 2px solid #f59e0b; background-color: #fef3c7;">
                             <strong>💎 VALUE BET DETECTED:</strong> ${valueBetOutcome.type}
                             <br><span class="badge bg-warning text-dark">Elo ${(valueBetOutcome.eloProb * 100).toFixed(1)}% vs Market ${(valueBetOutcome.marketProb * 100).toFixed(1)}% = ${divergencePercent}% divergence</span>
-                            <br><small class="text-muted">${eloHigher ? 'Historical data suggests higher probability than market odds indicate' : 'Market odds suggest higher probability than historical data'}</small>
+                            <br><small class="text-muted">Elo model sees higher probability than market - potential betting opportunity</small>
                         </div>
                     `;
                 }
