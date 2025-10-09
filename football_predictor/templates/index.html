@@ -42,31 +42,17 @@
             --autocomplete-border: #475569;
         }
         
-        /* Dark mode - Text white for visibility, except light background elements */
-        body.dark-theme,
-        body.dark-theme * {
-            color: #ffffff !important;
+        /* Dark mode - Proper color inheritance using CSS variables */
+        body.dark-theme {
+            color: var(--text-color);
         }
         
-        /* Fix text visibility on light background elements - use dark text */
-        body.dark-theme .match-card.arbitrage-match *,
-        body.dark-theme .match-card.arbitrage-match::after {
-            color: #0f172a !important;
-        }
-        
-        body.dark-theme .analysis-section[style*="background-color: #d1fae5"] *,
-        body.dark-theme .analysis-section[style*="background: #d1fae5"] * {
-            color: #065f46 !important;
-        }
-        
-        body.dark-theme .betting-tip-card * {
-            color: var(--text-color) !important;
-        }
-        
+        /* Theme-aware text colors with !important to override Bootstrap */
         body.dark-theme .text-muted {
             color: #cbd5e1 !important;
         }
         
+        /* Semantic colors - dark mode with better contrast (must override Bootstrap !important) */
         body.dark-theme .text-success {
             color: #4ade80 !important;
         }
@@ -83,24 +69,34 @@
             color: #38bdf8 !important;
         }
         
-        body.dark-theme .alert {
-            color: var(--text-color);
-        }
-        
         body.dark-theme .text-primary {
-            color: var(--primary-color) !important;
+            color: #6366f1 !important;
         }
         
-        body.dark-theme .text-danger {
-            color: #ef4444 !important;
+        /* Dark mode - Fix light background highlight sections for readability */
+        body.dark-theme .analysis-section[style*="background-color: #d1fae5"],
+        body.dark-theme .analysis-section[style*="background: #d1fae5"] {
+            background-color: #064e3b !important;
+            border-color: #10b981 !important;
         }
         
-        body.dark-theme .text-success {
-            color: #10b981 !important;
+        body.dark-theme .analysis-section[style*="background-color: #d1fae5"] *,
+        body.dark-theme .analysis-section[style*="background: #d1fae5"] * {
+            color: #d1fae5 !important;
         }
         
-        body.dark-theme .badge {
-            color: white;
+        body.dark-theme .alert[style*="background-color: #fef3c7"] {
+            background-color: #78350f !important;
+            border-color: #f59e0b !important;
+            color: #fef3c7 !important;
+        }
+        
+        body.dark-theme .match-card.arbitrage-match {
+            background: linear-gradient(135deg, #064e3b 0%, #065f46 100%) !important;
+        }
+        
+        body.dark-theme .match-card.arbitrage-match * {
+            color: #d1fae5 !important;
         }
         
         /* Tooltip styling - wider to prevent text wrapping and enable multi-line */
