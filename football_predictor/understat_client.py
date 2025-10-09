@@ -141,8 +141,8 @@ async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[
                 total_xga = 0
                 total_npxg = 0
                 total_npxga = 0
-                total_ppda_att = 0
-                total_ppda_def = 0
+                ppda_values = []
+                oppda_values = []
                 match_count = 0
                 
                 history = team_data.get('history', [])
@@ -154,8 +154,17 @@ async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[
                     
                     ppda = match.get('ppda', {})
                     if isinstance(ppda, dict):
-                        total_ppda_att += float(ppda.get('att', 0))
-                        total_ppda_def += float(ppda.get('def', 0))
+                        att = float(ppda.get('att', 0))
+                        def_ = float(ppda.get('def', 0))
+                        if def_ > 0:
+                            ppda_values.append(att / def_)
+                    
+                    oppda = match.get('ppda_allowed', {})
+                    if isinstance(oppda, dict):
+                        opp_att = float(oppda.get('att', 0))
+                        opp_def = float(oppda.get('def', 0))
+                        if opp_def > 0:
+                            oppda_values.append(opp_att / opp_def)
                     
                     match_count += 1
                 
@@ -165,8 +174,8 @@ async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[
                         'xGA': round(total_xga, 2),
                         'npxG': round(total_npxg, 2),
                         'npxGA': round(total_npxga, 2),
-                        'ppda_coef': round(total_ppda_att / match_count, 2) if total_ppda_def > 0 else 0,
-                        'oppda_coef': round(total_ppda_def / match_count, 2) if match_count > 0 else 0
+                        'ppda_coef': round(sum(ppda_values) / len(ppda_values), 2) if ppda_values else 0,
+                        'oppda_coef': round(sum(oppda_values) / len(oppda_values), 2) if oppda_values else 0
                     }
             
             # Merge xG data
