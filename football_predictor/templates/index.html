@@ -819,6 +819,422 @@
             });
         }
         
+        // Global functions for onclick access (must be outside DOMContentLoaded)
+        function showMatchContextButton(match) {
+            const matchContext = document.getElementById('match-context');
+            if (!match || !match.league) {
+                matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
+                return;
+            }
+            
+            matchContext.innerHTML = `
+                <div class="text-center py-3">
+                    <button class="btn btn-primary btn-lg" onclick="loadMatchContext(currentMatchData)">
+                        <i class="fas fa-chart-bar me-2"></i>Show Match Context
+                    </button>
+                    <p class="text-muted small mt-2 mb-0">
+                        <i class="fas fa-info-circle me-1"></i>League standings, team form, xG metrics & PPDA
+                    </p>
+                </div>
+            `;
+        }
+        
+        function updateProgressStatus(message, icon = 'spinner fa-spin') {
+            const matchContext = document.getElementById('match-context');
+            matchContext.innerHTML = `
+                <div class="text-center py-3">
+                    <div class="mb-2">
+                        <i class="fas fa-${icon} fa-2x text-primary"></i>
+                    </div>
+                    <p class="text-muted mb-0">${message}</p>
+                </div>
+            `;
+        }
+        
+        function loadMatchContext(match) {
+            const matchContext = document.getElementById('match-context');
+            if (!match || !match.league) {
+                matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
+                return;
+            }
+            
+            // Clear xG data from previous match to prevent stale data
+            currentXgData = null;
+            
+            // Show initial progress
+            updateProgressStatus('🔍 Initiating data fetch...', 'search');
+            
+            const leagueMap = {
+                'UEFA Champions League': 'CL',
+                'EPL': 'PL',
+                'Premier League': 'PL',
+                'English Premier League': 'PL',
+                'La Liga': 'PD',
+                'Spanish La Liga': 'PD',
+                'Spain La Liga': 'PD',
+                'Bundesliga': 'BL1',
+                'German Bundesliga': 'BL1',
+                'Germany Bundesliga': 'BL1',
+                'Serie A': 'SA',
+                'Italian Serie A': 'SA',
+                'Italy Serie A': 'SA',
+                'Ligue 1': 'FL1',
+                'French Ligue 1': 'FL1',
+                'France Ligue 1': 'FL1',
+                'Ligue 1 - France': 'FL1',
+                'UEFA Europa League': 'EL'
+            };
+            
+            const leagueCode = leagueMap[match.league] || match.league;
+            
+            // Update progress: Fetching from Understat
+            setTimeout(() => updateProgressStatus('📊 Fetching standings from Understat...', 'database'), 100);
+            
+            // Add timeout to prevent endless loading (increased to 40s for Understat)
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Request timeout')), 40000)
+            );
+            
+            // Start context fetch
+            const contextFetch = fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
+                .then(r => r.json())
+                .then(data => {
+                    updateProgressStatus('📈 Calculating xG metrics from FBref...', 'chart-line');
+                    return data;
+                });
+            
+            // Start xG fetch after context starts
+            const xgFetch = fetch(`/match/${match.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
+                .then(r => r.json())
+                .then(data => {
+                    updateProgressStatus('🎯 Processing PPDA coefficients...', 'bullseye');
+                    return data;
+                });
+            
+            // Fetch both standings context and xG data in parallel with timeout
+            Promise.race([
+                Promise.all([contextFetch, xgFetch]),
+                timeoutPromise
+            ])
+            .then(([contextData, xgData]) => {
+                updateProgressStatus('✨ Finalizing data...', 'check-circle');
+                
+                if (contextData.error) {
+                    matchContext.innerHTML = `<p class="text-muted">${contextData.narrative || 'Context unavailable'}</p>`;
+                    return;
+                }
+                
+                // Merge xG data into context data
+                contextData.xg = xgData.xg || null;
+                
+                setTimeout(() => displayMatchContextData(contextData), 300);
+            })
+            .catch(error => {
+                console.error('Error loading context:', error);
+                const errorMsg = error.message === 'Request timeout' 
+                    ? 'Match context loading timed out after 40 seconds. Please try again.' 
+                    : 'Unable to load match context';
+                matchContext.innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>${errorMsg}
+                        <button class="btn btn-sm btn-outline-primary mt-2 d-block" onclick="loadMatchContext(currentMatchData)">
+                            <i class="fas fa-redo me-1"></i>Retry
+                        </button>
+                    </div>
+                `;
+            });
+        }
+        
+        function displayMatchContextData(contextData) {
+            const matchContext = document.getElementById('match-context');
+            let html = '';
+            
+            if (contextData.narrative) {
+                const alertClass = contextData.has_data ? 'alert-info' : 'alert-warning';
+                const icon = contextData.has_data ? 'fa-info-circle' : 'fa-exclamation-triangle';
+                html += `<div class="alert ${alertClass} mb-3 small"><i class="fas ${icon} me-2"></i>${contextData.narrative}</div>`;
+            }
+            
+            const hasHomeData = contextData.home_team && (contextData.home_team.position || contextData.home_team.points || contextData.home_team.form);
+            const hasAwayData = contextData.away_team && (contextData.away_team.position || contextData.away_team.points || contextData.away_team.form);
+            
+            if (hasHomeData || hasAwayData) {
+                html += `<div class="row">`;
+                
+                // Home team column
+                html += `<div class="col-md-6 ${hasAwayData ? 'border-end' : ''}">`;
+                const homeLogoUrl = getTeamLogoUrl(currentMatchData.home_team, currentMatchData.league);
+                const homeBrandColor = getTeamBrandColor(currentMatchData.home_team);
+                const homeColorData = homeBrandColor ? ensureColorContrast(homeBrandColor, isDarkTheme()) : { color: 'var(--primary-color)', shadow: '' };
+                html += `<h6 class="fw-bold mb-2" style="color: ${homeColorData.color}; ${homeColorData.shadow}"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
+                
+                // Add home team stats...
+                if (hasHomeData) {
+                    html += displayTeamStats(contextData.home_team, contextData.xg?.home_stats);
+                } else {
+                    html += `<p class="text-muted small"><i>No standings data available</i></p>`;
+                }
+                html += `</div>`;
+                
+                // Away team column
+                html += `<div class="col-md-6">`;
+                const awayLogoUrl = getTeamLogoUrl(currentMatchData.away_team, currentMatchData.league);
+                const awayBrandColor = getTeamBrandColor(currentMatchData.away_team);
+                const awayColorData = awayBrandColor ? ensureColorContrast(awayBrandColor, isDarkTheme()) : { color: '#ef4444', shadow: '' };
+                html += `<h6 class="fw-bold mb-2" style="color: ${awayColorData.color}; ${awayColorData.shadow}"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
+                
+                if (hasAwayData) {
+                    html += displayTeamStats(contextData.away_team, contextData.xg?.away_stats);
+                } else {
+                    html += `<p class="text-muted small"><i>No standings data available</i></p>`;
+                }
+                html += `</div>`;
+                html += `</div>`;
+                
+                // Add Elo predictions comparison if available
+                if (contextData.elo_predictions) {
+                    html += displayEloPredictionsComparison(contextData.elo_predictions, currentMatchData);
+                }
+                
+                // Add xG trend charts
+                if (contextData.xg) {
+                    html += displayXgCharts(contextData.xg);
+                }
+            }
+            
+            matchContext.innerHTML = html;
+            
+            // Destroy old charts if they exist
+            if (window.homeXgChart) {
+                window.homeXgChart.destroy();
+                window.homeXgChart = null;
+            }
+            if (window.awayXgChart) {
+                window.awayXgChart.destroy();
+                window.awayXgChart = null;
+            }
+            
+            // Create xG trend charts if data available
+            if (contextData.xg && contextData.xg.home_stats && contextData.xg.home_stats.recent_matches && contextData.xg.home_stats.recent_matches.length > 0) {
+                window.homeXgChart = createXgTrendChart('home-xg-chart', contextData.xg.home_stats.recent_matches, currentMatchData.home_team);
+            }
+            if (contextData.xg && contextData.xg.away_stats && contextData.xg.away_stats.recent_matches && contextData.xg.away_stats.recent_matches.length > 0) {
+                window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
+            }
+            
+            // Reinitialize tooltips
+            initTooltips();
+        }
+        
+        function displayTeamStats(teamData, xgStats) {
+            let html = `<table class="table table-sm table-borderless mb-0"><tbody>`;
+            if (teamData.position) {
+                html += `<tr><td class="text-muted" style="width: 80px;">Position:</td><td><span class="badge bg-secondary">${teamData.position}</span></td></tr>`;
+            }
+            if (teamData.points !== null && teamData.points !== undefined) {
+                html += `<tr><td class="text-muted">Points:</td><td><strong>${teamData.points}</strong></td></tr>`;
+            }
+            if (teamData.form) {
+                html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(teamData.form)}</td></tr>`;
+            }
+            
+            // Add Elo rating if available
+            if (teamData.elo_rating !== null && teamData.elo_rating !== undefined) {
+                const eloClass = teamData.elo_rating >= 1900 ? 'text-success' : teamData.elo_rating >= 1700 ? 'text-primary' : 'text-muted';
+                html += `<tr><td class="text-muted">⚡ Elo Rating: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="ClubElo rating - Historical strength based on all matches. 1900+ = Elite, 1700+ = Strong, <1700 = Average" style="cursor: help; font-size: 0.8em;"></i></td><td class="${eloClass}"><strong>${teamData.elo_rating.toFixed(0)}</strong></td></tr>`;
+            }
+            
+            // Add PPDA prominently if available
+            if (teamData.ppda_coef !== null && teamData.ppda_coef !== undefined) {
+                html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
+                html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes allowed Per Defensive Action - Lower = more intense pressing. Measures defensive pressure." style="cursor: help; font-size: 0.8em;"></i></td><td><strong class="text-primary">${teamData.ppda_coef}</strong></td></tr>`;
+            }
+            if (teamData.xG !== null && teamData.xG !== undefined) {
+                html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Total Expected Goals this season (Understat)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xG}</strong></td></tr>`;
+            }
+            if (teamData.xGA !== null && teamData.xGA !== undefined) {
+                html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Total Expected Goals Against this season (Understat)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xGA}</strong></td></tr>`;
+            }
+            
+            // Add xG metrics from FBref if available
+            if (xgStats) {
+                html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
+                html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals trends per game from FBref" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${xgStats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals Against per game from FBref" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${xgStats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                if (xgStats.scoring_clinicality !== undefined && xgStats.scoring_clinicality !== null) {
+                    const clinicality = xgStats.scoring_clinicality;
+                    const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
+                    html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
+                }
+                if (xgStats.form) {
+                    html += `<tr><td class="text-muted">Recent Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></td><td>${formatFormIndicators(xgStats.form)}</td></tr>`;
+                }
+            }
+            html += `</tbody></table>`;
+            return html;
+        }
+        
+        function displayEloPredictionsComparison(eloPreds, matchData) {
+            // Calculate hybrid predictions (60% Elo, 40% Market)
+            const marketPreds = matchData.predictions['1X2'];
+            if (!marketPreds) return '';
+            
+            const hybridHomeWin = (eloPreds.home_win * 0.6) + (marketPreds.home_win.probability * 0.4);
+            const hybridDraw = (eloPreds.draw * 0.6) + (marketPreds.draw.probability * 0.4);
+            const hybridAwayWin = (eloPreds.away_win * 0.6) + (marketPreds.away_win.probability * 0.4);
+            
+            // Detect value bets (10%+ divergence between Elo and Market)
+            const homeDiv = Math.abs(eloPreds.home_win - marketPreds.home_win.probability);
+            const drawDiv = Math.abs(eloPreds.draw - marketPreds.draw.probability);
+            const awayDiv = Math.abs(eloPreds.away_win - marketPreds.away_win.probability);
+            
+            const hasValueBet = homeDiv >= 0.10 || drawDiv >= 0.10 || awayDiv >= 0.10;
+            
+            let html = `
+                <hr class="my-3">
+                <div class="row mb-2">
+                    <div class="col-12">
+                        <h6 class="text-center mb-3">
+                            <i class="fas fa-chart-pie me-2"></i>Prediction Models Comparison
+                            <i class="fas fa-info-circle ms-1" data-bs-toggle="tooltip" data-bs-title="Elo = Historical performance (ClubElo), Market = Bookmaker consensus (30+ bookmakers), Hybrid = 60% Elo + 40% Market for balanced predictions" style="cursor: help; font-size: 0.8em;"></i>
+                        </h6>
+            `;
+            
+            if (hasValueBet) {
+                html += `
+                    <div class="alert alert-warning py-2 mb-3">
+                        <i class="fas fa-exclamation-triangle me-2"></i><strong>Value Bet Detected!</strong> 
+                        Significant divergence (≥10%) between Elo and Market predictions suggests potential betting opportunity.
+                    </div>
+                `;
+            }
+            
+            html += `
+                    </div>
+                </div>
+                <div class="row text-center small">
+                    <div class="col-4">
+                        <div class="card bg-light-subtle mb-2">
+                            <div class="card-body py-2 px-1">
+                                <strong class="d-block mb-2">📊 Market Odds</strong>
+                                <div class="mb-1">
+                                    <span class="badge ${marketPreds.home_win.probability > marketPreds.away_win.probability && marketPreds.home_win.probability > marketPreds.draw.probability ? 'bg-success' : 'bg-secondary'}">${matchData.home_team}</span>
+                                    <div><strong>${(marketPreds.home_win.probability * 100).toFixed(1)}%</strong></div>
+                                </div>
+                                <div class="mb-1">
+                                    <span class="badge ${marketPreds.draw.probability > marketPreds.home_win.probability && marketPreds.draw.probability > marketPreds.away_win.probability ? 'bg-success' : 'bg-secondary'}">Draw</span>
+                                    <div><strong>${(marketPreds.draw.probability * 100).toFixed(1)}%</strong></div>
+                                </div>
+                                <div>
+                                    <span class="badge ${marketPreds.away_win.probability > marketPreds.home_win.probability && marketPreds.away_win.probability > marketPreds.draw.probability ? 'bg-success' : 'bg-secondary'}">${matchData.away_team}</span>
+                                    <div><strong>${(marketPreds.away_win.probability * 100).toFixed(1)}%</strong></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="card bg-light-subtle mb-2">
+                            <div class="card-body py-2 px-1">
+                                <strong class="d-block mb-2">⚡ Elo Model</strong>
+                                <div class="mb-1 ${homeDiv >= 0.10 ? 'text-warning fw-bold' : ''}">
+                                    <span class="badge ${eloPreds.home_win > eloPreds.away_win && eloPreds.home_win > eloPreds.draw ? 'bg-success' : 'bg-secondary'}">${matchData.home_team}</span>
+                                    <div><strong>${(eloPreds.home_win * 100).toFixed(1)}%</strong></div>
+                                </div>
+                                <div class="mb-1 ${drawDiv >= 0.10 ? 'text-warning fw-bold' : ''}">
+                                    <span class="badge ${eloPreds.draw > eloPreds.home_win && eloPreds.draw > eloPreds.away_win ? 'bg-success' : 'bg-secondary'}">Draw</span>
+                                    <div><strong>${(eloPreds.draw * 100).toFixed(1)}%</strong></div>
+                                </div>
+                                <div class="${awayDiv >= 0.10 ? 'text-warning fw-bold' : ''}">
+                                    <span class="badge ${eloPreds.away_win > eloPreds.home_win && eloPreds.away_win > eloPreds.draw ? 'bg-success' : 'bg-secondary'}">${matchData.away_team}</span>
+                                    <div><strong>${(eloPreds.away_win * 100).toFixed(1)}%</strong></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="card bg-primary-subtle mb-2">
+                            <div class="card-body py-2 px-1">
+                                <strong class="d-block mb-2">🎯 Hybrid (60/40)</strong>
+                                <div class="mb-1">
+                                    <span class="badge ${hybridHomeWin > hybridAwayWin && hybridHomeWin > hybridDraw ? 'bg-primary' : 'bg-secondary'}">${matchData.home_team}</span>
+                                    <div><strong>${(hybridHomeWin * 100).toFixed(1)}%</strong></div>
+                                </div>
+                                <div class="mb-1">
+                                    <span class="badge ${hybridDraw > hybridHomeWin && hybridDraw > hybridAwayWin ? 'bg-primary' : 'bg-secondary'}">Draw</span>
+                                    <div><strong>${(hybridDraw * 100).toFixed(1)}%</strong></div>
+                                </div>
+                                <div>
+                                    <span class="badge ${hybridAwayWin > hybridHomeWin && hybridAwayWin > hybridDraw ? 'bg-primary' : 'bg-secondary'}">${matchData.away_team}</span>
+                                    <div><strong>${(hybridAwayWin * 100).toFixed(1)}%</strong></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return html;
+        }
+        
+        function displayXgCharts(xgData) {
+            const hasHomeXgChart = xgData.home_stats && xgData.home_stats.recent_matches && xgData.home_stats.recent_matches.length > 0;
+            const hasAwayXgChart = xgData.away_stats && xgData.away_stats.recent_matches && xgData.away_stats.recent_matches.length > 0;
+            
+            if (!hasHomeXgChart && !hasAwayXgChart) {
+                return '';
+            }
+            
+            let html = `
+                <hr class="my-3">
+                <div class="row mb-3">
+                    <div class="col-12">
+                        <h6 class="text-center mb-3">
+                            <i class="fas fa-chart-area me-2"></i>xG Trends (FBref)
+                            <i class="fas fa-info-circle ms-1" data-bs-toggle="tooltip" data-bs-title="Rolling 5-match average of Expected Goals - Shows attacking/defensive performance trends over recent games" style="cursor: help; font-size: 0.8em;"></i>
+                        </h6>
+                    </div>
+                </div>
+                <div class="row">
+            `;
+            
+            if (hasHomeXgChart) {
+                html += `
+                    <div class="col-md-${hasAwayXgChart ? '5' : '12'}">
+                        <div class="text-center mb-2">
+                            <span class="badge bg-primary">${currentMatchData.home_team}</span>
+                        </div>
+                        <div style="max-height: 200px; overflow: hidden; position: relative;">
+                            <canvas id="home-xg-chart" style="height: 180px;"></canvas>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            if (hasHomeXgChart && hasAwayXgChart) {
+                html += `
+                    <div class="col-md-2 d-flex align-items-center justify-content-center">
+                        <h4 class="text-muted mb-0">VS</h4>
+                    </div>
+                `;
+            }
+            
+            if (hasAwayXgChart) {
+                html += `
+                    <div class="col-md-${hasHomeXgChart ? '5' : '12'}">
+                        <div class="text-center mb-2">
+                            <span class="badge bg-danger">${currentMatchData.away_team}</span>
+                        </div>
+                        <div style="max-height: 200px; overflow: hidden; position: relative;">
+                            <canvas id="away-xg-chart" style="height: 180px;"></canvas>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            html += `</div>`;
+            return html;
+        }
+        
         document.addEventListener('DOMContentLoaded', function() {
             // DOM elements
             const teamSearchInput = document.getElementById('team-search');
@@ -1826,130 +2242,8 @@
                 }
             }
             
-            function showMatchContextButton(match) {
-                if (!match || !match.league) {
-                    matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
-                    return;
-                }
-                
-                matchContext.innerHTML = `
-                    <div class="text-center py-3">
-                        <button class="btn btn-primary btn-lg" onclick="loadMatchContext(currentMatchData)">
-                            <i class="fas fa-chart-bar me-2"></i>Show Match Context
-                        </button>
-                        <p class="text-muted small mt-2 mb-0">
-                            <i class="fas fa-info-circle me-1"></i>League standings, team form, xG metrics & PPDA
-                        </p>
-                    </div>
-                `;
-            }
-            
-            function updateProgressStatus(message, icon = 'spinner fa-spin') {
-                matchContext.innerHTML = `
-                    <div class="text-center py-3">
-                        <div class="mb-2">
-                            <i class="fas fa-${icon} fa-2x text-primary"></i>
-                        </div>
-                        <p class="text-muted mb-0">${message}</p>
-                    </div>
-                `;
-            }
-            
-            function loadMatchContext(match) {
-                if (!match || !match.league) {
-                    matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
-                    return;
-                }
-                
-                // Clear xG data from previous match to prevent stale data
-                currentXgData = null;
-                
-                // Show initial progress
-                updateProgressStatus('🔍 Initiating data fetch...', 'search');
-                
-                const leagueMap = {
-                    'UEFA Champions League': 'CL',
-                    'EPL': 'PL',
-                    'Premier League': 'PL',
-                    'English Premier League': 'PL',
-                    'La Liga': 'PD',
-                    'Spanish La Liga': 'PD',
-                    'Spain La Liga': 'PD',
-                    'Bundesliga': 'BL1',
-                    'German Bundesliga': 'BL1',
-                    'Germany Bundesliga': 'BL1',
-                    'Serie A': 'SA',
-                    'Italian Serie A': 'SA',
-                    'Italy Serie A': 'SA',
-                    'Ligue 1': 'FL1',
-                    'French Ligue 1': 'FL1',
-                    'France Ligue 1': 'FL1',
-                    'Ligue 1 - France': 'FL1',
-                    'UEFA Europa League': 'EL'
-                };
-                
-                const leagueCode = leagueMap[match.league] || match.league;
-                
-                // Update progress: Fetching from Understat
-                setTimeout(() => updateProgressStatus('📊 Fetching standings from Understat...', 'database'), 100);
-                
-                // Add timeout to prevent endless loading (increased to 40s for Understat)
-                const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Request timeout')), 40000)
-                );
-                
-                // Start context fetch
-                const contextFetch = fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
-                    .then(r => r.json())
-                    .then(data => {
-                        updateProgressStatus('📈 Calculating xG metrics from FBref...', 'chart-line');
-                        return data;
-                    });
-                
-                // Start xG fetch after context starts
-                const xgFetch = fetch(`/match/${match.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
-                    .then(r => r.json())
-                    .then(data => {
-                        updateProgressStatus('🎯 Processing PPDA coefficients...', 'bullseye');
-                        return data;
-                    });
-                
-                // Fetch both standings context and xG data in parallel with timeout
-                Promise.race([
-                    Promise.all([contextFetch, xgFetch]),
-                    timeoutPromise
-                ])
-                .then(([contextData, xgData]) => {
-                    updateProgressStatus('✨ Finalizing data...', 'check-circle');
-                    
-                    if (contextData.error) {
-                        matchContext.innerHTML = `<p class="text-muted">${contextData.narrative || 'Context unavailable'}</p>`;
-                        return;
-                    }
-                    
-                    // Merge xG data into context data
-                    contextData.xg = xgData.xg || null;
-                    
-                    setTimeout(() => displayMatchContextData(contextData), 300);
-                })
-                .catch(error => {
-                    console.error('Error loading context:', error);
-                    const errorMsg = error.message === 'Request timeout' 
-                        ? 'Match context loading timed out after 40 seconds. Please try again.' 
-                        : 'Unable to load match context';
-                    matchContext.innerHTML = `
-                        <div class="alert alert-warning">
-                            <i class="fas fa-exclamation-triangle me-2"></i>${errorMsg}
-                            <button class="btn btn-sm btn-outline-primary mt-2 d-block" onclick="loadMatchContext(currentMatchData)">
-                                <i class="fas fa-redo me-1"></i>Retry
-                            </button>
-                        </div>
-                    `;
-                });
-            }
-            
-            
             function displayMatchContextData(contextData) {
+                const matchContext = document.getElementById('match-context');
                 let html = '';
                 
                 if (contextData.narrative) {

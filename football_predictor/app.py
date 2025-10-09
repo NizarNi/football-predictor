@@ -348,7 +348,7 @@ def fuzzy_team_match(team1, team2):
 
 @app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
-    """Get match context including standings and form (hybrid: football-data.org primary, Understat fallback)"""
+    """Get match context including standings, form, and Elo ratings"""
     try:
         league_code = request.args.get("league")
         home_team = request.args.get("home_team")
@@ -358,12 +358,21 @@ def get_match_context(match_id):
             return jsonify({"error": "league parameter required"}), 400
         
         from understat_client import fetch_understat_standings
+        from elo_client import get_team_elo, calculate_elo_probabilities
         
         try:
             # Use Understat as primary source for standings
             print(f"📊 Fetching standings from Understat...")
             standings = fetch_understat_standings(league_code, 2024)
             source = "Understat" if standings else None
+            
+            # Fetch Elo ratings for both teams
+            print(f"🎯 Fetching Elo ratings from ClubElo...")
+            home_elo = get_team_elo(home_team) if home_team else None
+            away_elo = get_team_elo(away_team) if away_team else None
+            
+            # Calculate Elo-based probabilities
+            elo_probs = calculate_elo_probabilities(home_elo, away_elo) if home_elo and away_elo else None
             
             home_data = None
             away_data = None
@@ -393,7 +402,8 @@ def get_match_context(match_id):
                     "ppda_coef": home_data.get('ppda_coef') if home_data else None,
                     "oppda_coef": home_data.get('oppda_coef') if home_data else None,
                     "xG": home_data.get('xG') if home_data else None,
-                    "xGA": home_data.get('xGA') if home_data else None
+                    "xGA": home_data.get('xGA') if home_data else None,
+                    "elo_rating": home_elo  # Add Elo rating
                 },
                 "away_team": {
                     "position": away_data.get('position') if away_data else None,
@@ -403,12 +413,17 @@ def get_match_context(match_id):
                     "ppda_coef": away_data.get('ppda_coef') if away_data else None,
                     "oppda_coef": away_data.get('oppda_coef') if away_data else None,
                     "xG": away_data.get('xG') if away_data else None,
-                    "xGA": away_data.get('xGA') if away_data else None
+                    "xGA": away_data.get('xGA') if away_data else None,
+                    "elo_rating": away_elo  # Add Elo rating
                 },
+                "elo_predictions": elo_probs,  # Add Elo-based predictions
                 "narrative": narrative,
                 "has_data": bool(home_data or away_data),
                 "source": source  # Track which API provided the data
             }
+            
+            if elo_probs:
+                print(f"✅ Elo predictions: Home {elo_probs['home_win']*100:.1f}% | Draw {elo_probs['draw']*100:.1f}% | Away {elo_probs['away_win']*100:.1f}%")
             
             return jsonify(context)
             

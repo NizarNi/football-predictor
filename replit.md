@@ -30,6 +30,10 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **xG Trend Visualizations:** Integrates Chart.js to display rolling 5-match xG/xGA trends with per-game data, form extraction, and clear tooltips.
 - **Critical Fixes:** Includes timeout mechanisms for API calls to prevent infinite loading and ensures dark mode text visibility across the application (light backgrounds excluded from white text rule).
 - **Understat Integration:** Async-based fallback for standings with 30-minute caching, 10-second timeouts, and aggregated xG metrics (total xG, xGA, PPDA coefficients).
+- **Elo Rating System:** Integrates ClubElo.com API for objective team strength ratings with 6-hour caching, comprehensive team name alias mapping (Man City/Manchester City, Paris SG/PSG, etc.), and diagnostic logging for unmatched teams.
+- **Hybrid Prediction Model:** Combines Elo ratings (60%) with Market odds (40%) for balanced predictions that merge historical performance with current market sentiment.
+- **Value Bet Detection:** Automatically identifies betting opportunities where Elo and Market predictions diverge by ≥10%, highlighting potential market inefficiencies.
+- **Prediction Comparison Display:** Shows side-by-side comparison of Market Odds, Elo Model, and Hybrid predictions with visual indicators for value bets and recommended outcomes.
 
 ### Feature Specifications
 - **Odds-Based Predictions:** Predictions derived from real bookmaker consensus.
@@ -37,8 +41,11 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Best Odds Display:** Shows the highest available odds for each outcome across all bookmakers.
 - **Prediction Types:** Includes 1X2 (Home Win/Draw/Away Win) with implied probabilities, confidence scores, and bookmaker count.
 - **Multi-League Support:** Covers Premier League, La Liga, Bundesliga, Serie A, Ligue 1, Champions League, and Europa League.
-- **Match Context:** Displays league standings, team positions, points, form, and xG metrics (xGF, xGA, overperformance) for both teams.
+- **Match Context:** Displays league standings, team positions, points, form, Elo ratings, and xG metrics (xGF, xGA, overperformance) for both teams.
 - **xG Analytics:** Real Expected Goals data from FBref showing team attacking/defensive strength, xG-based match predictions, and Over/Under 2.5 recommendations (available for top 5 leagues only).
+- **Elo-Based Predictions:** Objective win probabilities calculated from historical Elo ratings using standard Elo probability formula.
+- **Hybrid Model:** 60/40 weighted combination of Elo (historical) and Market (sentiment) predictions for optimal accuracy.
+- **Value Bet Identification:** Highlights matches where Elo and Market diverge significantly (≥10%), indicating potential betting value.
 
 ### System Design Choices
 - **Flask Application:** Core web framework for the backend.
@@ -51,6 +58,7 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **football-data.org:** API for match schedules, league standings, and team form (primary source, occasional SSL/500 errors).
 - **Understat (via understat library):** Fallback source for league standings with comprehensive xG metrics (PL, La Liga, Bundesliga, Serie A, Ligue 1). Includes 30-minute caching to optimize performance.
 - **FBref (via soccerdata):** Real Expected Goals (xG) statistics from FBref.com for top 5 European leagues.
+- **ClubElo.com:** Historical Elo ratings for 630+ global football teams, updated twice daily (5am/5pm UTC). Used for objective team strength assessment and value bet detection.
 - **luukhopman/football-logos (GitHub Repo):** Source for team logos displayed in the application.
 - **Flask:** Python web framework.
 - **gunicorn:** WSGI HTTP server.
