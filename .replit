@@ -74,6 +74,10 @@ externalPort = 6800
 localPort = 46267
 externalPort = 4200
 
+[[ports]]
+localPort = 46793
+externalPort = 8008
+
 [deployment]
 deploymentTarget = "autoscale"
 run = ["gunicorn", "--bind=0.0.0.0:$PORT", "--workers=2", "--timeout=120", "--reuse-port", "football_predictor.app:app"]
