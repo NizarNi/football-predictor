@@ -9,7 +9,7 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 ## System Architecture
 
 ### UI/UX Decisions
-- **Responsive UI:** Utilizes Bootstrap for a responsive design.
+- **Responsive UI:** Utilizes Bootstrap for a responsive design with optimized 40/60 layout split (matches panel: col-lg-5, predictions panel: col-lg-7) for better readability on desktop.
 - **Centered Search:** Large, prominent search bar at top-center (80% width) with autocomplete for team names and nicknames.
 - **Unified Filter Bar:** Clean horizontal filter bar with "Bet Opportunities" dropdown and arbitrage checkbox.
 - **Intelligent Filtering:** "Bet Opportunities" filter finds high-confidence bets (≥60%, ≥75%, ≥88%) across 1X2 predictions.
@@ -19,6 +19,7 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Autocomplete Search:** Features an autocomplete search bar with team nicknames, displaying team name, matched alias, and league with an 8-result limit.
 - **Popular Match Highlighting:** Highlights Champions League and Europa League fixtures with a golden badge.
 - **Dark Mode:** Complete dark theme with a toggle for seamless switching, localStorage persistence, and theme-aware chart colors.
+- **Enhanced Tooltips:** Comprehensive tooltip system with min-width: 250px styling to prevent text wrapping, featuring detailed explanations for xG (2024/25 season context, shot quality factors), Elo ratings (ClubElo 2010-present, 5am/5pm updates), and PPDA pressing intensity guide (<8 Extreme High Press, 8-12 High Press, 12-15 Medium, 15-20 Low, >20 Passive).
 
 ### Technical Implementations
 - **Team Name Normalization:** Implements `fuzzyNormalizeTeamName()` and `normalizeTeamNameForLogo()` with extensive regex patterns and mappings to handle variations and generate correct logo URLs.
@@ -29,11 +30,12 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Intelligent Betting Tips:** Provides risk-based recommendations (Safest 60-80%, Balanced 30-50%, Value 15-30%).
 - **xG Trend Visualizations:** Integrates Chart.js to display rolling 5-match xG/xGA trends with per-game data, form extraction, and clear tooltips.
 - **Critical Fixes:** Includes timeout mechanisms for API calls to prevent infinite loading and ensures dark mode text visibility across the application (light backgrounds excluded from white text rule).
-- **Understat Integration:** Async-based fallback for standings with 30-minute caching, 10-second timeouts, and aggregated xG metrics (total xG, xGA, PPDA coefficients).
+- **Understat Integration:** Async-based fallback for standings with 30-minute caching, 10-second timeouts, and aggregated xG metrics (total xG, xGA, PPDA coefficients). PPDA calculated correctly as per-match ratio (passes allowed / defensive actions) then averaged.
 - **Elo Rating System:** Integrates ClubElo.com API for objective team strength ratings with 6-hour caching, comprehensive team name alias mapping (Man City/Manchester City, Paris SG/PSG, etc.), and diagnostic logging for unmatched teams.
 - **Hybrid Prediction Model:** Combines Elo ratings (60%) with Market odds (40%) for balanced predictions that merge historical performance with current market sentiment.
-- **Value Bet Detection:** Automatically identifies betting opportunities where Elo and Market predictions diverge by ≥10%, highlighting potential market inefficiencies.
+- **Value Bet Detection:** Automatically identifies betting opportunities where Elo and Market predictions diverge by ≥10%, highlighting potential market inefficiencies in Betting Tips section with divergence percentage.
 - **Prediction Comparison Display:** Shows side-by-side comparison of Market Odds, Elo Model, and Hybrid predictions with visual indicators for value bets and recommended outcomes.
+- **Enhanced Betting Tips:** AI-powered recommendations using Hybrid Model that detect value bets, showing Elo vs Market divergence with specific percentages (e.g., "Elo 72% vs Market 58% = 14% divergence").
 
 ### Feature Specifications
 - **Odds-Based Predictions:** Predictions derived from real bookmaker consensus.
