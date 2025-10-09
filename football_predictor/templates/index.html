@@ -1521,10 +1521,20 @@
                 html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes Per Defensive Action - measures pressing intensity. <8.0 = Extreme High Press (Klopp/Guardiola style), 8-12 = High Press (modern attacking teams), 12-15 = Medium Press (balanced), 15-20 = Low/Passive Block (defensive teams), >20 = Extremely Passive (deep defending). Lower = more aggressive pressing." style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></td><td><strong class="text-primary">${teamData.ppda_coef}</strong></td></tr>`;
             }
             if (teamData.xG !== null && teamData.xG !== undefined) {
-                html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Cumulative Expected Goals for 2024/25 season from Understat. Based on shot quality (position, angle, defensive pressure) across all matches played. League average: 1.3-1.5 xG per game. Higher values indicate better attacking quality." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xG}</strong></td></tr>`;
+                const gamesPlayed = teamData.played || 0;
+                const xgPerGame = gamesPlayed > 0 ? (teamData.xG / gamesPlayed).toFixed(2) : '0.00';
+                const xgTooltip = gamesPlayed > 0 
+                    ? `${teamData.xG} xG in ${gamesPlayed} games (avg ${xgPerGame}/game). League avg: 1.3-1.5 per game. Based on shot quality (position, angle, defensive pressure).`
+                    : `Cumulative Expected Goals for 2024/25 season from Understat. Based on shot quality.`;
+                html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xG}</strong></td></tr>`;
             }
             if (teamData.xGA !== null && teamData.xGA !== undefined) {
-                html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Cumulative Expected Goals Against for 2024/25 season from Understat. Measures defensive quality - how many high-quality chances opponents create. League average: 1.3-1.5 xGA per game. Lower values indicate stronger defense." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xGA}</strong></td></tr>`;
+                const gamesPlayed = teamData.played || 0;
+                const xgaPerGame = gamesPlayed > 0 ? (teamData.xGA / gamesPlayed).toFixed(2) : '0.00';
+                const xgaTooltip = gamesPlayed > 0 
+                    ? `${teamData.xGA} xGA in ${gamesPlayed} games (avg ${xgaPerGame}/game). League avg: 1.3-1.5 per game. Measures defensive quality - lower is better.`
+                    : `Cumulative Expected Goals Against for 2024/25 season from Understat.`;
+                html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${teamData.xGA}</strong></td></tr>`;
             }
             
             // Add xG metrics from FBref if available
@@ -2322,10 +2332,20 @@
                             html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes Per Defensive Action - measures pressing intensity. <8.0 = Extreme High Press (Klopp/Guardiola style), 8-12 = High Press (modern attacking teams), 12-15 = Medium Press (balanced), 15-20 = Low/Passive Block (defensive teams), >20 = Extremely Passive (deep defending). Lower = more aggressive pressing." style="cursor: help; font-size: 0.8em;"></i></td><td><strong class="text-primary">${contextData.home_team.ppda_coef}</strong></td></tr>`;
                         }
                         if (contextData.home_team.xG !== null && contextData.home_team.xG !== undefined) {
-                            html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Cumulative Expected Goals for 2024/25 season from Understat. Based on shot quality (position, angle, defensive pressure) across all matches played. League average: 1.3-1.5 xG per game. Higher values indicate better attacking quality." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xG}</strong></td></tr>`;
+                            const homeGamesPlayed = contextData.home_team.played || 0;
+                            const homeXgPerGame = homeGamesPlayed > 0 ? (contextData.home_team.xG / homeGamesPlayed).toFixed(2) : '0.00';
+                            const homeXgTooltip = homeGamesPlayed > 0 
+                                ? `${contextData.home_team.xG} xG in ${homeGamesPlayed} games (avg ${homeXgPerGame}/game). League avg: 1.3-1.5 per game. Based on shot quality.`
+                                : `Cumulative Expected Goals for 2024/25 season from Understat.`;
+                            html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${homeXgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xG}</strong></td></tr>`;
                         }
                         if (contextData.home_team.xGA !== null && contextData.home_team.xGA !== undefined) {
-                            html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Cumulative Expected Goals Against for 2024/25 season from Understat. Measures defensive quality - how many high-quality chances opponents create. League average: 1.3-1.5 xGA per game. Lower values indicate stronger defense." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
+                            const homeGamesPlayed = contextData.home_team.played || 0;
+                            const homeXgaPerGame = homeGamesPlayed > 0 ? (contextData.home_team.xGA / homeGamesPlayed).toFixed(2) : '0.00';
+                            const homeXgaTooltip = homeGamesPlayed > 0 
+                                ? `${contextData.home_team.xGA} xGA in ${homeGamesPlayed} games (avg ${homeXgaPerGame}/game). League avg: 1.3-1.5 per game. Lower is better.`
+                                : `Cumulative Expected Goals Against for 2024/25 season from Understat.`;
+                            html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${homeXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
                         }
                         
                         // Add xG metrics if available
@@ -2377,10 +2397,20 @@
                             html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes Per Defensive Action - measures pressing intensity. <8.0 = Extreme High Press (Klopp/Guardiola style), 8-12 = High Press (modern attacking teams), 12-15 = Medium Press (balanced), 15-20 = Low/Passive Block (defensive teams), >20 = Extremely Passive (deep defending). Lower = more aggressive pressing." style="cursor: help; font-size: 0.8em;"></i></td><td><strong class="text-primary">${contextData.away_team.ppda_coef}</strong></td></tr>`;
                         }
                         if (contextData.away_team.xG !== null && contextData.away_team.xG !== undefined) {
-                            html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Cumulative Expected Goals for 2024/25 season from Understat. Based on shot quality (position, angle, defensive pressure) across all matches played. League average: 1.3-1.5 xG per game. Higher values indicate better attacking quality." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xG}</strong></td></tr>`;
+                            const awayGamesPlayed = contextData.away_team.played || 0;
+                            const awayXgPerGame = awayGamesPlayed > 0 ? (contextData.away_team.xG / awayGamesPlayed).toFixed(2) : '0.00';
+                            const awayXgTooltip = awayGamesPlayed > 0 
+                                ? `${contextData.away_team.xG} xG in ${awayGamesPlayed} games (avg ${awayXgPerGame}/game). League avg: 1.3-1.5 per game. Based on shot quality.`
+                                : `Cumulative Expected Goals for 2024/25 season from Understat.`;
+                            html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${awayXgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xG}</strong></td></tr>`;
                         }
                         if (contextData.away_team.xGA !== null && contextData.away_team.xGA !== undefined) {
-                            html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Cumulative Expected Goals Against for 2024/25 season from Understat. Measures defensive quality - how many high-quality chances opponents create. League average: 1.3-1.5 xGA per game. Lower values indicate stronger defense." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xGA}</strong></td></tr>`;
+                            const awayGamesPlayed = contextData.away_team.played || 0;
+                            const awayXgaPerGame = awayGamesPlayed > 0 ? (contextData.away_team.xGA / awayGamesPlayed).toFixed(2) : '0.00';
+                            const awayXgaTooltip = awayGamesPlayed > 0 
+                                ? `${contextData.away_team.xGA} xGA in ${awayGamesPlayed} games (avg ${awayXgaPerGame}/game). League avg: 1.3-1.5 per game. Lower is better.`
+                                : `Cumulative Expected Goals Against for 2024/25 season from Understat.`;
+                            html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${awayXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xGA}</strong></td></tr>`;
                         }
                         
                         // Add xG metrics if available
