@@ -40,6 +40,11 @@ def index():
     """Render the home page"""
     return render_template("index.html")
 
+@app.route("/learn")
+def learn():
+    """Educational page about football analytics and betting strategies"""
+    return render_template("learn.html")
+
 @app.route("/demo")
 def demo():
     """Demo page to showcase Over/Under and Match Context features (static version)"""

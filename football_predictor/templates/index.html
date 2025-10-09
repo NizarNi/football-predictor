@@ -426,14 +426,20 @@
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark mb-4">
         <div class="container">
-            <a class="navbar-brand" href="#">
+            <a class="navbar-brand" href="/">
                 <i class="fas fa-futbol me-2"></i>
                 Football Prediction - Safe Bet Analyzer
             </a>
-            <button id="theme-toggle" class="btn btn-outline-light btn-sm" onclick="toggleTheme()">
-                <i id="theme-icon" class="fas fa-moon"></i>
-                <span id="theme-text" class="ms-2 d-none d-md-inline">Dark Mode</span>
-            </button>
+            <div class="d-flex gap-3 align-items-center">
+                <a href="/learn" class="btn btn-outline-light btn-sm">
+                    <i class="fas fa-graduation-cap me-1"></i>
+                    <span class="d-none d-md-inline">Learn Analytics</span>
+                </a>
+                <button id="theme-toggle" class="btn btn-outline-light btn-sm" onclick="toggleTheme()">
+                    <i id="theme-icon" class="fas fa-moon"></i>
+                    <span id="theme-text" class="ms-2 d-none d-md-inline">Dark Mode</span>
+                </button>
+            </div>
         </div>
     </nav>
 
