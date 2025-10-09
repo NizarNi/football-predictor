@@ -15,13 +15,6 @@ from xg_data_fetcher import get_match_xg_prediction
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
-# Create directories if they don't exist
-os.makedirs("scraped_data", exist_ok=True)
-os.makedirs("processed_data", exist_ok=True)
-os.makedirs("models", exist_ok=True)
-os.makedirs("static", exist_ok=True)
-os.makedirs("templates", exist_ok=True)
-
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
 
