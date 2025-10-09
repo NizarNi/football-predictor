@@ -3,105 +3,6 @@
 ## Overview
 A Flask-based web application providing football match predictions using real bookmaker odds. It fetches upcoming matches and live odds from over 30 bookmakers, converts odds to implied probabilities, detects arbitrage opportunities, and offers consensus predictions based on market data. The project aims to empower users with data-driven insights for sports betting.
 
-## Recent Changes
-
-### Critical Bug Fix - JavaScript Syntax Error (2025-10-09) ✅
-- **ROOT CAUSE**: Orphaned code block (lines 1460-1474) left after sed deletion of safe bet filter function
-- **SYMPTOMS**: All JavaScript crashed - infinite loop in matches section, dark mode toggle broken, search bar non-functional
-- **ORPHANED CODE**: Contained `return` statement outside function, if/else blocks without wrapper, closing brace mismatch
-- **FIX**: Deleted entire orphaned block (15 lines including comments and logic fragments)
-- **VERIFICATION**: LSP diagnostics clean (no syntax errors), all features restored
-- **RESTORED FEATURES**:
-  - ✅ Matches display properly (18 Champions League matches loading correctly)
-  - ✅ Dark mode toggle functional (toggleTheme() intact, lines 2425-2460)
-  - ✅ Search autocomplete working (dropdown logic intact, lines 1298-1360)
-  - ✅ Arbitrage filter operational (updateFilterBadge() functional)
-- **LESSON LEARNED**: Avoid sed deletions for complex function removal - use Edit tool with precise string matching instead
-
-### Phase 6 - Dark Theme & Toggle (2025-10-08) ✅
-- **COMPLETE DARK THEME**: Modern navy/charcoal color palette with CSS variables for seamless light/dark switching
-- **THEME TOGGLE**: Button in navbar with moon/sun icon, smooth 0.3s transitions, localStorage persistence across sessions
-- **CHART.JS INTEGRATION**: Theme-aware chart colors - grid, text, labels update dynamically when toggling
-- **GLOBAL SCOPE FIX**: Moved helper functions (formatFormIndicators, createXgTrendChart) to global scope for toggle access
-- **VARIABLE MANAGEMENT**: currentMatchData, currentOverUnderData, currentXgData in global scope for cross-function access
-- **PROBABILITY BARS**: Theme-aware colors update dynamically (blue/cyan for dark, darker blues for light)
-- **FORM INDICATORS**: W/D/L squares use getThemeColors() for proper draw indicator contrast (slate vs gray)
-- **SMOOTH UI**: All elements transition smoothly between themes - cards, backgrounds, text, borders, badges
-- **PERSISTENT CHOICE**: localStorage saves 'dark'/'light' preference, auto-applies on page load
-- **CHART REFRESH**: Toggle destroys and recreates xG charts with updated theme palette for instant visual update
-
-### Phase 5 - Chart Clarity & Premier League Fixes (2025-10-08) ✅
-- **RENAMED**: "xG Diff" → "Scoring Clinicality" with backward compatibility for cached data
-- **CRITICAL FIX**: Flask route parameters changed from `<int:match_id>` to `<match_id>` to accept negative IDs from The Odds API
-- **LOGO FIX**: Added Southampton FC, Leicester City, and Ipswich Town (2024-25 promoted teams) to logo mappings
-- **CRYSTAL CLEAR CHARTS**: Prominent blue info box explains xG trend charts before display (green=xGF, red=xGA, interpretation guide)
-- **ENHANCED TOOLTIPS**: Chart tooltips now show opponent, score, result (e.g., "vs Arsenal (2-1) - W"), rolling avg AND actual match xG
-- **TOOLTIP FOOTER**: Automatic form interpretation on hover (✅ Good form / ❌ Struggling / ⚖️ Balanced)
-- **Y-AXIS LABEL**: Charts now labeled "Expected Goals per Game" for clarity
-- **VISIBLE ZERO-LINE**: Zero grid line thicker (2px) and darker (0.3 opacity) vs regular grid (1px, 0.05 opacity)
-- **SIDE-BY-SIDE COMPARISON**: Dedicated "xG Trend Comparison" section with charts displayed horizontally
-- **VS SEPARATOR**: Home (blue badge) + "VS" divider + Away (red badge) layout for instant form comparison
-- **TALLER CHARTS**: Comparison charts increased to 180px height for better visibility
-- **GRACEFUL LAYOUT**: Single chart gets full width if only one team has data
-- **QUICK FIX 1**: Fixed infinite scroll bug - Added overflow: hidden wrappers to chart containers
-- **QUICK FIX 2**: Team logos added to Match Context headers (20x20px with fallback handling)
-- **QUICK FIX 3**: Form indicators stay inline (inline-flex with nowrap, no line breaks)
-- **QUICK FIX 4**: Chart timeline shows newest→oldest (recent matches on right side)
-- **QUICK FIX 5**: Verified opponent names accuracy (direct from FBref home_team/away_team fields)
-- **QUICK FIX 6**: Added Betting Tips tooltip explaining data sources and confidence factors
-- **QUICK FIX 7**: Chart explanation box repositioned directly above xG Trend Comparison section
-
-### Phase 4 - xG Trend Visualizations & Transparency (2025-10-08) ✅
-- **FIXED**: xG Diff calculation now shows per-game average instead of season total for accurate comparison
-- **COMPREHENSIVE TOOLTIPS**: Info icons throughout app explain all calculations, factors, and data sources
-- **MATCH-BY-MATCH DATA**: Backend fetches complete fixture logs from FBref with per-game xG, xGA, W/D/L results
-- **ROLLING AVERAGES**: Calculates rolling 5-match xG/xGA averages to show recent form trends
-- **FORM EXTRACTION**: Parses W/D/L results from match logs into visual form strings (e.g., "WWDLD")
-- **ENHANCED API**: `/match/<event_id>/xg` now returns rolling_5, form, and recent_matches arrays
-- **W/D/L INDICATORS**: Visual form display in Match Context with colored squares (🟩 Win, ⬜ Draw, 🟥 Loss)
-- **CHART.JS INTEGRATION**: Added Chart.js 4.4.0 CDN for interactive visualizations
-- **XG TREND CHARTS**: Mini line charts showing rolling 5-match xG/xGA evolution with green/red filled areas
-- **CHART INTEGRATION**: xG trend visualizations embedded in Match Context below team stats
-- **MEMORY MANAGEMENT**: Proper chart lifecycle (destroy old, create new) prevents memory leaks
-- **EN-DASH FIX**: Score parsing handles both hyphen (-) and en-dash (–) from FBref data
-- **GRACEFUL HANDLING**: All new features degrade gracefully when data unavailable (early season, unsupported leagues)
-
-### Phase 3 - xG Analytics Integration (2025-10-08) ✅
-- **NEW BACKEND MODULE**: `xg_data_fetcher.py` fetches real Expected Goals data from FBref via soccerdata library
-- **REAL DATA**: Uses shooting stats (xGF), keeper_adv stats (PSxG for xGA), and standard stats (matches played)
-- **DEPENDENCY FIX**: Downgraded lxml to 5.3.0 to resolve MultiIndex DataFrame parsing issues with soccerdata 1.8.2
-- **API ENDPOINT**: `/match/<event_id>/xg` returns comprehensive xG predictions with 24-hour caching
-- **MATCH CONTEXT**: Displays xGF/xGA per game and xG overperformance (goals vs expected) for both teams
-- **BETTING TIPS**: New "xG Analysis" section shows expected goals prediction, result probability, and Over/Under 2.5 recommendation
-- **INTELLIGENT CACHING**: 24-hour JSON cache per league significantly reduces FBref API calls
-- **SEASON LOGIC**: Uses previous complete season (2024) when current season is early (August-November) for more reliable data
-- **LEAGUE SUPPORT**: xG available for top 5 domestic leagues only (PL, PD, BL1, SA, FL1) - not Champions/Europa League
-- **GRACEFUL DEGRADATION**: System handles unsupported leagues elegantly; xG sections simply don't appear
-- **CRITICAL BUG FIX**: Clear `currentXgData` on match selection to prevent stale xG data from appearing in betting tips
-- **DATA FRESHNESS**: xG data shared between Match Context and Betting Analysis with proper state management
-
-### Phase 2 - UI/Filter Improvements (2025-10-08) ✅
-- **REDESIGNED**: Top section with centered, larger search bar (80% width, prominent position)
-- **NEW FEATURE**: Unified filter bar with clean horizontal layout and centered alignment
-- **NEW FEATURE**: "Bet Opportunities" dropdown filter - Very Safe (≥88%), Safe (≥75%), Moderate (≥60%), All Matches
-- **INTELLIGENT**: Filter analyzes 1X2 predictions (HOME_WIN, DRAW, AWAY_WIN) to find high-confidence bets
-- **MOVED**: Arbitrage checkbox integrated into unified filter bar (removed from matches section)
-- **NEW FEATURE**: Dynamic filter badge showing count (e.g., "5 Very Safe Bets Found", "10 Arbitrage Opportunities")
-- **ENHANCED**: Filters work cumulatively (arbitrage + confidence threshold both apply)
-- **IMPROVED**: League buttons reorganized with "Browse by League:" label for better UX
-- **CODE CLEANUP**: Removed old filterHtml generation, toggleArbitrageFilter function, inline filter UI
-- **ARCHITECTURE**: New applyFilters() function reads current filter state from DOM and re-renders
-- **HELPER FUNCTIONS**: getMaxBettingConfidence() evaluates match confidence, updateFilterBadge() manages counter display
-- **FUTURE-READY**: Filter logic will automatically include Over/Under when backend pre-loads totals data
-
-### Phase 1 - Logo System Improvements (2025-10-08) ✅
-- **ENHANCED**: League-gated fuzzy team name normalization prevents cross-league collisions (Inter Miami ≠ Inter Milan, Paris FC ≠ PSG)
-- **ADDED**: `fuzzyNormalizeTeamName()` function with 25+ regex patterns for common team name variations
-- **IMPROVED**: League detection handles variations (Premier League/EPL/epl, La Liga/Spain/PD, etc.)
-- **FIXED**: Autocomplete dropdown z-index significantly increased (parent: 10000, dropdown: 99999) for proper stacking above matches section
-- **ARCHITECTURE**: Logo URL generation flow: fuzzyNormalizeTeamName → normalizeTeamNameForLogo → fallback to original name
-- **SAFE**: Returns original team name if no pattern matches (graceful degradation for unknown teams/leagues)
-
 ## User Preferences
 I prefer detailed explanations. Ask before making major changes. I want iterative development. I prefer simple language.
 
@@ -117,6 +18,7 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Visual Cues:** Uses colored form indicators (🟩 Win, ⬜ Draw, 🟥 Loss) and a visual 💰 ARBITRAGE badge with a green gradient border for easy identification.
 - **Autocomplete Search:** Features an autocomplete search bar with team nicknames, displaying team name, matched alias, and league with an 8-result limit.
 - **Popular Match Highlighting:** Highlights Champions League and Europa League fixtures with a golden badge.
+- **Dark Mode:** Complete dark theme with a toggle for seamless switching, localStorage persistence, and theme-aware chart colors.
 
 ### Technical Implementations
 - **Team Name Normalization:** Implements `fuzzyNormalizeTeamName()` and `normalizeTeamNameForLogo()` with extensive regex patterns and mappings to handle variations and generate correct logo URLs.
@@ -125,6 +27,8 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **On-Demand Data Fetching:** Features "Show Over/Under Odds" and "Betting Analysis" buttons to load data only when clicked, optimizing API quota usage.
 - **Enhanced Over/Under Calculation:** Averages data from 2.25, 2.5, and 2.75 goal lines for more robust Over/Under 2.5 predictions.
 - **Intelligent Betting Tips:** Provides risk-based recommendations (Safest 60-80%, Balanced 30-50%, Value 15-30%).
+- **xG Trend Visualizations:** Integrates Chart.js to display rolling 5-match xG/xGA trends with per-game data, form extraction, and clear tooltips.
+- **Critical Fixes:** Includes timeout mechanisms for API calls to prevent infinite loading and ensures dark mode text visibility across the application.
 
 ### Feature Specifications
 - **Odds-Based Predictions:** Predictions derived from real bookmaker consensus.
@@ -151,3 +55,4 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **requests:** HTTP library for making API calls.
 - **soccerdata:** Python library for fetching football statistics from various sources including FBref.
 - **Bootstrap 5.3:** Frontend framework for responsive UI design.
+- **Chart.js 4.4.0:** JavaScript library for interactive data visualizations.
