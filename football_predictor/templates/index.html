@@ -1586,20 +1586,18 @@
         function formatFormWithOpponents(recentMatches) {
             if (!recentMatches || recentMatches.length === 0) return '';
             
-            // Horizontal format with line break after 2 matches: oldest → newest (left to right)
+            // Each match on a separate line: (H/A icon) vs Opponent (result)
+            // Most recent matches first
             const formItems = recentMatches.map((match, index) => {
                 const indicator = match.result === 'W' ? '🟩' : match.result === 'D' ? '⬜' : '🟥';
-                const oppAbbr = match.opponent.substring(0, 3).toUpperCase();
-                const vsPrefix = match.home_away === 'away' ? '@' : 'vs';
-                return `${indicator} ${vsPrefix} ${oppAbbr}`;
+                const homeAwayIcon = match.is_home ? '🏠' : '✈️';
+                const opponent = match.opponent || 'Unknown';
+                const matchNumber = recentMatches.length - index; // Show GW# as reverse order (most recent = highest)
+                
+                return `<div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${homeAwayIcon} GW${matchNumber} vs ${opponent} ${indicator}</div>`;
             });
             
-            // Split into 2 lines: first 2 matches, then remaining 3
-            const firstLine = formItems.slice(0, 2).join(' | ');
-            const secondLine = formItems.slice(2).join(' | ');
-            const formHTML = secondLine ? `${firstLine}<br>${secondLine}` : firstLine;
-            
-            return `<div style="max-width: 100%;">${formHTML}</div>`;
+            return `<div style="font-size: 0.85em; line-height: 1.4;">${formItems.join('')}</div>`;
         }
         
         function displayTeamStats(teamData, xgStats) {
