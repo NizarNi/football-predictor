@@ -674,8 +674,8 @@
             if (!formString) return '';
             
             const colors = getThemeColors();
-            // Reverse to show oldest→newest (left to right chronological)
-            const formArray = formString.split('').reverse();
+            // Keep original order for newest→oldest (left to right)
+            const formArray = formString.split('');
             return `<div style="display: inline-flex; gap: 2px; white-space: nowrap;">` + formArray.map(result => {
                 let bgColor = '';
                 
@@ -1489,29 +1489,15 @@
                 window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
             }
             
-            // Reinitialize tooltips after DOM updates - comprehensive approach
-            // Method 1: Immediate initialization
-            initTooltips();
-            
-            // Method 2: MutationObserver to catch async DOM changes
-            const observer = new MutationObserver(() => {
-                initTooltips();
-                observer.disconnect(); // Stop observing after first init
-            });
-            observer.observe(matchContext, { childList: true, subtree: true });
-            
-            // Method 3: Delayed fallback for safety
-            setTimeout(() => {
-                initTooltips();
-                observer.disconnect();
-            }, 200);
+            // Tooltips will be auto-initialized by the global MutationObserver
         }
         
         function formatFormWithOpponents(recentMatches) {
             if (!recentMatches || recentMatches.length === 0) return '';
             
-            // Horizontal format: oldest → newest (left to right)
-            const formHTML = recentMatches.map((match, index) => {
+            // Horizontal format: newest → oldest (left to right)
+            const reversedMatches = [...recentMatches].reverse();
+            const formHTML = reversedMatches.map((match, index) => {
                 const indicator = match.result === 'W' ? '🟩' : match.result === 'D' ? '⬜' : '🟥';
                 const oppAbbr = match.opponent.substring(0, 3).toUpperCase();
                 const vsPrefix = match.home_away === 'away' ? '@' : 'vs';
@@ -1779,8 +1765,8 @@
                         <div class="text-center mb-2">
                             <span class="badge bg-primary">${currentMatchData.home_team}</span>
                         </div>
-                        <div style="max-height: 200px; overflow: hidden; position: relative;">
-                            <canvas id="home-xg-chart" style="height: 180px;"></canvas>
+                        <div style="max-height: 320px; overflow: hidden; position: relative;">
+                            <canvas id="home-xg-chart" style="height: 300px;"></canvas>
                         </div>
                     </div>
                 `;
@@ -1800,8 +1786,8 @@
                         <div class="text-center mb-2">
                             <span class="badge bg-danger">${currentMatchData.away_team}</span>
                         </div>
-                        <div style="max-height: 200px; overflow: hidden; position: relative;">
-                            <canvas id="away-xg-chart" style="height: 180px;"></canvas>
+                        <div style="max-height: 320px; overflow: hidden; position: relative;">
+                            <canvas id="away-xg-chart" style="height: 300px;"></canvas>
                         </div>
                     </div>
                 `;
@@ -2570,8 +2556,8 @@
                                     <div class="text-center mb-2">
                                         <span class="badge bg-primary">${currentMatchData.home_team}</span>
                                     </div>
-                                    <div style="max-height: 200px; overflow: hidden; position: relative;">
-                                        <canvas id="home-xg-chart" style="height: 180px;"></canvas>
+                                    <div style="max-height: 320px; overflow: hidden; position: relative;">
+                                        <canvas id="home-xg-chart" style="height: 300px;"></canvas>
                                     </div>
                                 </div>
                             `;
@@ -2591,8 +2577,8 @@
                                     <div class="text-center mb-2">
                                         <span class="badge bg-danger">${currentMatchData.away_team}</span>
                                     </div>
-                                    <div style="max-height: 200px; overflow: hidden; position: relative;">
-                                        <canvas id="away-xg-chart" style="height: 180px;"></canvas>
+                                    <div style="max-height: 320px; overflow: hidden; position: relative;">
+                                        <canvas id="away-xg-chart" style="height: 300px;"></canvas>
                                     </div>
                                 </div>
                             `;
@@ -2622,22 +2608,7 @@
                     window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
                 }
                 
-                // Reinitialize tooltips after DOM updates - comprehensive approach
-                // Method 1: Immediate initialization
-                initTooltips();
-                
-                // Method 2: MutationObserver to catch async DOM changes
-                const observer = new MutationObserver(() => {
-                    initTooltips();
-                    observer.disconnect(); // Stop observing after first init
-                });
-                observer.observe(matchContext, { childList: true, subtree: true });
-                
-                // Method 3: Delayed fallback for safety
-                setTimeout(() => {
-                    initTooltips();
-                    observer.disconnect();
-                }, 200);
+                // Tooltips will be auto-initialized by the global MutationObserver
             }
             
             function display1X2Prediction(prediction, eloPredictions) {
@@ -2705,7 +2676,9 @@
                                     </tr>
                                 </tbody>
                             </table>
-                            <p class="small text-muted text-center mb-0"><i class="fas fa-arrow-up me-1"></i>⬆️ = Elo higher than Market by ≥10% | ⬇️ = Elo lower than Market by ≥10%</p>
+                            <p class="small text-muted text-center mb-0">
+                                <strong>Betting Opportunities:</strong> ⬆️ = Elo higher than Market by ≥10% (potential value on home/draw/away) | ⬇️ = Elo lower than Market by ≥10% (market may be overvaluing this outcome)
+                            </p>
                         </div>
                     `;
                 } else {
@@ -3049,8 +3022,7 @@
                 
                 bettingAnalysis.innerHTML = html;
                 
-                // Reinitialize tooltips for dynamically added content
-                initTooltips();
+                // Tooltips will be auto-initialized by the global MutationObserver
             }
             
             function displayBettingAnalysis(match) {
@@ -3085,31 +3057,61 @@
                 `;
             }
             
-            // Initialize Bootstrap tooltips with multi-line support
+            // Initialize Bootstrap tooltips with event delegation for dynamic content
             function initTooltips() {
                 console.log('🔧 Initializing tooltips...');
                 
-                // First, dispose all existing tooltips to prevent duplicates
-                const existingTooltips = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-                existingTooltips.forEach(el => {
-                    const existingTooltip = bootstrap.Tooltip.getInstance(el);
-                    if (existingTooltip) {
-                        existingTooltip.dispose();
-                    }
+                // Dispose all existing tooltip instances first
+                document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+                    const instance = bootstrap.Tooltip.getInstance(el);
+                    if (instance) instance.dispose();
                 });
                 
-                // Then create new tooltips with html: true for multi-line content
+                // Initialize tooltips with event delegation support
                 const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-                console.log(`🔧 Creating ${tooltipTriggerList.length} new tooltips`);
-                [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl, {
-                    html: true,  // Enable HTML content for multi-line tooltips
-                    trigger: 'hover',
-                    boundary: 'window'
-                }));
+                console.log(`🔧 Creating ${tooltipTriggerList.length} tooltips`);
+                
+                tooltipTriggerList.forEach(el => {
+                    new bootstrap.Tooltip(el, {
+                        html: true,
+                        trigger: 'hover focus',  // Add focus for better accessibility
+                        boundary: 'window',
+                        sanitize: false  // Allow HTML content without sanitization
+                    });
+                });
             }
             
-            // Call it on page load
-            initTooltips();
+            // Global initialization on page load
+            document.addEventListener('DOMContentLoaded', function() {
+                initTooltips();
+            });
+            
+            // Use MutationObserver to auto-initialize tooltips when new content is added
+            const tooltipObserver = new MutationObserver((mutations) => {
+                let shouldReinit = false;
+                mutations.forEach((mutation) => {
+                    mutation.addedNodes.forEach((node) => {
+                        if (node.nodeType === 1) { // Element node
+                            if (node.hasAttribute && node.hasAttribute('data-bs-toggle')) {
+                                shouldReinit = true;
+                            } else if (node.querySelectorAll) {
+                                const tooltips = node.querySelectorAll('[data-bs-toggle="tooltip"]');
+                                if (tooltips.length > 0) shouldReinit = true;
+                            }
+                        }
+                    });
+                });
+                if (shouldReinit) {
+                    console.log('🔧 Auto-reinitializing tooltips for new content');
+                    initTooltips();
+                }
+            });
+            
+            // Start observing the document for tooltip additions
+            tooltipObserver.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
             
             // Auto-load popular upcoming matches on page load
             getUpcomingMatches('CL');
