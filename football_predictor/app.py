@@ -99,14 +99,14 @@ def upcoming():
                 })
         except OddsAPIError as e:
             print(f"⚠️  The Odds API unavailable: {e}")
-            return jsonify({"error": f"The Odds API unavailable: {str(e)}"}), 503
+            return jsonify({"error": "The Odds API is temporarily unavailable. Please try again later."}), 503
         except Exception as e:
             print(f"⚠️  The Odds API error: {e}")
-            return jsonify({"error": f"Unable to fetch matches: {str(e)}"}), 500
+            return jsonify({"error": "Unable to fetch matches. Please try again later."}), 500
         
     except Exception as e:
         print(f"❌ Critical error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 500
 
 
 
@@ -182,7 +182,7 @@ def search():
         
     except Exception as e:
         print(f"Error in search: {e}")
-        return jsonify({"error": f"Search failed: {str(e)}"}), 500
+        return jsonify({"error": "Search failed. Please try again later."}), 500
 
 @app.route("/match/<match_id>", methods=["GET"])
 def get_match(match_id):
@@ -217,7 +217,7 @@ def predict_match(match_id):
         
     except Exception as e:
         print(f"Error predicting match {match_id}: {e}")
-        return jsonify({"error": f"Failed to get predictions: {str(e)}"}), 500
+        return jsonify({"error": "Unable to load predictions. Please try again later."}), 500
 
 @app.route("/match/<event_id>/totals", methods=["GET"])
 def get_match_totals(event_id):
@@ -244,7 +244,7 @@ def get_match_totals(event_id):
         
     except Exception as e:
         print(f"Error fetching totals for {event_id}: {e}")
-        return jsonify({"error": f"Failed to fetch totals: {str(e)}"}), 500
+        return jsonify({"error": "Unable to load over/under data. Please try again later."}), 500
 
 @app.route("/match/<event_id>/xg", methods=["GET"])
 def get_match_xg(event_id):
@@ -279,7 +279,7 @@ def get_match_xg(event_id):
         print(f"Error fetching xG for {event_id}: {e}")
         return jsonify({
             "xg": None,
-            "error": f"Failed to fetch xG data: {str(e)}",
+            "error": "Unable to load xG data. Please try again later.",
             "source": "FBref via soccerdata"
         }), 200
 
@@ -387,7 +387,7 @@ def get_match_context(match_id):
         
     except Exception as e:
         print(f"Error in match context: {e}")
-        return jsonify({"error": f"Failed to fetch context: {str(e)}"}), 500
+        return jsonify({"error": "Unable to load match context. Please try again later."}), 500
 
 def generate_match_narrative(home_data, away_data):
     """Generate a narrative description of the match importance"""
@@ -413,7 +413,7 @@ def process_data():
     try:
         return jsonify({"error": "Data processing via this endpoint is deprecated. Please use API-Football for data."}), 400
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Service error. Please try again later."}), 500
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
