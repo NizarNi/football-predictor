@@ -84,9 +84,9 @@ def _calculate_league_stats(teams_data: List[Dict]) -> Dict:
     for team in teams_data:
         matches = team.get('match_count', team.get('played', 0))
         if matches > 0:
-            if team.get('xG'):
+            if team.get('xG') is not None:
                 xg_per_game_values.append(team['xG'] / matches)
-            if team.get('xGA'):
+            if team.get('xGA') is not None:
                 xga_per_game_values.append(team['xGA'] / matches)
     
     if not xg_per_game_values or not xga_per_game_values:
