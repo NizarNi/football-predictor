@@ -52,6 +52,18 @@
             color: #cbd5e1 !important;
         }
         
+        body.dark-theme .text-dark {
+            color: #e2e8f0 !important;
+        }
+        
+        body.dark-theme .text-secondary {
+            color: #94a3b8 !important;
+        }
+        
+        body.dark-theme .text-body {
+            color: #f1f5f9 !important;
+        }
+        
         /* Semantic colors - dark mode with better contrast (must override Bootstrap !important) */
         body.dark-theme .text-success {
             color: #4ade80 !important;
@@ -71,6 +83,48 @@
         
         body.dark-theme .text-primary {
             color: #6366f1 !important;
+        }
+        
+        /* Bootstrap Alert overrides for dark mode */
+        body.dark-theme .alert-warning {
+            background-color: #78350f !important;
+            border-color: #f59e0b !important;
+            color: #fef3c7 !important;
+        }
+        
+        body.dark-theme .alert-info {
+            background-color: #0c4a6e !important;
+            border-color: #0ea5e9 !important;
+            color: #bae6fd !important;
+        }
+        
+        body.dark-theme .alert-danger {
+            background-color: #7f1d1d !important;
+            border-color: #ef4444 !important;
+            color: #fecaca !important;
+        }
+        
+        body.dark-theme .alert-success {
+            background-color: #064e3b !important;
+            border-color: #10b981 !important;
+            color: #d1fae5 !important;
+        }
+        
+        /* Card body text - ensure proper inheritance */
+        body.dark-theme .card-body {
+            color: var(--text-color) !important;
+        }
+        
+        body.dark-theme .card-body * {
+            color: inherit;
+        }
+        
+        body.dark-theme .card-text {
+            color: #e2e8f0 !important;
+        }
+        
+        body.dark-theme .card-title {
+            color: #f1f5f9 !important;
         }
         
         /* Dark mode - Fix light background highlight sections for readability */

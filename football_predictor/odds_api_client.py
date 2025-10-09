@@ -2,6 +2,7 @@ import requests
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from config import API_TIMEOUT_ODDS
 
 API_KEYS = [
     os.environ.get("ODDS_API_KEY_1"),
@@ -57,7 +58,7 @@ def get_available_sports():
     url = f"{BASE_URL}/sports/"
     
     try:
-        response = requests.get(url, params={"apiKey": api_key}, timeout=10)
+        response = requests.get(url, params={"apiKey": api_key}, timeout=API_TIMEOUT_ODDS)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -85,7 +86,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
         }
         
         try:
-            response = requests.get(url, params=params, timeout=15)
+            response = requests.get(url, params=params, timeout=API_TIMEOUT_ODDS)
             response.raise_for_status()
             data = response.json()
             

@@ -7,10 +7,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 import os
+from utils import get_xg_season
+from config import XG_CACHE_DURATION_HOURS, TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING
 
 # Cache settings
 CACHE_DIR = "processed_data/xg_cache"
-CACHE_DURATION_HOURS = 24  # Cache xG data for 24 hours
 
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -24,49 +25,6 @@ LEAGUE_MAPPING = {
     "FL1": "FRA-Ligue 1",
     "CL": "INT-Champions League",
     "EL": "INT-Europa League"
-}
-
-# Team name normalization for FBref
-TEAM_NAME_MAPPING = {
-    # Premier League
-    "Manchester United": "Manchester Utd",
-    "Manchester City": "Manchester City",
-    "Newcastle United": "Newcastle Utd",
-    "Nottingham Forest": "Nott'ham Forest",
-    "Brighton": "Brighton",
-    "Brighton & Hove Albion": "Brighton",
-    "Tottenham": "Tottenham",
-    "Tottenham Hotspur": "Tottenham",
-    "West Ham": "West Ham",
-    "West Ham United": "West Ham",
-    "Wolves": "Wolves",
-    "Wolverhampton": "Wolves",
-    
-    # La Liga
-    "Athletic Club": "Athletic Club",
-    "Atletico Madrid": "Atlético Madrid",
-    "Real Betis": "Betis",
-    "Celta Vigo": "Celta Vigo",
-    "Real Sociedad": "Sociedad",
-    "Deportivo Alavés": "Alavés",
-    
-    # Bundesliga
-    "Bayern Munich": "Bayern Munich",
-    "Bayern München": "Bayern Munich",
-    "Borussia Dortmund": "Dortmund",
-    "Borussia Mönchengladbach": "M'Gladbach",
-    "RB Leipzig": "RB Leipzig",
-    "Eintracht Frankfurt": "Eintracht Frankfurt",
-    
-    # Serie A
-    "AC Milan": "Milan",
-    "Inter Milan": "Inter",
-    "AS Roma": "Roma",
-    
-    # Ligue 1
-    "Paris Saint Germain": "Paris S-G",
-    "PSG": "Paris S-G",
-    "Paris Saint-Germain": "Paris S-G",
 }
 
 
@@ -90,9 +48,9 @@ def is_cache_valid(cache_file):
     if not os.path.exists(cache_file):
         return False
     
-    # Check if cache is older than CACHE_DURATION_HOURS
+    # Check if cache is older than XG_CACHE_DURATION_HOURS
     file_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
-    if datetime.now() - file_time > timedelta(hours=CACHE_DURATION_HOURS):
+    if datetime.now() - file_time > timedelta(hours=XG_CACHE_DURATION_HOURS):
         return False
     
     return True
@@ -132,19 +90,6 @@ def save_to_cache(cache_key, data):
         print(f"Error saving cache: {e}")
 
 
-def get_current_season():
-    """Determine current season based on current date"""
-    now = datetime.now()
-    # Football season typically starts in August, but early season has limited data
-    # Use previous season data until December to have substantial stats
-    if now.month >= 12:  # December onwards, use current season
-        return now.year if now.month >= 8 else now.year - 1
-    elif now.month >= 8:  # August-November, use previous season (more complete data)
-        return now.year - 1
-    else:  # January-July, use previous season
-        return now.year - 1
-
-
 def fetch_fbref_league_standings(league_code, season=None):
     """
     Fetch league standings from FBref as fallback for football-data.org
@@ -157,7 +102,7 @@ def fetch_fbref_league_standings(league_code, season=None):
         list: Standings data in format compatible with football-data.org
     """
     if season is None:
-        season = get_current_season()
+        season = get_xg_season()
     
     # Check if league is supported
     if league_code not in LEAGUE_MAPPING:
@@ -207,7 +152,7 @@ def fetch_league_xg_stats(league_code, season=None):
         dict: Team xG statistics {team_name: {xg_for, xg_against, matches_played, ...}}
     """
     if season is None:
-        season = get_current_season()
+        season = get_xg_season()
     
     # Check cache first
     cache_key = get_cache_key(league_code, season)
@@ -566,7 +511,7 @@ def fetch_team_match_logs(team_name, league_code, season=None):
     
     # Determine season
     if not season:
-        season = get_current_season()
+        season = get_xg_season()
     
     try:
         # Fetch schedule data

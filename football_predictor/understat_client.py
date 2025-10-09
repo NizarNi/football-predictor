@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 import threading
 import statistics
+from utils import get_current_season
+from config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT
 
 # Map league codes to Understat league names
 LEAGUE_MAP = {
@@ -20,16 +22,15 @@ LEAGUE_MAP = {
 # Cache for standings data (league_code_season: (data, timestamp))
 _standings_cache = {}
 _cache_lock = threading.Lock()
-CACHE_DURATION = timedelta(minutes=30)  # Cache for 30 minutes
 
 def sync_understat_call(async_func):
     """Wrapper to run async Understat functions synchronously with timeout"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(asyncio.wait_for(async_func(), timeout=10))
+        return loop.run_until_complete(asyncio.wait_for(async_func(), timeout=API_TIMEOUT_UNDERSTAT))
     except asyncio.TimeoutError:
-        print("⏱️  Understat request timed out after 10 seconds")
+        print(f"⏱️  Understat request timed out after {API_TIMEOUT_UNDERSTAT} seconds")
         return [] if 'standings' in async_func.__name__ else None
     finally:
         loop.close()
@@ -112,8 +113,11 @@ def _calculate_recent_trend(team_history: List[Dict], season_avg_xg: float) -> s
     else:
         return "neutral"
 
-async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[Dict]:
+async def _fetch_league_standings(league_code: str, season: Optional[int] = None) -> List[Dict]:
     """Async function to fetch league standings from Understat"""
+    if season is None:
+        season = get_current_season()
+    
     understat_league = LEAGUE_MAP.get(league_code)
     
     if not understat_league:
@@ -312,8 +316,11 @@ async def _fetch_league_standings(league_code: str, season: int = 2024) -> List[
         print(f"❌ Understat error for {league_code}: {str(e)}")
         return []
 
-async def _fetch_match_probabilities(home_team: str, away_team: str, league_code: str, season: int = 2024) -> Optional[Dict]:
+async def _fetch_match_probabilities(home_team: str, away_team: str, league_code: str, season: Optional[int] = None) -> Optional[Dict]:
     """Async function to fetch match win probabilities from Understat"""
+    if season is None:
+        season = get_current_season()
+    
     understat_league = LEAGUE_MAP.get(league_code)
     
     if not understat_league:
@@ -347,15 +354,18 @@ async def _fetch_match_probabilities(home_team: str, away_team: str, league_code
         print(f"❌ Error fetching Understat probabilities: {str(e)}")
         return None
 
-def fetch_understat_standings(league_code: str, season: int = 2024) -> List[Dict]:
+def fetch_understat_standings(league_code: str, season: Optional[int] = None) -> List[Dict]:
     """Sync wrapper for fetching league standings from Understat with caching"""
+    if season is None:
+        season = get_current_season()
+    
     cache_key = f"{league_code}_{season}"
     
     # Check cache first
     with _cache_lock:
         if cache_key in _standings_cache:
             cached_data, timestamp = _standings_cache[cache_key]
-            if datetime.now() - timestamp < CACHE_DURATION:
+            if datetime.now() - timestamp < timedelta(minutes=UNDERSTAT_CACHE_DURATION_MINUTES):
                 print(f"✅ Using cached Understat data for {league_code} (age: {(datetime.now() - timestamp).seconds}s)")
                 return cached_data
     
@@ -369,6 +379,9 @@ def fetch_understat_standings(league_code: str, season: int = 2024) -> List[Dict
     
     return standings if standings else []
 
-def fetch_understat_match_probabilities(home_team: str, away_team: str, league_code: str, season: int = 2024) -> Optional[Dict]:
+def fetch_understat_match_probabilities(home_team: str, away_team: str, league_code: str, season: Optional[int] = None) -> Optional[Dict]:
     """Sync wrapper for fetching match probabilities from Understat"""
+    if season is None:
+        season = get_current_season()
+    
     return sync_understat_call(lambda: _fetch_match_probabilities(home_team, away_team, league_code, season))

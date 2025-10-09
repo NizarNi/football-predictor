@@ -108,10 +108,42 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
 - **Data Sources:** soccerdata (FBref xG), understat (async xG/standings), aiohttp
 - **Total:** 8 packages (down from 22) - 64% reduction in dependencies
 
+### Code Quality Refactoring (October 9, 2025)
+- **Created config.py:** Centralized all constants for timeouts, cache durations, and model weights
+  - **API Timeouts:** `API_TIMEOUT_ELO` (10s), `API_TIMEOUT_ODDS` (15s), `API_TIMEOUT_UNDERSTAT` (10s)
+  - **Cache Durations:** `ELO_CACHE_DURATION_HOURS` (6h), `XG_CACHE_DURATION_HOURS` (24h), `UNDERSTAT_CACHE_DURATION_MINUTES` (30min)
+  - **Model Weights:** `HYBRID_ELO_WEIGHT` (0.60), `HYBRID_MARKET_WEIGHT` (0.40)
+  - **Season Calculation:** `SEASON_START_MONTH`, `SEASON_MID_MONTH`, `SEASON_END_MONTH`
+  - **Betting Thresholds:** `VALUE_BET_THRESHOLD` (10%), `SAFE_BET_CONFIDENCE` (60%)
+  - **85+ constants** centralized for easy tuning
+
+- **Created utils.py:** Centralized utility functions to eliminate code duplication
+  - `get_current_season()`: Dynamic season calculation for Understat/app (Aug-Dec uses current year, Jan-July uses previous)
+  - `get_xg_season()`: Conservative season calculation for FBref xG (uses previous season until December for complete data)
+  - `normalize_team_name()`: Team name normalization with prefix/suffix removal
+  - `fuzzy_team_match()`: Fuzzy matching logic for team name matching
+
+- **Eliminated All Magic Numbers & Duplicate Code:**
+  - Updated all 5 API client modules to use centralized timeout constants
+  - Updated all 3 data modules to use centralized cache duration constants
+  - Removed duplicate `get_current_season()` from app.py and xg_data_fetcher.py
+  - Removed hardcoded `season=2024` from understat_client.py
+  - Removed duplicate `normalize_team_name()` and `fuzzy_team_match()` from app.py (70+ lines)
+  - Consolidated team name mappings: `TEAM_NAME_MAP_ELO` (ClubElo) and `TEAM_NAME_MAP_FBREF` (FBref) now centralized in config.py
+  - **Total reduction:** 170+ lines of duplicate code eliminated
+
+- **Improved Maintainability:** Single source of truth for all configuration
+  - All timeouts/cache durations tunable from config.py
+  - Season logic updates propagate automatically across all modules
+  - Team matching logic consistent across the application
+  - Zero magic numbers in codebase
+
 ### Project Structure (Optimized)
 ```
 football_predictor/
 ├── app.py                    # Main Flask application
+├── config.py                 # ⭐ NEW: Centralized configuration constants
+├── utils.py                  # ⭐ NEW: Shared utility functions
 ├── elo_client.py             # ClubElo integration
 ├── football_data_api.py      # Match schedules & standings  
 ├── odds_api_client.py        # Bookmaker odds (30+ sources)

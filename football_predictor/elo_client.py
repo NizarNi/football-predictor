@@ -9,78 +9,22 @@ from datetime import datetime, timedelta
 from io import StringIO
 from typing import Optional, Dict, Any
 import os
+from config import (
+    ELO_CACHE_DURATION_HOURS, 
+    API_TIMEOUT_ELO, 
+    HYBRID_ELO_WEIGHT, 
+    HYBRID_MARKET_WEIGHT,
+    TEAM_NAME_MAP_ELO as TEAM_NAME_MAP
+)
 
 # ClubElo.com API - Original source for Elo ratings
 # Format: http://api.clubelo.com/{date} where date is YYYY-MM-DD
 # Returns global rankings with Elo ratings for all clubs
 
 # Cache configuration
-CACHE_DURATION_HOURS = 6
 _elo_cache: Dict[str, Optional[Any]] = {
     "data": None,
     "timestamp": None
-}
-
-# Hybrid model weight configuration (60% Elo, 40% Market)
-HYBRID_ELO_WEIGHT = 0.60
-HYBRID_MARKET_WEIGHT = 0.40
-
-# Team name mapping: Odds API names -> ClubElo names
-TEAM_NAME_MAP = {
-    # Premier League
-    "Manchester City": "Man City",
-    "Manchester United": "Man United",
-    "Tottenham": "Spurs",
-    "Tottenham Hotspur": "Spurs",
-    "Wolverhampton": "Wolves",
-    "Wolverhampton Wanderers": "Wolves",
-    "Brighton": "Brighton",
-    "Brighton & Hove Albion": "Brighton",
-    "Newcastle": "Newcastle",
-    "Newcastle United": "Newcastle",
-    "West Ham": "West Ham",
-    "West Ham United": "West Ham",
-    "Nottingham Forest": "Nott'm Forest",
-    "Leicester": "Leicester",
-    "Leicester City": "Leicester",
-    
-    # La Liga
-    "Atletico Madrid": "Atletico",
-    "Atlético Madrid": "Atletico",  # With accent
-    "Athletic Bilbao": "Ath Bilbao",
-    "Real Sociedad": "R Sociedad",
-    "Celta Vigo": "Celta",
-    "Real Betis": "Betis",
-    
-    # Bundesliga
-    "Bayern Munich": "Bayern",
-    "Borussia Dortmund": "Dortmund",
-    "Bayer Leverkusen": "Leverkusen",
-    "RB Leipzig": "RB Leipzig",
-    "Eintracht Frankfurt": "Ein Frankfurt",
-    "Borussia Monchengladbach": "M'Gladbach",
-    "FC Koln": "FC Koln",
-    
-    # Serie A
-    "Inter Milan": "Inter",
-    "AC Milan": "Milan",
-    "AS Roma": "Roma",
-    "Hellas Verona": "Verona",
-    
-    # Ligue 1
-    "Paris Saint Germain": "Paris SG",
-    "Paris St Germain": "Paris SG",
-    "PSG": "Paris SG",
-    "Olympique Marseille": "Marseille",
-    "Olympique Lyon": "Lyon",
-    "AS Monaco": "Monaco",
-    
-    # European Competitions
-    "FC Porto": "Porto",
-    "Sporting CP": "Sporting",
-    "Benfica": "Benfica",
-    "Ajax": "Ajax",
-    "PSV Eindhoven": "PSV",
 }
 
 
@@ -95,7 +39,7 @@ def fetch_team_elo_ratings():
     # Check cache first
     if _elo_cache["data"] and _elo_cache["timestamp"]:
         cache_age = datetime.now() - _elo_cache["timestamp"]
-        if cache_age < timedelta(hours=CACHE_DURATION_HOURS):
+        if cache_age < timedelta(hours=ELO_CACHE_DURATION_HOURS):
             print(f"✅ Using cached Elo ratings (age: {cache_age.seconds // 3600}h {(cache_age.seconds % 3600) // 60}m)")
             return _elo_cache["data"]
     
@@ -107,7 +51,7 @@ def fetch_team_elo_ratings():
         api_url = f"http://api.clubelo.com/{today}"
         
         # Fetch global Elo ratings from ClubElo API
-        response = requests.get(api_url, timeout=10)
+        response = requests.get(api_url, timeout=API_TIMEOUT_ELO)
         response.raise_for_status()
         
         # Parse CSV data

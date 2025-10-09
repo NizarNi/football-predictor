@@ -11,22 +11,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from odds_api_client import get_upcoming_matches_with_odds, OddsAPIError, LEAGUE_CODE_MAPPING
 from odds_calculator import calculate_predictions_from_odds
 from xg_data_fetcher import get_match_xg_prediction
+from utils import get_current_season, normalize_team_name, fuzzy_team_match
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
-
-def get_current_season():
-    """
-    Calculate current football season based on calendar month.
-    Football seasons run August to May:
-    - August-December (months 8-12): Use current year as season (e.g., Oct 2025 → Season 2025)
-    - January-July (months 1-7): Use previous year as season (e.g., Jan 2026 → Season 2025)
-    """
-    today = datetime.now()
-    return today.year if today.month >= 8 else today.year - 1
 
 @app.route("/")
 def index():
@@ -291,78 +282,6 @@ def get_match_xg(event_id):
             "error": f"Failed to fetch xG data: {str(e)}",
             "source": "FBref via soccerdata"
         }), 200
-
-def normalize_team_name(name):
-    """Normalize team name for better matching"""
-    if not name:
-        return ""
-    
-    # Convert to lowercase
-    normalized = name.lower()
-    
-    # Remove common prefixes and suffixes
-    prefixes = ['fc ', 'afc ', 'cf ', 'ac ', 'sc ', 'ssc ', 'as ', 'rc ', 'rcd ', 'fk ', 'bfc ', 'vfl ', 'sv ']
-    suffixes = [' fc', ' afc', ' cf', ' ac', ' sc', ' united', ' city', ' town']
-    
-    for prefix in prefixes:
-        if normalized.startswith(prefix):
-            normalized = normalized[len(prefix):]
-            break
-    
-    for suffix in suffixes:
-        if normalized.endswith(suffix):
-            normalized = normalized[:-len(suffix)]
-            break
-    
-    # Replace variations
-    normalized = normalized.replace(' and ', ' & ')
-    normalized = normalized.replace('&', 'and')
-    
-    # Remove extra spaces
-    normalized = ' '.join(normalized.split())
-    
-    return normalized
-
-def fuzzy_team_match(team1, team2):
-    """Check if two team names match with fuzzy logic"""
-    if not team1 or not team2:
-        return False
-    
-    t1_lower = team1.lower()
-    t2_lower = team2.lower()
-    
-    # Exact match
-    if t1_lower == t2_lower:
-        return True
-    
-    # Contains match
-    if t1_lower in t2_lower or t2_lower in t1_lower:
-        return True
-    
-    # Normalized match
-    t1_norm = normalize_team_name(team1)
-    t2_norm = normalize_team_name(team2)
-    
-    if t1_norm == t2_norm:
-        return True
-    
-    # Normalized contains match
-    if t1_norm in t2_norm or t2_norm in t1_norm:
-        return True
-    
-    # Word-based match (at least 2 significant words match)
-    words1 = set(t1_norm.split())
-    words2 = set(t2_norm.split())
-    
-    # Filter out very short words (articles, etc.)
-    words1 = {w for w in words1 if len(w) > 2}
-    words2 = {w for w in words2 if len(w) > 2}
-    
-    common_words = words1 & words2
-    if len(common_words) >= min(2, len(words1), len(words2)):
-        return True
-    
-    return False
 
 @app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
