@@ -31,9 +31,9 @@
             --accent-color: #f59e0b;
             --background-color: #0f172a;
             --card-bg: #1e293b;
-            --text-color: #e2e8f0;
+            --text-color: #ffffff;
             --border-color: #334155;
-            --muted-text: #94a3b8;
+            --muted-text: #cbd5e1;
             --analysis-bg: #334155;
             --league-badge-bg: #334155;
             --probability-bar-bg: #334155;
@@ -42,34 +42,30 @@
             --autocomplete-border: #475569;
         }
         
-        /* Dark mode text visibility fixes */
-        body.dark-theme #match-context {
-            color: var(--text-color);
-        }
-        
-        body.dark-theme #match-context div:not([class*="text-"]),
-        body.dark-theme #match-context span:not([class*="text-"]):not([class*="badge"]),
-        body.dark-theme #match-context p:not([class*="text-"]) {
-            color: var(--text-color);
-        }
-        
-        body.dark-theme .table {
-            color: var(--text-color);
-        }
-        
-        body.dark-theme .table strong,
-        body.dark-theme #match-context strong:not([class*="text-"]) {
-            color: #f1f5f9;
+        /* Dark mode - ALL text white for visibility */
+        body.dark-theme,
+        body.dark-theme * {
+            color: #ffffff !important;
         }
         
         body.dark-theme .text-muted {
-            color: var(--muted-text) !important;
+            color: #cbd5e1 !important;
         }
         
-        body.dark-theme h6, 
-        body.dark-theme h5, 
-        body.dark-theme h4 {
-            color: var(--text-color);
+        body.dark-theme .text-success {
+            color: #4ade80 !important;
+        }
+        
+        body.dark-theme .text-danger {
+            color: #f87171 !important;
+        }
+        
+        body.dark-theme .text-warning {
+            color: #fbbf24 !important;
+        }
+        
+        body.dark-theme .text-info {
+            color: #38bdf8 !important;
         }
         
         body.dark-theme .alert {
@@ -1849,10 +1845,18 @@
                 
                 const leagueCode = leagueMap[match.league] || match.league;
                 
-                // Fetch both standings context and xG data in parallel
-                Promise.all([
-                    fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`).then(r => r.json()),
-                    fetch(`/match/${match.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`).then(r => r.json())
+                // Add timeout to prevent endless loading
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Request timeout')), 15000)
+                );
+                
+                // Fetch both standings context and xG data in parallel with timeout
+                Promise.race([
+                    Promise.all([
+                        fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`).then(r => r.json()),
+                        fetch(`/match/${match.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`).then(r => r.json())
+                    ]),
+                    timeoutPromise
                 ])
                 .then(([contextData, xgData]) => {
                     if (contextData.error) {
@@ -1866,7 +1870,10 @@
                 })
                 .catch(error => {
                     console.error('Error loading context:', error);
-                    matchContext.innerHTML = '<p class="text-muted">Unable to load match context</p>';
+                    const errorMsg = error.message === 'Request timeout' 
+                        ? 'Match context loading timed out. Please try again.' 
+                        : 'Unable to load match context';
+                    matchContext.innerHTML = `<p class="text-muted">${errorMsg}</p>`;
                 });
             }
             
