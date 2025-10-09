@@ -1489,10 +1489,22 @@
                 window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
             }
             
-            // Reinitialize tooltips after DOM updates - use multiple approaches for reliability
-            initTooltips(); // Immediate init
-            setTimeout(() => initTooltips(), 0); // Next event loop
-            setTimeout(() => initTooltips(), 100); // Delayed fallback
+            // Reinitialize tooltips after DOM updates - comprehensive approach
+            // Method 1: Immediate initialization
+            initTooltips();
+            
+            // Method 2: MutationObserver to catch async DOM changes
+            const observer = new MutationObserver(() => {
+                initTooltips();
+                observer.disconnect(); // Stop observing after first init
+            });
+            observer.observe(matchContext, { childList: true, subtree: true });
+            
+            // Method 3: Delayed fallback for safety
+            setTimeout(() => {
+                initTooltips();
+                observer.disconnect();
+            }, 200);
         }
         
         function formatFormWithOpponents(recentMatches) {
@@ -2610,10 +2622,22 @@
                     window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
                 }
                 
-                // Reinitialize tooltips after DOM updates - use multiple approaches for reliability
-                initTooltips(); // Immediate init
-                setTimeout(() => initTooltips(), 0); // Next event loop
-                setTimeout(() => initTooltips(), 100); // Delayed fallback
+                // Reinitialize tooltips after DOM updates - comprehensive approach
+                // Method 1: Immediate initialization
+                initTooltips();
+                
+                // Method 2: MutationObserver to catch async DOM changes
+                const observer = new MutationObserver(() => {
+                    initTooltips();
+                    observer.disconnect(); // Stop observing after first init
+                });
+                observer.observe(matchContext, { childList: true, subtree: true });
+                
+                // Method 3: Delayed fallback for safety
+                setTimeout(() => {
+                    initTooltips();
+                    observer.disconnect();
+                }, 200);
             }
             
             function display1X2Prediction(prediction, eloPredictions) {
@@ -3061,7 +3085,7 @@
                 `;
             }
             
-            // Initialize Bootstrap tooltips
+            // Initialize Bootstrap tooltips with multi-line support
             function initTooltips() {
                 console.log('🔧 Initializing tooltips...');
                 
@@ -3074,10 +3098,14 @@
                     }
                 });
                 
-                // Then create new tooltips
+                // Then create new tooltips with html: true for multi-line content
                 const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
                 console.log(`🔧 Creating ${tooltipTriggerList.length} new tooltips`);
-                [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+                [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl, {
+                    html: true,  // Enable HTML content for multi-line tooltips
+                    trigger: 'hover',
+                    boundary: 'window'
+                }));
             }
             
             // Call it on page load

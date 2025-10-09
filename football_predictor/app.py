@@ -25,7 +25,15 @@ os.makedirs("templates", exist_ok=True)
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
 
-
+def get_current_season():
+    """
+    Calculate current football season based on calendar month.
+    Football seasons run August to May:
+    - August-December (months 8-12): Use current year as season (e.g., Oct 2025 → Season 2025)
+    - January-July (months 1-7): Use previous year as season (e.g., Jan 2026 → Season 2025)
+    """
+    today = datetime.now()
+    return today.year if today.month >= 8 else today.year - 1
 
 @app.route("/")
 def index():
@@ -61,6 +69,9 @@ def upcoming():
             odds_matches = get_upcoming_matches_with_odds(league_codes=leagues_to_fetch, next_n_days=next_n_days)
             
             if odds_matches:
+                # Import Elo client for predictions
+                from elo_client import get_team_elo, calculate_elo_probabilities
+                
                 # Calculate predictions from odds for each match
                 for match in odds_matches:
                     predictions = calculate_predictions_from_odds(match)
@@ -68,6 +79,15 @@ def upcoming():
                     # Format match data
                     match["datetime"] = match["commence_time"]
                     match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
+                    
+                    # Add Elo predictions
+                    home_team = match.get("home_team")
+                    away_team = match.get("away_team")
+                    if home_team and away_team:
+                        home_elo = get_team_elo(home_team)
+                        away_elo = get_team_elo(away_team)
+                        if home_elo and away_elo:
+                            match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
                     
                     # Add predictions in the expected format
                     match["predictions"] = {
@@ -361,9 +381,10 @@ def get_match_context(match_id):
         from elo_client import get_team_elo, calculate_elo_probabilities
         
         try:
-            # Use Understat as primary source for standings
-            print(f"📊 Fetching standings from Understat...")
-            standings = fetch_understat_standings(league_code, 2024)
+            # Use Understat as primary source for standings with dynamic season
+            current_season = get_current_season()
+            print(f"📊 Fetching standings from Understat for season {current_season}...")
+            standings = fetch_understat_standings(league_code, current_season)
             source = "Understat" if standings else None
             
             # Fetch Elo ratings for both teams
