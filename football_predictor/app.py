@@ -478,13 +478,21 @@ def get_match_context(match_id):
                     "position": home_data.get('position') if home_data else None,
                     "points": home_data.get('points') if home_data else None,
                     "form": home_data.get('form') if home_data else None,
-                    "name": home_team
+                    "name": home_team,
+                    "ppda_coef": home_data.get('ppda_coef') if home_data else None,
+                    "oppda_coef": home_data.get('oppda_coef') if home_data else None,
+                    "xG": home_data.get('xG') if home_data else None,
+                    "xGA": home_data.get('xGA') if home_data else None
                 },
                 "away_team": {
                     "position": away_data.get('position') if away_data else None,
                     "points": away_data.get('points') if away_data else None,
                     "form": away_data.get('form') if away_data else None,
-                    "name": away_team
+                    "name": away_team,
+                    "ppda_coef": away_data.get('ppda_coef') if away_data else None,
+                    "oppda_coef": away_data.get('oppda_coef') if away_data else None,
+                    "xG": away_data.get('xG') if away_data else None,
+                    "xGA": away_data.get('xGA') if away_data else None
                 },
                 "narrative": narrative,
                 "has_data": bool(home_data or away_data),

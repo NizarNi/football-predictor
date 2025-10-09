@@ -541,7 +541,7 @@
                                     <div class="card">
                                         <div class="card-header bg-secondary text-white">
                                             <i class="fas fa-chart-line me-2"></i> Match Context
-                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Team standings, recent form, and Expected Goals (xG) statistics. Form and xG data: FBref. Standings: football-data.org" style="cursor: help; font-size: 0.9em;"></i>
+                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="League standings (Understat), Historical xG trends (FBref), PPDA defensive metrics (Understat), and team form indicators" style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
                                             <div id="match-context">
@@ -1618,8 +1618,8 @@
                 matchLeague.textContent = match.league || 'Unknown League';
                 matchDate.textContent = match.datetime || 'TBD';
                 
-                // Load match context
-                loadMatchContext(match);
+                // Show on-demand Match Context button instead of auto-loading
+                showMatchContextButton(match);
                 
                 // Display predictions from Odds API
                 if (match.predictions && match.predictions['1x2']) {
@@ -1826,6 +1826,35 @@
                 }
             }
             
+            function showMatchContextButton(match) {
+                if (!match || !match.league) {
+                    matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
+                    return;
+                }
+                
+                matchContext.innerHTML = `
+                    <div class="text-center py-3">
+                        <button class="btn btn-primary btn-lg" onclick="loadMatchContext(currentMatchData)">
+                            <i class="fas fa-chart-bar me-2"></i>Show Match Context
+                        </button>
+                        <p class="text-muted small mt-2 mb-0">
+                            <i class="fas fa-info-circle me-1"></i>League standings, team form, xG metrics & PPDA
+                        </p>
+                    </div>
+                `;
+            }
+            
+            function updateProgressStatus(message, icon = 'spinner fa-spin') {
+                matchContext.innerHTML = `
+                    <div class="text-center py-3">
+                        <div class="mb-2">
+                            <i class="fas fa-${icon} fa-2x text-primary"></i>
+                        </div>
+                        <p class="text-muted mb-0">${message}</p>
+                    </div>
+                `;
+            }
+            
             function loadMatchContext(match) {
                 if (!match || !match.league) {
                     matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
@@ -1835,7 +1864,8 @@
                 // Clear xG data from previous match to prevent stale data
                 currentXgData = null;
                 
-                matchContext.innerHTML = loadingSpinner();
+                // Show initial progress
+                updateProgressStatus('🔍 Initiating data fetch...', 'search');
                 
                 const leagueMap = {
                     'UEFA Champions League': 'CL',
@@ -1860,20 +1890,38 @@
                 
                 const leagueCode = leagueMap[match.league] || match.league;
                 
-                // Add timeout to prevent endless loading
+                // Update progress: Fetching from Understat
+                setTimeout(() => updateProgressStatus('📊 Fetching standings from Understat...', 'database'), 100);
+                
+                // Add timeout to prevent endless loading (increased to 40s for Understat)
                 const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Request timeout')), 15000)
+                    setTimeout(() => reject(new Error('Request timeout')), 40000)
                 );
+                
+                // Start context fetch
+                const contextFetch = fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        updateProgressStatus('📈 Calculating xG metrics from FBref...', 'chart-line');
+                        return data;
+                    });
+                
+                // Start xG fetch after context starts
+                const xgFetch = fetch(`/match/${match.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        updateProgressStatus('🎯 Processing PPDA coefficients...', 'bullseye');
+                        return data;
+                    });
                 
                 // Fetch both standings context and xG data in parallel with timeout
                 Promise.race([
-                    Promise.all([
-                        fetch(`/match/${match.id}/context?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`).then(r => r.json()),
-                        fetch(`/match/${match.id}/xg?league=${leagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`).then(r => r.json())
-                    ]),
+                    Promise.all([contextFetch, xgFetch]),
                     timeoutPromise
                 ])
                 .then(([contextData, xgData]) => {
+                    updateProgressStatus('✨ Finalizing data...', 'check-circle');
+                    
                     if (contextData.error) {
                         matchContext.innerHTML = `<p class="text-muted">${contextData.narrative || 'Context unavailable'}</p>`;
                         return;
@@ -1881,14 +1929,22 @@
                     
                     // Merge xG data into context data
                     contextData.xg = xgData.xg || null;
-                    displayMatchContextData(contextData);
+                    
+                    setTimeout(() => displayMatchContextData(contextData), 300);
                 })
                 .catch(error => {
                     console.error('Error loading context:', error);
                     const errorMsg = error.message === 'Request timeout' 
-                        ? 'Match context loading timed out. Please try again.' 
+                        ? 'Match context loading timed out after 40 seconds. Please try again.' 
                         : 'Unable to load match context';
-                    matchContext.innerHTML = `<p class="text-muted">${errorMsg}</p>`;
+                    matchContext.innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>${errorMsg}
+                            <button class="btn btn-sm btn-outline-primary mt-2 d-block" onclick="loadMatchContext(currentMatchData)">
+                                <i class="fas fa-redo me-1"></i>Retry
+                            </button>
+                        </div>
+                    `;
                 });
             }
             
@@ -1926,11 +1982,24 @@
                         if (contextData.home_team.form) {
                             html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.home_team.form)}</td></tr>`;
                         }
+                        
+                        // Add PPDA prominently if available from Understat
+                        if (contextData.home_team.ppda_coef !== null && contextData.home_team.ppda_coef !== undefined) {
+                            html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
+                            html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes allowed Per Defensive Action - Lower = more intense pressing. Measures defensive pressure." style="cursor: help; font-size: 0.8em;"></i></td><td><strong class="text-primary">${contextData.home_team.ppda_coef}</strong></td></tr>`;
+                        }
+                        if (contextData.home_team.xG !== null && contextData.home_team.xG !== undefined) {
+                            html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Total Expected Goals this season (Understat)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xG}</strong></td></tr>`;
+                        }
+                        if (contextData.home_team.xGA !== null && contextData.home_team.xGA !== undefined) {
+                            html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Total Expected Goals Against this season (Understat)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
+                        }
+                        
                         // Add xG metrics if available
                         if (contextData.xg && contextData.xg.home_stats) {
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals created per game based on shot quality and positions" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals conceded per game (Post-Shot xG faced by goalkeeper)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals trends per game from FBref" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals Against per game from FBref" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                             if (contextData.xg.home_stats.scoring_clinicality !== undefined && contextData.xg.home_stats.scoring_clinicality !== null) {
                                 const clinicality = contextData.xg.home_stats.scoring_clinicality;
                                 const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
@@ -1965,11 +2034,24 @@
                         if (contextData.away_team.form) {
                             html += `<tr><td class="text-muted">Form:</td><td>${formatFormIndicators(contextData.away_team.form)}</td></tr>`;
                         }
+                        
+                        // Add PPDA prominently if available from Understat
+                        if (contextData.away_team.ppda_coef !== null && contextData.away_team.ppda_coef !== undefined) {
+                            html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
+                            html += `<tr><td class="text-muted"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes allowed Per Defensive Action - Lower = more intense pressing. Measures defensive pressure." style="cursor: help; font-size: 0.8em;"></i></td><td><strong class="text-primary">${contextData.away_team.ppda_coef}</strong></td></tr>`;
+                        }
+                        if (contextData.away_team.xG !== null && contextData.away_team.xG !== undefined) {
+                            html += `<tr><td class="text-muted">Season xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Total Expected Goals this season (Understat)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xG}</strong></td></tr>`;
+                        }
+                        if (contextData.away_team.xGA !== null && contextData.away_team.xGA !== undefined) {
+                            html += `<tr><td class="text-muted">Season xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Total Expected Goals Against this season (Understat)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xGA}</strong></td></tr>`;
+                        }
+                        
                         // Add xG metrics if available
                         if (contextData.xg && contextData.xg.away_stats) {
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals created per game based on shot quality and positions" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Expected Goals conceded per game (Post-Shot xG faced by goalkeeper)" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>xG For (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals trends per game from FBref" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>xGA (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical Expected Goals Against per game from FBref" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                             if (contextData.xg.away_stats.scoring_clinicality !== undefined && contextData.xg.away_stats.scoring_clinicality !== null) {
                                 const clinicality = contextData.xg.away_stats.scoring_clinicality;
                                 const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
