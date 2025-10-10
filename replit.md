@@ -7,9 +7,16 @@ A Flask-based web application providing football match predictions using real bo
 I prefer detailed explanations. Ask before making major changes. I want iterative development. I prefer simple language.
 
 ## Recent Changes (October 2025)
+### Season Calculation & Dynamic Display (October 10, 2025)
+- **Season Functions Fixed:** `get_current_season()` now returns END YEAR for Understat (Oct 2025 → 2026), `get_xg_season()` returns START YEAR for FBref (Oct 2025 → 2025)
+- **Dynamic Season Display:** Backend sends `season_display: "2025/26"` to frontend, replacing all hardcoded "2024/25" references in tooltips
+- **Documentation Updated:** Function docstrings now clarify Understat uses end-year convention (2025-26 = "2026"), FBref uses start-year convention (2025-26 = "2025")
+- **Verified:** Union Berlin now shows correct 2025-26 season context (position 12, xG 9.56, form "LLWDL"), logs confirm "Fetching season 2026"
+
 ### UX & Data Accuracy Improvements
-- **Team Form Display:** Improved layout with colored square emoji first (e.g., "🟩 W vs Arsenal"), content shifted left for better readability
-- **Dynamic Tooltips:** xG/xGA Season tooltips now display actual league averages from backend (e.g., "League avg: 1.47/game for La Liga") instead of hardcoded values
+- **Team Form Display:** Improved layout with colored square emoji first (e.g., "🟩 W vs Arsenal"), chronological ordering (oldest→newest), truncated opponent names (>15 chars), reduced font size (0.85rem)
+- **Dark Mode Visibility:** xG predictions and betting tips now use `var(--bs-body-color)` for proper light/dark theme contrast
+- **Dynamic Tooltips:** xG/xGA Season tooltips display actual league averages from backend (e.g., "League avg: 1.47/game for La Liga 2025/26")
 - **league_stats Calculation Fix:** Corrected backend to calculate per-game averages (xG/game, xGA/game) instead of totals, with zero-value teams properly included to prevent upward bias
 
 ### Multi-League Testing (October 10, 2025)
