@@ -2602,10 +2602,12 @@
                 if (match.predictions && match.predictions['1x2']) {
                     display1X2Prediction(match.predictions['1x2'], match.elo_predictions);
                     resetOverUnderButton();
+                    resetBTTSButton();
                     resetBettingAnalysisButton();
                 } else {
                     prediction1x2.innerHTML = '<p class="text-muted">No predictions available for this match</p>';
                     resetOverUnderButton();
+                    resetBTTSButton();
                     resetBettingAnalysisButton();
                 }
             }
@@ -2678,6 +2680,20 @@
                         <p class="text-muted mt-2 small">View arbitrage opportunities, best odds, and betting tips</p>
                     </div>
                 `;
+            }
+            
+            function resetBTTSButton() {
+                const predictionBtts = document.getElementById('prediction-btts');
+                if (predictionBtts) {
+                    predictionBtts.innerHTML = `
+                        <div class="text-center">
+                            <button id="load-btts-btn" class="btn btn-primary">
+                                <i class="fas fa-futbol me-2"></i> Show BTTS Odds
+                            </button>
+                            <p class="text-muted mt-2 small">Click to fetch Both Teams To Score predictions from bookmakers and xG analysis</p>
+                        </div>
+                    `;
+                }
             }
             
             function loadBettingAnalysis() {
