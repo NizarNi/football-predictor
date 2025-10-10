@@ -18,6 +18,14 @@ I prefer detailed explanations. Ask before making major changes. I want iterativ
   - Match logs provide date, opponent, xG for/against, and parsed results for Chart.js visualizations
 - **Technical Details:** Applied safe extraction to all row values (date, opponent, score, home_xg, away_xg) to prevent Series/scalar type inconsistencies
 
+### Rolling xG Averages & Transparency Improvements (October 10, 2025)
+- **Smart xG Calculations:** xG predictions now use rolling 5-game averages when ≥3 matches available, falling back to season averages otherwise for better recent form accuracy
+- **Verified Results:** Nottingham Forest rolling xGF 0.76 (vs season 0.94), Chelsea rolling xGF 1.32 (vs season 1.56) - predictions now reflect current team performance
+- **Transparency Tooltips Added:**
+  - Betting Tips: "Probabilities calculated from bookmaker consensus (30+ sources via The Odds API)"
+  - xG Analysis: "Uses rolling 5-game averages when available (≥3 matches), otherwise FBref 2025/26 season averages"
+- **Performance:** Rolling averages calculated from match logs (now working after NA bug fix) provide more responsive predictions to recent team form changes
+
 ### Season Calculation & Dynamic Display (October 10, 2025)
 - **Season Functions Fixed:** `get_current_season()` now returns END YEAR for Understat (Oct 2025 → 2026), `get_xg_season()` returns START YEAR for FBref (Oct 2025 → 2025)
 - **Dynamic Season Display:** Backend sends `season_display: "2025/26"` to frontend, replacing all hardcoded "2024/25" references in tooltips
