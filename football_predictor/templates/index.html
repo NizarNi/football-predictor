@@ -2959,16 +2959,16 @@
                     }
                 }
                 
-                // Calculate double chance probabilities
-                const dc1X = homeWin + draw;  // Home or Draw
-                const dc12 = homeWin + awayWin;  // Home or Away
-                const dcX2 = draw + awayWin;  // Draw or Away
+                // Calculate double chance probabilities (use Hybrid if available, otherwise Market)
+                const dc1X = hybridHomeWin + hybridDraw;  // Home or Draw
+                const dc12 = hybridHomeWin + hybridAwayWin;  // Home or Away
+                const dcX2 = hybridDraw + hybridAwayWin;  // Draw or Away
                 
-                // Create array of betting options
+                // Create array of betting options (use Hybrid probabilities when Elo available)
                 const options = [
-                    { name: 'Home Win', prob: homeWin, type: '1x2' },
-                    { name: 'Draw', prob: draw, type: '1x2' },
-                    { name: 'Away Win', prob: awayWin, type: '1x2' },
+                    { name: 'Home Win', prob: hybridHomeWin, type: '1x2' },
+                    { name: 'Draw', prob: hybridDraw, type: '1x2' },
+                    { name: 'Away Win', prob: hybridAwayWin, type: '1x2' },
                     { name: 'Double Chance 1X (Home or Draw)', prob: dc1X, type: 'double_chance' },
                     { name: 'Double Chance 12 (Home or Away)', prob: dc12, type: 'double_chance' },
                     { name: 'Double Chance X2 (Draw or Away)', prob: dcX2, type: 'double_chance' }
