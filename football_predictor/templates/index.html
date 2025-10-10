@@ -565,6 +565,7 @@
             background-color: var(--analysis-bg);
             border-radius: 8px;
             animation: fadeInUp 0.5s ease;
+            transition: opacity 0.3s ease;
         }
         
         .loading-tip strong {
@@ -1492,16 +1493,79 @@
             `;
         }
         
-        function updateProgressStatus(message, icon = 'spinner fa-spin') {
+        // Loading tips carousel
+        const loadingTips = [
+            "💡 <strong>xG (Expected Goals)</strong> measures shot quality, not just quantity. A 0.5 xG shot has a 50% chance of being scored.",
+            "📊 <strong>Elo ratings</strong> track team strength since 2010. Higher rating = historically stronger team.",
+            "🎯 <strong>PPDA (Passes Allowed Per Defensive Action)</strong> measures defensive pressure. Lower = more aggressive pressing.",
+            "⚖️ <strong>Hybrid Model</strong> combines 60% historical Elo data + 40% current market odds for balanced predictions.",
+            "💎 <strong>Value Bets</strong> occur when the Elo model probability exceeds market probability by 10% or more.",
+            "🏠 <strong>Home Advantage</strong> gives teams a 1.15x boost in xG calculations - that's a 15% edge!",
+            "📈 <strong>Rolling Averages</strong> use the last 5 games for xG predictions when available for better recent form accuracy.",
+            "🔢 <strong>Double Chance</strong> bets cover two outcomes (e.g., Home Win OR Draw) for safer but lower odds.",
+            "⚽ <strong>Over 2.5 Goals</strong> means 3+ total goals scored. We predict this using both xG stats and market odds.",
+            "🎲 <strong>Arbitrage</strong> opportunities let you bet on all outcomes across different bookmakers and guarantee profit!",
+            "📉 <strong>Market Odds</strong> reflect consensus from 30+ bookmakers via The Odds API for maximum accuracy.",
+            "🧮 <strong>Implied Probability</strong> converts decimal odds to percentages: 2.00 odds = 50% probability.",
+            "⭐ <strong>League Averages</strong> help contextualize team stats - outperforming the average indicates strength.",
+            "🔄 <strong>Form Trends</strong> matter! Recent performance (last 5 games) often predicts upcoming matches better than season averages."
+        ];
+        
+        let currentTipIndex = 0;
+        let tipRotationInterval = null;
+        
+        function updateProgressStatus(message, icon = 'database', step = 1, totalSteps = 5) {
             const matchContext = document.getElementById('match-context');
+            const percentage = Math.round((step / totalSteps) * 100);
+            
+            // Select appropriate icon
+            const iconClass = icon === 'database' ? 'fa-database' : 
+                            icon === 'chart-line' ? 'fa-chart-line' :
+                            icon === 'bullseye' ? 'fa-bullseye' :
+                            icon === 'check-circle' ? 'fa-check-circle' :
+                            'fa-spinner fa-spin';
+            
             matchContext.innerHTML = `
-                <div class="text-center py-3">
-                    <div class="mb-2">
-                        <i class="fas fa-${icon} fa-2x text-primary"></i>
+                <div class="loading-container">
+                    <div class="loading-icon">
+                        <i class="fas ${iconClass} text-primary"></i>
                     </div>
-                    <p class="text-muted mb-0">${message}</p>
+                    <div class="loading-step-text">
+                        Step ${step}/${totalSteps} - ${message}
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar-fill" style="width: ${percentage}%">
+                            ${percentage}%
+                        </div>
+                    </div>
+                    <div class="loading-tip" id="loading-tip">
+                        ${loadingTips[currentTipIndex]}
+                    </div>
                 </div>
             `;
+            
+            // Start tip rotation if not already running
+            if (!tipRotationInterval) {
+                tipRotationInterval = setInterval(() => {
+                    currentTipIndex = (currentTipIndex + 1) % loadingTips.length;
+                    const tipElement = document.getElementById('loading-tip');
+                    if (tipElement) {
+                        tipElement.style.opacity = '0';
+                        setTimeout(() => {
+                            tipElement.innerHTML = loadingTips[currentTipIndex];
+                            tipElement.style.opacity = '1';
+                        }, 300);
+                    }
+                }, 2500);
+            }
+        }
+        
+        function clearTipRotation() {
+            if (tipRotationInterval) {
+                clearInterval(tipRotationInterval);
+                tipRotationInterval = null;
+            }
+            currentTipIndex = 0;
         }
         
         function loadMatchContext(match) {
@@ -1515,7 +1579,7 @@
             currentXgData = null;
             
             // Show initial progress
-            updateProgressStatus('🔍 Initiating data fetch...', 'search');
+            updateProgressStatus('Initiating data fetch...', 'database', 1, 5);
             
             // Use league_code from match data (added in odds_api_client.py)
             const leagueCode = match.league_code || match.league;
@@ -1547,7 +1611,7 @@
             const finalLeagueCode = leagueMapFallback[leagueCode] || leagueCode;
             
             // Update progress: Fetching from Understat
-            setTimeout(() => updateProgressStatus('📊 Fetching standings from Understat...', 'database'), 100);
+            setTimeout(() => updateProgressStatus('Fetching standings from Understat...', 'database', 2, 5), 100);
             
             // Add timeout to prevent endless loading (increased to 40s for Understat)
             const timeoutPromise = new Promise((_, reject) => 
@@ -1558,7 +1622,7 @@
             const contextFetch = fetch(`/match/${match.id}/context?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
                 .then(r => r.json())
                 .then(data => {
-                    updateProgressStatus('📈 Calculating xG metrics from FBref...', 'chart-line');
+                    updateProgressStatus('Calculating xG metrics from FBref...', 'chart-line', 3, 5);
                     return data;
                 });
             
@@ -1566,7 +1630,7 @@
             const xgFetch = fetch(`/match/${match.id}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
                 .then(r => r.json())
                 .then(data => {
-                    updateProgressStatus('🎯 Processing PPDA coefficients...', 'bullseye');
+                    updateProgressStatus('Processing PPDA coefficients...', 'bullseye', 4, 5);
                     return data;
                 });
             
@@ -1576,9 +1640,10 @@
                 timeoutPromise
             ])
             .then(([contextData, xgData]) => {
-                updateProgressStatus('✨ Finalizing data...', 'check-circle');
+                updateProgressStatus('Finalizing data...', 'check-circle', 5, 5);
                 
                 if (contextData.error) {
+                    clearTipRotation();
                     matchContext.innerHTML = `<p class="text-muted">${contextData.narrative || 'Context unavailable'}</p>`;
                     return;
                 }
@@ -1586,10 +1651,14 @@
                 // Merge xG data into context data
                 contextData.xg = xgData.xg || null;
                 
-                setTimeout(() => displayMatchContextData(contextData), 300);
+                setTimeout(() => {
+                    clearTipRotation();
+                    displayMatchContextData(contextData);
+                }, 300);
             })
             .catch(error => {
                 console.error('Error loading context:', error);
+                clearTipRotation();
                 const errorMsg = error.message === 'Request timeout' 
                     ? 'Match context loading timed out after 40 seconds. Please try again.' 
                     : 'Unable to load match context';
