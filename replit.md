@@ -64,6 +64,29 @@ Comprehensive testing completed across all 7 supported leagues:
 - **Compact Form Display:** Team form now shows 3-letter opponent codes (e.g., "🟩 🏠 GW5 vs MCI"), reduced font to 0.75rem, chronological oldest→newest for space efficiency
 - **Performance Impact:** Combined caching + parallel fetching + optimized display reduces total Match Context load time from 20-26 seconds to ~7-10 seconds across all supported leagues
 
+### Historical xG Feature: Career Averages (2010-2025) - October 10, 2025
+- **Long-Term Performance Context:** Added career xG statistics spanning 2010-2025 to complement current season data, providing historical perspective for informed betting decisions
+- **Backend Implementation:**
+  - Created `fetch_career_xg_stats()` function that aggregates xG/xGA data across all available seasons (2010-current) from FBref
+  - Fixed FBref multi-index column extraction bug: now correctly accesses `('Expected','xG')`, `('Expected','xGA')`, `('Standard','MP')` tuples
+  - Implements 7-day file-based caching (CAREER_XG_CACHE_TTL = 604800s) to minimize API calls for historical data
+  - Handles missing seasons gracefully (e.g., newly promoted teams with limited history)
+- **New API Endpoint:** `/career_xg?team={name}&league={code}` returns career statistics:
+  - `career_xg_per_game`: Weighted average xG across all seasons
+  - `career_xga_per_game`: Weighted average xGA across all seasons
+  - `seasons_count`: Number of seasons with data
+  - `total_games`: Total matches analyzed
+  - `first_season` / `last_season`: Date range (e.g., "2010/11" - "2025/26")
+  - `seasons_data`: Individual season breakdown for trend analysis
+- **Frontend Integration (index.html):**
+  - Parallel data fetching: Adds homeCareerFetch and awayCareerFetch to existing Promise.all with contextData and xgData
+  - UI Display: Career xG/xGA shown below FBref current season stats with visual separator (horizontal rule)
+  - Rich HTML tooltips compare season vs career: "📈 Above career average" or "📉 Below career average" for xG, "🛡️ Better" or "⚠️ Worse" for xGA
+  - Seasons count badge (e.g., "15 seasons") provides at-a-glance historical depth indicator
+  - Graceful degradation: Career section only displays if data available, errors caught silently
+- **Use Case Example:** Barcelona shows career xG 1.82/game (2010-2025, 15 seasons) vs current season 1.95/game → 📈 Above career average, indicating strong current form
+- **Performance:** Career data fetched in parallel with other match context, minimal impact on total load time due to caching strategy
+
 ## System Architecture
 
 ### UI/UX Decisions
