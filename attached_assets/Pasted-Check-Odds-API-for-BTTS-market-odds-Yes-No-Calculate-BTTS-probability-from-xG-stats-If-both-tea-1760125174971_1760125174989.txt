@@ -1,0 +1,121 @@
+Check Odds API for BTTS market odds (Yes/No)
+Calculate BTTS probability from xG stats:
+If both teams have xG > 1.0/game AND both face weak defenses (xGA > 1.2) → High BTTS probability
+Use scoring rates + defensive vulnerability for each team
+Display BTTS prediction in match details alongside 1X2 and Over/Under
+Show confidence based on xG consistency and market consensus
+UI Display:
+
+Add BTTS card showing: "Both Teams Score: Yes 65% | No 35%"
+Include tooltip explaining: "Based on scoring rates and defensive stats"
+Highlight value bets when our xG model differs from market odds
+Would you like me to implement this? I'll:
+
+Check Odds API for BTTS markets
+Add BTTS probability calculation using xG/xGA
+Display BTTS predictions in match details
+Add BTTS tooltip with reasoning
+36 seconds of work
+YES , but I still don't see the button for 5years span xG /xG1
+
+23 minutes ago
+
+Show less
+
+Investigated button visibility issue
+Let me check what's actually displaying and see why the button isn't showing up:
+
+Checked system logs
+
+Checked button rendering status
+Good news - I can see from the logs that FBref is now working! It successfully fetched match logs for Fulham and Arsenal. Let me check what you're actually seeing on screen:
+
+
+Took a screenshot
+
+Searched for Premier League button code
+I see - you're currently viewing Champions League matches. The button will only appear for Premier League matches (and other leagues where FBref data loads).
+
+Let me verify the button code is in place:
+
+
+Executed rg -C 2 -n 'Show Career Stats.*2021-2025' football_predictor/templates/index.html
+
+Decided on button visibility logic
+✅ The button code is there! (lines 2859 & 2946)
+
+The button appears when:
+
+FBref season xG data loads (it's conditional)
+Career data hasn't been loaded yet
+To see it:
+
+Click "Premier League" button at the top
+Click any PL match (e.g., Arsenal, Chelsea, Liverpool)
+Wait for match context to load (~5-10 seconds)
+Look below the "xG For (Season)" and "xGA (Season)" stats
+You'll see the blue button: "Show Career Stats (2021-2025)"
+The button won't appear for:
+
+Champions League matches (FBref doesn't have full CL data)
+If FBref is rate-limited (fallback to Understat only)
+If career stats already loaded
+Try clicking a Premier League match now - the logs show FBref is working! 🎯
+
+51 seconds of work
+it's not there
+
+19 minutes ago
+
+Show less
+
+Decided on context data checks
+Let me check what's actually loading when you click a match:
+
+Checked system logs
+
+Determined display function call (8 seconds)
+I see the problem! Looking at the logs, FBref IS working (✅ Found 7 completed matches), but I need to check which display function is being used. There are TWO different places where xG stats are shown:
+
+Simple view (displayTeamStats function) - around line 1977
+Side-by-side view (displayMatchContextData function) - around line 2729
+I only added the button to the side-by-side view. Let me check which one you're seeing and add the button to BOTH locations:
+
+
+Opened football_predictor/templates/index.html
+
+Decided on button placement logic
+Ah, I found the issue! There are two different display modes for match context:
+
+Simple view (displayTeamStats function) - Used for simpler layouts
+Side-by-side view (displayMatchContextData function) - Used for detailed layouts
+I only added the button to the side-by-side view (lines 2812, 2899), but NOT to the simple view.
+
+The button needs to be added in the displayTeamStats() function as well, right after the FBref season xG stats display (around line 2030-2040).
+
+Would you like me to add the "Show Career Stats" button to BOTH display functions so it appears regardless of which layout is used?
+
+39 seconds of work
+yes + the bTTS we agreed on
+
+3 minutes ago
+Optimized Agent memory
+
+Planned adding career stats button (8 seconds)
+Perfect! I'll add the career stats button to both display locations AND implement BTTS (Both Teams To Score) predictions using xG/xGA stats plus market odds.
+
+Here's my plan:
+
+Career Stats Button Fix:
+
+Add the "Show Career Stats (2021-2025)" button to the simple displayTeamStats() function (currently only in side-by-side view)
+This ensures the button appears in ALL match layouts
+BTTS Predictions:
+
+Fetch BTTS odds from The Odds API (they support "btts" market)
+Calculate BTTS probability using both teams' xG/xGA stats (if Team A scores xG goals and Team B concedes xGA, what's the probability both score?)
+Display BTTS predictions alongside 1X2 and O/U 2.5 with probability percentage and best odds
+Show market consensus and value indicators
+Let me create a task list to implement both features:
+
+59 seconds of work
