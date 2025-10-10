@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import get_xg_season
 from config import XG_CACHE_DURATION_HOURS, TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING
@@ -104,14 +105,14 @@ def save_to_cache(cache_key, data):
 
 def fetch_career_xg_stats(team_name, league_code):
     """
-    Fetch historical xG statistics for a team across multiple seasons (2010-2025)
+    Fetch recent historical xG statistics for a team (last 5 seasons)
     
     Args:
         team_name: Team name to fetch career stats for
         league_code: League code (e.g., 'PL', 'PD')
     
     Returns:
-        dict: Career xG statistics with averages across all seasons
+        dict: Career xG statistics with averages across recent seasons
     """
     # Check if league is supported
     if league_code not in LEAGUE_MAPPING:
@@ -136,10 +137,13 @@ def fetch_career_xg_stats(team_name, league_code):
     seasons_data = []
     current_season = get_xg_season()
     
-    print(f"📊 Fetching career xG for {team_name} in {league_name} (2010-{current_season})...")
+    # Fetch last 5 seasons only to avoid rate limiting (reduced from 2010)
+    start_season = max(2021, current_season - 4)
     
-    # Try seasons from 2010 to current
-    for season in range(2010, current_season + 1):
+    print(f"📊 Fetching career xG for {team_name} in {league_name} ({start_season}-{current_season})...")
+    
+    # Try seasons from start to current
+    for season in range(start_season, current_season + 1):
         try:
             fbref = sd.FBref(leagues=league_name, seasons=season)
             stats_df = fbref.read_team_season_stats(stat_type='standard')
@@ -198,6 +202,10 @@ def fetch_career_xg_stats(team_name, league_code):
         except Exception as e:
             # Team might not have been in this league this season
             continue
+        
+        # Add delay to avoid FBref rate limiting (429 errors)
+        if season < current_season:
+            time.sleep(2)
     
     if not seasons_data:
         print(f"⚠️  No historical xG data found for {team_name}")
