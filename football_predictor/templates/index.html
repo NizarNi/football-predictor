@@ -813,6 +813,7 @@
     <script>
         // Global variables for theme toggle access
         let currentMatchData = null;
+        let currentContextData = null;  // Store context data globally for career stats access
         let currentOverUnderData = null;
         let currentXgData = null;
         
@@ -1676,9 +1677,12 @@
                 contextData.home_career = null;
                 contextData.away_career = null;
                 
+                // Store globally for career stats access
+                currentContextData = contextData;
+                
                 setTimeout(() => {
                     clearTipRotation();
-                    displayMatchContextData(contextData);
+                    displayMatchContextData(currentContextData);
                 }, 300);
             })
             .catch(error => {
@@ -1799,15 +1803,15 @@
                 
                 const careerData = await response.json();
                 
-                // Update contextData with career stats
+                // Update currentContextData with career stats
                 if (side === 'home') {
-                    contextData.home_career = careerData;
+                    currentContextData.home_career = careerData;
                 } else {
-                    contextData.away_career = careerData;
+                    currentContextData.away_career = careerData;
                 }
                 
                 // Re-render the match context to show career stats
-                displayMatchContextData(contextData);
+                displayMatchContextData(currentContextData);
                 
                 // Reinitialize tooltips after DOM update
                 setTimeout(() => {
