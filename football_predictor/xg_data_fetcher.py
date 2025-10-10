@@ -500,6 +500,28 @@ def parse_match_result(score, is_home_team):
         return None
 
 
+def safe_extract_value(row, column_name, default=None):
+    """
+    Safely extract a value from a pandas row, handling Series/scalar issues
+    
+    Args:
+        row: pandas row object
+        column_name: Column name to extract
+        default: Default value if extraction fails
+    
+    Returns:
+        Extracted scalar value or default
+    """
+    try:
+        value = row[column_name]
+        # If it's a Series, extract the first value
+        if isinstance(value, pd.Series):
+            return value.iloc[0] if len(value) > 0 else default
+        return value if pd.notna(value) else default
+    except (KeyError, IndexError, AttributeError):
+        return default
+
+
 def fetch_team_match_logs(team_name, league_code, season=None):
     """
     Fetch match-by-match logs for a team including xG and results
@@ -546,26 +568,84 @@ def fetch_team_match_logs(team_name, league_code, season=None):
         
         # Process home matches
         for idx, row in home_matches.iterrows():
+            # Extract xG values safely (handle both scalar and Series)
+            try:
+                home_xg = row['home_xg']
+                # Convert Series to scalar if needed
+                if isinstance(home_xg, pd.Series):
+                    home_xg = home_xg.iloc[0] if len(home_xg) > 0 else None
+                home_xg_value = float(home_xg) if (home_xg is not None and pd.notna(home_xg)) else 0
+            except (ValueError, TypeError, AttributeError):
+                home_xg_value = 0
+            
+            try:
+                away_xg = row['away_xg']
+                # Convert Series to scalar if needed
+                if isinstance(away_xg, pd.Series):
+                    away_xg = away_xg.iloc[0] if len(away_xg) > 0 else None
+                away_xg_value = float(away_xg) if (away_xg is not None and pd.notna(away_xg)) else 0
+            except (ValueError, TypeError, AttributeError):
+                away_xg_value = 0
+            
+            # Extract gameweek if available  
+            gameweek = None
+            try:
+                gw_value = row.get('gameweek', None)
+                if gw_value is not None and pd.notna(gw_value):
+                    gameweek = int(gw_value)
+            except (ValueError, TypeError, AttributeError):
+                pass
+            
             match_data = {
-                'date': row['date'],
+                'date': safe_extract_value(row, 'date'),
                 'is_home': True,
-                'opponent': row['away_team'],
-                'xg_for': float(row['home_xg']) if not pd.isna(row['home_xg']) else 0,
-                'xg_against': float(row['away_xg']) if not pd.isna(row['away_xg']) else 0,
-                'result': parse_match_result(row['score'], True)
+                'opponent': safe_extract_value(row, 'away_team', 'Unknown'),
+                'gameweek': gameweek,
+                'xg_for': home_xg_value,
+                'xg_against': away_xg_value,
+                'result': parse_match_result(safe_extract_value(row, 'score'), True)
             }
             if match_data['result']:  # Only include completed matches
                 matches.append(match_data)
         
         # Process away matches
         for idx, row in away_matches.iterrows():
+            # Extract xG values safely (handle both scalar and Series)
+            try:
+                away_xg = row['away_xg']
+                # Convert Series to scalar if needed
+                if isinstance(away_xg, pd.Series):
+                    away_xg = away_xg.iloc[0] if len(away_xg) > 0 else None
+                away_xg_value = float(away_xg) if (away_xg is not None and pd.notna(away_xg)) else 0
+            except (ValueError, TypeError, AttributeError):
+                away_xg_value = 0
+            
+            try:
+                home_xg = row['home_xg']
+                # Convert Series to scalar if needed
+                if isinstance(home_xg, pd.Series):
+                    home_xg = home_xg.iloc[0] if len(home_xg) > 0 else None
+                home_xg_value = float(home_xg) if (home_xg is not None and pd.notna(home_xg)) else 0
+            except (ValueError, TypeError, AttributeError):
+                home_xg_value = 0
+            
+            # Extract gameweek if available  
+            gameweek = None
+            try:
+                gw_value = row.get('gameweek', None)
+                if gw_value is not None and pd.notna(gw_value):
+                    gameweek = int(gw_value)
+            except (ValueError, TypeError, AttributeError):
+                pass
+            
             match_data = {
-                'date': row['date'],
+                'date': safe_extract_value(row, 'date'),
                 'is_home': False,
-                'opponent': row['home_team'],
-                'xg_for': float(row['away_xg']) if not pd.isna(row['away_xg']) else 0,
-                'xg_against': float(row['home_xg']) if not pd.isna(row['home_xg']) else 0,
-                'result': parse_match_result(row['score'], False)
+                'opponent': safe_extract_value(row, 'home_team', 'Unknown'),
+                'gameweek': gameweek,
+                'xg_for': away_xg_value,
+                'xg_against': home_xg_value,
+                'result': parse_match_result(safe_extract_value(row, 'score'), False)
             }
             if match_data['result']:  # Only include completed matches
                 matches.append(match_data)
