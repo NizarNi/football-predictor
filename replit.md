@@ -19,6 +19,16 @@ The application offers odds-based predictions derived from real bookmaker consen
 
 ### Recent Updates
 
+#### Data Source Label Formatting - October 10, 2025 (Late Evening)
+- **Line Break Implementation**: Updated all xG/xGA data source labels to display source attribution on separate lines using `<br>` tags for better visual clarity
+  - Format changed from "Season xG <small>(Understat)</small>" to "Season xG<br><small>(Understat)</small>"
+  - Applied to all Season xG/xGA labels (Understat source) in both grid and table views
+  - Applied to all Recent xG/g and Recent xGA/g labels (FBref source) in both grid and table views
+  - Prevents inline text crowding while maintaining clear data source attribution
+- **Career Stats Function Call Fix**: Corrected `loadCareerStats()` to call `displayMatchContextData(contextData)` instead of non-existent `displayMatchContext()` function
+  - Fixed bug preventing career stats from displaying after successful API fetch
+  - Function now correctly re-renders match context with career data included
+
 #### Tooltip & Career Stats Fixes - October 10, 2025 (Evening)
 - **Tooltip Size Optimization**: Reduced Bootstrap tooltip font-size from default to 0.8rem and adjusted max-width to 300px for better on-screen readability
 - **Simplified xGA Tooltip Text**: Condensed tooltip content by ~40%, using concise multi-line format with line breaks instead of verbose sentences (e.g., "23.4 xGA in 12 games\n(1.95/game avg)\n\nLeague: 1.40/game avg\nLower = Stronger 🛡️")
