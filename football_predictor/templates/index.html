@@ -2794,7 +2794,7 @@
                                         <td><strong>${(hybridHome * 100).toFixed(1)}%</strong></td>
                                     </tr>
                                     <tr>
-                                        <td><strong>🤝 Draw</strong></td>
+                                        <td><strong>🤝 Draw <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Draw% varies across models: Market uses bookmaker odds, Elo uses historical team ratings, xG uses statistical goal expectations. Each model calculates differently - this is normal!" style="cursor: help; font-size: 0.7em;"></i></strong></td>
                                         <td>${(prediction.probabilities.DRAW * 100).toFixed(1)}%</td>
                                         <td>${(eloPredictions.draw * 100).toFixed(1)}% ${drawDiv >= 0.10 ? (eloPredictions.draw > prediction.probabilities.DRAW ? '⬆️' : '⬇️') : ''}</td>
                                         <td><strong>${(hybridDraw * 100).toFixed(1)}%</strong></td>
