@@ -3058,7 +3058,7 @@
                 if (xgData && xgData.available) {
                     const themeColors = getThemeColors();
                     html += `<div class="analysis-section mb-3" style="border: 2px solid ${themeColors.xgAnalysisBorder}; background-color: ${themeColors.xgAnalysisBg};">`;
-                    html += `<div class="analysis-title" style="color: ${themeColors.xgAnalysisText};"><i class="fas fa-chart-line me-2"></i>xG Analysis <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Calculation: Home xG = (Team xGF + Opponent xGA) / 2 × 1.15 home advantage. Uses rolling 5-game averages when available (≥3 matches), otherwise FBref 2025/26 season averages. More accurate for recent form!" style="cursor: help; font-size: 0.85em;"></i></div>`;
+                    html += `<div class="analysis-title" style="color: ${themeColors.xgAnalysisText};"><i class="fas fa-chart-line me-2"></i>xG Analysis <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Calculation: Home xG = (Team xGF + Opponent xGA) / 2 × 1.15 home boost, Away xG = (Team xGF + Opponent xGA) / 2 (no boost). Uses rolling 5-game averages when ≥3 matches available, otherwise FBref 2025/26 season averages for recent form accuracy." style="cursor: help; font-size: 0.85em;"></i></div>`;
                     
                     html += `
                         <p class="mb-2">
