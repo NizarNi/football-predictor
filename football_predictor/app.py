@@ -246,6 +246,65 @@ def get_match_totals(event_id):
         print(f"Error fetching totals for {event_id}: {e}")
         return jsonify({"error": "Unable to load over/under data. Please try again later."}), 500
 
+@app.route("/match/<event_id>/btts", methods=["GET"])
+def get_match_btts(event_id):
+    """Get Both Teams To Score predictions for a specific match on-demand"""
+    try:
+        sport_key = request.args.get("sport_key")
+        home_team = request.args.get("home_team")
+        away_team = request.args.get("away_team")
+        league_code = request.args.get("league")
+        
+        if not sport_key:
+            return jsonify({"error": "sport_key parameter required"}), 400
+        
+        from odds_api_client import get_event_odds
+        from odds_calculator import calculate_btts_from_odds, calculate_btts_probability_from_xg
+        
+        # Fetch BTTS odds from The Odds API
+        odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="btts")
+        
+        if not odds_data:
+            return jsonify({"error": "No BTTS odds found for this match"}), 404
+        
+        # Calculate market consensus from bookmakers
+        btts_market = calculate_btts_from_odds(odds_data)
+        
+        # Get xG-based prediction if xG data available
+        btts_xg = None
+        if home_team and away_team and league_code:
+            try:
+                xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
+                
+                if xg_prediction.get('available') and xg_prediction.get('xg'):
+                    home_xg_per_game = xg_prediction['xg'].get('home_stats', {}).get('xg_for_per_game')
+                    away_xg_per_game = xg_prediction['xg'].get('away_stats', {}).get('xg_for_per_game')
+                    home_xga_per_game = xg_prediction['xg'].get('home_stats', {}).get('xg_against_per_game')
+                    away_xga_per_game = xg_prediction['xg'].get('away_stats', {}).get('xg_against_per_game')
+                    
+                    if all([x is not None for x in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]]):
+                        btts_xg = calculate_btts_probability_from_xg(
+                            home_xg_per_game,
+                            away_xg_per_game,
+                            home_xga_per_game,
+                            away_xga_per_game
+                        )
+            except Exception as e:
+                print(f"⚠️  Could not calculate xG-based BTTS: {e}")
+                btts_xg = None
+        
+        return jsonify({
+            "btts": {
+                "market": btts_market,
+                "xg_model": btts_xg
+            },
+            "source": "The Odds API + xG Analysis"
+        })
+        
+    except Exception as e:
+        print(f"Error fetching BTTS for {event_id}: {e}")
+        return jsonify({"error": "Unable to load BTTS data. Please try again later."}), 500
+
 @app.route("/match/<event_id>/xg", methods=["GET"])
 def get_match_xg(event_id):
     """Get xG (Expected Goals) analysis for a specific match on-demand"""

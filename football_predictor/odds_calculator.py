@@ -219,6 +219,155 @@ def calculate_totals_from_odds(odds_data):
         "bookmaker_count": len(bookmakers)
     }
 
+def calculate_btts_probability_from_xg(home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game):
+    """
+    Calculate BTTS probability based on xG/xGA stats.
+    
+    Logic:
+    - High probability (>65%): Both teams xG > 1.0/game AND both face weak defenses (xGA > 1.2/game)
+    - Medium probability (45-65%): One team has strong attack (xG > 1.0) and other has weak defense  
+    - Low probability (<45%): Both have low scoring rates or face strong defenses
+    
+    Args:
+        home_xg_per_game: Home team's expected goals per game
+        away_xg_per_game: Away team's expected goals per game
+        home_xga_per_game: Home team's expected goals against per game (what they concede)
+        away_xga_per_game: Away team's expected goals against per game (what they concede)
+    
+    Returns:
+        dict with yes_probability, no_probability, confidence, reasoning
+    """
+    # Convert to float and handle None values
+    home_xg = float(home_xg_per_game) if home_xg_per_game else 0.0
+    away_xg = float(away_xg_per_game) if away_xg_per_game else 0.0
+    home_xga = float(home_xga_per_game) if home_xga_per_game else 1.0
+    away_xga = float(away_xga_per_game) if away_xga_per_game else 1.0
+    
+    # Calculate scoring probability for each team
+    # Home team scores if: home_xg > threshold AND away_xga > threshold (weak defense)
+    # Away team scores if: away_xg > threshold AND home_xga > threshold (weak defense)
+    
+    home_likely_to_score = home_xg > 1.0 and away_xga > 1.2
+    away_likely_to_score = away_xg > 1.0 and home_xga > 1.2
+    
+    # Calculate base BTTS probability
+    if home_likely_to_score and away_likely_to_score:
+        # Both teams have strong attack AND face weak defenses
+        btts_yes = 0.70  # High probability
+        reasoning = f"Both teams attacking well: {home_xg:.1f} xG/game (home) vs {away_xg:.1f} xG/game (away), both facing vulnerable defenses ({away_xga:.1f} xGA, {home_xga:.1f} xGA)"
+    elif home_likely_to_score or away_likely_to_score:
+        # Only one team has strong attack/weak defense combo
+        btts_yes = 0.55  # Medium-high probability
+        if home_likely_to_score:
+            reasoning = f"Home team attacking strongly ({home_xg:.1f} xG/game) vs weak defense ({away_xga:.1f} xGA), but away team may struggle to score ({away_xg:.1f} xG/game)"
+        else:
+            reasoning = f"Away team attacking strongly ({away_xg:.1f} xG/game) vs weak defense ({home_xga:.1f} xGA), but home team may struggle to score ({home_xg:.1f} xG/game)"
+    else:
+        # Neither team has strong attack/weak defense combo
+        # But still calculate based on general scoring rates
+        avg_scoring_rate = (home_xg + away_xg) / 2.0
+        
+        if avg_scoring_rate > 1.5:
+            btts_yes = 0.50  # Medium probability - both teams create some chances
+            reasoning = f"Moderate attacking threat from both teams (avg {avg_scoring_rate:.1f} xG/game), decent chance both score"
+        elif avg_scoring_rate > 1.0:
+            btts_yes = 0.40  # Low-medium probability
+            reasoning = f"Limited attacking threat (avg {avg_scoring_rate:.1f} xG/game), low chance both teams score"
+        else:
+            btts_yes = 0.30  # Low probability
+            reasoning = f"Weak attacking teams (avg {avg_scoring_rate:.1f} xG/game), unlikely both score"
+    
+    # Fine-tune based on defensive vulnerability
+    defense_factor = (home_xga + away_xga) / 2.0
+    if defense_factor > 1.5:
+        btts_yes += 0.05  # Both defenses leaky - boost BTTS probability
+    elif defense_factor < 0.9:
+        btts_yes -= 0.05  # Both defenses strong - reduce BTTS probability
+    
+    # Ensure probability stays in valid range
+    btts_yes = max(0.0, min(1.0, btts_yes))
+    btts_no = 1.0 - btts_yes
+    
+    return {
+        "yes_probability": round(btts_yes, 4),
+        "no_probability": round(btts_no, 4),
+        "prediction": "YES" if btts_yes > btts_no else "NO",
+        "confidence": round(max(btts_yes, btts_no) * 100, 1),
+        "reasoning": reasoning,
+        "xg_data": {
+            "home_xg": home_xg,
+            "away_xg": away_xg,
+            "home_xga": home_xga,
+            "away_xga": away_xga
+        }
+    }
+
+def calculate_btts_from_odds(odds_data):
+    """Calculate Both Teams To Score probabilities from btts market"""
+    bookmakers = odds_data.get('bookmakers', [])
+    
+    if not bookmakers:
+        return {
+            "yes_probability": 0.5,
+            "no_probability": 0.5,
+            "bookmaker_count": 0,
+            "best_odds": {"yes": None, "no": None}
+        }
+    
+    yes_probs = []
+    no_probs = []
+    yes_odds = []
+    no_odds = []
+    
+    for bookmaker in bookmakers:
+        for market in bookmaker.get('markets', []):
+            if market['key'] == 'btts':
+                outcomes = market.get('outcomes', [])
+                
+                for outcome in outcomes:
+                    price = outcome['price']
+                    name = outcome['name'].lower()
+                    prob = decimal_to_probability(price)
+                    
+                    if name == 'yes':
+                        yes_probs.append(prob)
+                        yes_odds.append({'price': price, 'bookmaker': bookmaker['title']})
+                    elif name == 'no':
+                        no_probs.append(prob)
+                        no_odds.append({'price': price, 'bookmaker': bookmaker['title']})
+    
+    if yes_probs and no_probs:
+        avg_yes = sum(yes_probs) / len(yes_probs)
+        avg_no = sum(no_probs) / len(no_probs)
+        
+        # Normalize
+        total = avg_yes + avg_no
+        if total > 0:
+            avg_yes /= total
+            avg_no /= total
+        
+        best_yes = max(yes_odds, key=lambda x: x['price']) if yes_odds else None
+        best_no = max(no_odds, key=lambda x: x['price']) if no_odds else None
+        
+        return {
+            "yes_probability": round(avg_yes, 4),
+            "no_probability": round(avg_no, 4),
+            "prediction": "YES" if avg_yes > avg_no else "NO",
+            "confidence": round(max(avg_yes, avg_no) * 100, 1),
+            "best_odds": {
+                "yes": best_yes,
+                "no": best_no
+            },
+            "bookmaker_count": max(len(yes_probs), len(no_probs))
+        }
+    
+    return {
+        "yes_probability": 0.5,
+        "no_probability": 0.5,
+        "bookmaker_count": 0,
+        "best_odds": {"yes": None, "no": None}
+    }
+
 def calculate_predictions_from_odds(match_data):
     bookmakers = match_data.get('bookmakers', [])
     home_team = match_data.get('home_team', '')

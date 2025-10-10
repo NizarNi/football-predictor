@@ -133,7 +133,7 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
         
         try:
             print(f"🔍 Fetching odds for {league_code} ({sport_key})...")
-            odds_data = get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h")
+            odds_data = get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h,btts")
             
             cutoff_time = datetime.now(timezone.utc) + timedelta(days=next_n_days)
             
