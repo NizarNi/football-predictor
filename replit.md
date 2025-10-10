@@ -6,10 +6,21 @@ A Flask-based web application providing football match predictions using real bo
 ## User Preferences
 I prefer detailed explanations. Ask before making major changes. I want iterative development. I prefer simple language.
 
+## Recent Changes (October 2025)
+### UX & Data Accuracy Improvements
+- **Team Form Display:** Improved layout with colored square emoji first (e.g., "🟩 W vs Arsenal"), content shifted left for better readability
+- **Dynamic Tooltips:** xG/xGA Season tooltips now display actual league averages from backend (e.g., "League avg: 1.47/game for La Liga") instead of hardcoded values
+- **league_stats Calculation Fix:** Corrected backend to calculate per-game averages (xG/game, xGA/game) instead of totals, with zero-value teams properly included to prevent upward bias
+
+### Multi-League Testing (October 10, 2025)
+Comprehensive testing completed across all 7 supported leagues:
+- **Domestic Leagues:** Premier League, La Liga (1.47 xG/game avg), Bundesliga (1.63), Serie A (1.38), Ligue 1 (1.59) - all verified with correct standings, xG/xGA/PPDA metrics, and league statistics
+- **Cup Competitions:** Champions League and Europa League - graceful degradation confirmed (no standings data as expected, Elo predictions functional)
+
 ## System Architecture
 
 ### UI/UX Decisions
-The application features a responsive design using Bootstrap, optimized for desktop and mobile. Key UI elements include a prominent search bar with autocomplete, a unified filter bar, and dynamic visual cues like badges, team logos, and colored form indicators. Enhanced tooltips provide comprehensive information for metrics like xG, Elo ratings, and PPDA. A complete dark mode with localStorage persistence and WCAG AAA contrast is implemented. Team form is displayed chronologically with opponent context, prioritizing FBref data. xG visualizations utilize Chart.js for enlarged, chronological displays.
+The application features a responsive design using Bootstrap, optimized for desktop and mobile. Key UI elements include a prominent search bar with autocomplete, a unified filter bar, and dynamic visual cues like badges, team logos, and colored form indicators. Enhanced tooltips provide comprehensive information for metrics like xG, Elo ratings, and PPDA, with dynamic league averages calculated from real data. A complete dark mode with localStorage persistence and WCAG AAA contrast is implemented. Team form is displayed chronologically with colored square emoji first, followed by result and opponent context. xG visualizations utilize Chart.js for enlarged, chronological displays.
 
 ### Technical Implementations
 Core technical implementations include robust team name normalization, conversion of various odds formats to implied probabilities, and arbitrage detection with optimal stake calculation. API key management incorporates rotation and retry logic for continuous operation. Data loading is optimized through on-demand fetching for detailed information. Prediction models integrate Elo ratings (ClubElo) and market odds using a hybrid approach (60% Elo, 40% Market). Value bets are identified when the Elo model's probability significantly exceeds market probability (≥10% divergence). The system also integrates FBref and Understat data for Expected Goals (xG), Expected Goals Against (xGA), and PPDA metrics, and dynamically determines the current football season for accurate data retrieval.
