@@ -1740,6 +1740,56 @@
             return teamName.substring(0, 3).toUpperCase();
         }
         
+        async function loadCareerStats(teamName, leagueCode, side) {
+            const btnId = `${side}-career-btn`;
+            const btn = document.getElementById(btnId);
+            
+            if (!btn) return;
+            
+            // Show loading state
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Loading...';
+            
+            try {
+                const response = await fetch(`/career_xg?team=${encodeURIComponent(teamName)}&league=${leagueCode}`);
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to load career stats: ${response.statusText}`);
+                }
+                
+                const careerData = await response.json();
+                
+                // Update contextData with career stats
+                if (side === 'home') {
+                    contextData.home_career = careerData;
+                } else {
+                    contextData.away_career = careerData;
+                }
+                
+                // Re-render the match context to show career stats
+                displayMatchContext();
+                
+                // Reinitialize tooltips after DOM update
+                setTimeout(() => {
+                    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+                    tooltipTriggerList.forEach(tooltipTriggerEl => {
+                        new bootstrap.Tooltip(tooltipTriggerEl);
+                    });
+                }, 100);
+                
+            } catch (error) {
+                console.error('Error loading career stats:', error);
+                btn.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i>Error - Try Again';
+                btn.disabled = false;
+                
+                // Reset button after 3 seconds
+                setTimeout(() => {
+                    btn.innerHTML = originalHtml;
+                }, 3000);
+            }
+        }
+        
         function displayMatchContextData(contextData) {
             const matchContext = document.getElementById('match-context');
             let html = '';
@@ -2803,6 +2853,11 @@
                                 html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
                             // Form is now displayed above with opponents, no need to duplicate here
+                            
+                            // Add "Show Career Stats" button if not already loaded
+                            if (!contextData.home_career) {
+                                html += `<tr><td colspan="2" class="pt-2 text-center"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.home_team}', '${finalLeagueCode}', 'home')" id="home-career-btn"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></td></tr>`;
+                            }
                         }
                         
                         // Add career xG if available
@@ -2885,6 +2940,11 @@
                                 html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
                             // Form is now displayed above with opponents, no need to duplicate here
+                            
+                            // Add "Show Career Stats" button if not already loaded
+                            if (!contextData.away_career) {
+                                html += `<tr><td colspan="2" class="pt-2 text-center"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.away_team}', '${finalLeagueCode}', 'away')" id="away-career-btn"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></td></tr>`;
+                            }
                         }
                         
                         // Add career xG if available
