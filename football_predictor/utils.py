@@ -145,3 +145,151 @@ def fuzzy_team_match(team1, team2, min_word_length=MIN_WORD_LENGTH_FILTER, min_c
         return True
     
     return False
+
+
+def get_team_abbreviation(team_name):
+    """
+    Get 3-letter abbreviation for a team name.
+    
+    Args:
+        team_name (str): Full team name
+        
+    Returns:
+        str: 3-letter abbreviation (uppercase)
+    """
+    # Common team abbreviations mapping
+    abbreviations = {
+        # Premier League
+        'Manchester City': 'MCI',
+        'Man City': 'MCI',
+        'Manchester United': 'MUN',
+        'Man United': 'MUN',
+        'Man Utd': 'MUN',
+        'Liverpool': 'LIV',
+        'Chelsea': 'CHE',
+        'Arsenal': 'ARS',
+        'Tottenham': 'TOT',
+        'Tottenham Hotspur': 'TOT',
+        'Newcastle': 'NEW',
+        'Newcastle United': 'NEW',
+        'Aston Villa': 'AVL',
+        'Brighton': 'BHA',
+        'West Ham': 'WHU',
+        'West Ham United': 'WHU',
+        'Everton': 'EVE',
+        'Leicester': 'LEI',
+        'Leicester City': 'LEI',
+        'Wolves': 'WOL',
+        'Wolverhampton': 'WOL',
+        'Crystal Palace': 'CRY',
+        'Fulham': 'FUL',
+        'Brentford': 'BRE',
+        'Nottingham Forest': 'NFO',
+        'Bournemouth': 'BOU',
+        'Southampton': 'SOU',
+        'Ipswich': 'IPS',
+        'Ipswich Town': 'IPS',
+        
+        # La Liga
+        'Real Madrid': 'RMA',
+        'Barcelona': 'BAR',
+        'Atletico Madrid': 'ATM',
+        'Atlético Madrid': 'ATM',
+        'Sevilla': 'SEV',
+        'Valencia': 'VAL',
+        'Villarreal': 'VIL',
+        'Real Sociedad': 'RSO',
+        'Real Betis': 'BET',
+        'Athletic Bilbao': 'ATH',
+        'Athletic Club': 'ATH',
+        'Celta Vigo': 'CEL',
+        'Getafe': 'GET',
+        'Osasuna': 'OSA',
+        'Girona': 'GIR',
+        'Mallorca': 'MAL',
+        'Las Palmas': 'LPA',
+        'Rayo Vallecano': 'RAY',
+        'Alaves': 'ALA',
+        'Alavés': 'ALA',
+        'Espanyol': 'ESP',
+        'Valladolid': 'VLD',
+        
+        # Bundesliga
+        'Bayern Munich': 'BAY',
+        'Bayern München': 'BAY',
+        'Borussia Dortmund': 'BVB',
+        'RB Leipzig': 'RBL',
+        'Bayer Leverkusen': 'B04',
+        'Union Berlin': 'FCU',
+        'Freiburg': 'SCF',
+        'Eintracht Frankfurt': 'SGE',
+        'Wolfsburg': 'WOB',
+        'Mainz': 'M05',
+        'Borussia Monchengladbach': 'BMG',
+        "Borussia M'gladbach": 'BMG',
+        'Hoffenheim': 'TSG',
+        'Werder Bremen': 'SVW',
+        'Stuttgart': 'VFB',
+        'Augsburg': 'FCA',
+        'Heidenheim': 'HDH',
+        'St Pauli': 'STP',
+        'Holstein Kiel': 'KIE',
+        
+        # Serie A
+        'Inter': 'INT',
+        'Inter Milan': 'INT',
+        'Internazionale': 'INT',
+        'AC Milan': 'MIL',
+        'Milan': 'MIL',
+        'Juventus': 'JUV',
+        'Napoli': 'NAP',
+        'Roma': 'ROM',
+        'Lazio': 'LAZ',
+        'Atalanta': 'ATA',
+        'Fiorentina': 'FIO',
+        'Bologna': 'BOL',
+        'Torino': 'TOR',
+        'Udinese': 'UDI',
+        'Monza': 'MON',
+        'Genoa': 'GEN',
+        'Lecce': 'LEC',
+        'Parma': 'PAR',
+        'Cagliari': 'CAG',
+        'Empoli': 'EMP',
+        'Hellas Verona': 'VER',
+        'Venezia': 'VEN',
+        'Como': 'COM',
+        
+        # Ligue 1
+        'Paris Saint Germain': 'PSG',
+        'Paris SG': 'PSG',
+        'Marseille': 'OMA',
+        'Monaco': 'ASM',
+        'Lyon': 'OLY',
+        'Lille': 'LIL',
+        'Nice': 'OGC',
+        'Lens': 'RCL',
+        'Rennes': 'STA',
+        'Brest': 'SB29',
+        'Strasbourg': 'RCS',
+        'Toulouse': 'TFC',
+        'Nantes': 'FCN',
+        'Montpellier': 'MHC',
+        'Reims': 'SDE',
+        'Saint-Etienne': 'ASS',
+        'Le Havre': 'HAC',
+        'Angers': 'SCO',
+        'Auxerre': 'AJA'
+    }
+    
+    # Check if we have a direct mapping
+    if team_name in abbreviations:
+        return abbreviations[team_name]
+    
+    # Fallback: take first 3 letters of first word (uppercase)
+    words = team_name.split()
+    if words:
+        first_word = words[0].upper()
+        return first_word[:3]
+    
+    return team_name[:3].upper()

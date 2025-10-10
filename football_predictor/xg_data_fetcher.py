@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import get_xg_season
 from config import XG_CACHE_DURATION_HOURS, TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING
 
@@ -365,42 +366,52 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     home_recent_matches = []
     away_recent_matches = []
     
-    try:
-        # Get match logs for rolling averages, form, and recent matches
-        home_matches = fetch_team_match_logs(home_fbref_name, league_code, season)
-        if home_matches:
-            # Always compute rolling averages and form (functions handle <5 matches gracefully)
-            home_rolling = calculate_rolling_averages(home_matches, 5)
-            home_form = extract_last_5_results(home_matches, 5)
-            # Include last 5 matches in response (convert datetime to string for JSON)
-            home_recent_matches = [{
-                'date': str(m['date']),
-                'opponent': m['opponent'],
-                'is_home': m['is_home'],
-                'xg_for': m['xg_for'],
-                'xg_against': m['xg_against'],
-                'result': m['result']
-            } for m in home_matches[:5]]
-    except Exception as e:
-        print(f"Could not fetch rolling data for {home_team}: {e}")
+    # Fetch home and away match logs in parallel for performance
+    home_matches = []
+    away_matches = []
     
-    try:
-        away_matches = fetch_team_match_logs(away_fbref_name, league_code, season)
-        if away_matches:
-            # Always compute rolling averages and form (functions handle <5 matches gracefully)
-            away_rolling = calculate_rolling_averages(away_matches, 5)
-            away_form = extract_last_5_results(away_matches, 5)
-            # Include last 5 matches in response
-            away_recent_matches = [{
-                'date': str(m['date']),
-                'opponent': m['opponent'],
-                'is_home': m['is_home'],
-                'xg_for': m['xg_for'],
-                'xg_against': m['xg_against'],
-                'result': m['result']
-            } for m in away_matches[:5]]
-    except Exception as e:
-        print(f"Could not fetch rolling data for {away_team}: {e}")
+    print("🔄 Fetching match logs in parallel for both teams...")
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        # Submit both fetch tasks
+        future_home = executor.submit(fetch_team_match_logs, home_fbref_name, league_code, season)
+        future_away = executor.submit(fetch_team_match_logs, away_fbref_name, league_code, season)
+        
+        # Get results
+        try:
+            home_matches = future_home.result(timeout=30)
+        except Exception as e:
+            print(f"Could not fetch rolling data for {home_team}: {e}")
+        
+        try:
+            away_matches = future_away.result(timeout=30)
+        except Exception as e:
+            print(f"Could not fetch rolling data for {away_team}: {e}")
+    
+    # Process home team data
+    if home_matches:
+        home_rolling = calculate_rolling_averages(home_matches, 5)
+        home_form = extract_last_5_results(home_matches, 5)
+        home_recent_matches = [{
+            'date': str(m['date']),
+            'opponent': m['opponent'],
+            'is_home': m['is_home'],
+            'xg_for': m['xg_for'],
+            'xg_against': m['xg_against'],
+            'result': m['result']
+        } for m in home_matches[:5]]
+    
+    # Process away team data
+    if away_matches:
+        away_rolling = calculate_rolling_averages(away_matches, 5)
+        away_form = extract_last_5_results(away_matches, 5)
+        away_recent_matches = [{
+            'date': str(m['date']),
+            'opponent': m['opponent'],
+            'is_home': m['is_home'],
+            'xg_for': m['xg_for'],
+            'xg_against': m['xg_against'],
+            'result': m['result']
+        } for m in away_matches[:5]]
     
     # Calculate expected goals for the match
     # Use rolling 5-game averages if available (better recent form indicator)
