@@ -16,6 +16,10 @@ CACHE_DIR = "processed_data/xg_cache"
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+# In-memory cache for match logs (team+league+season -> {data, timestamp})
+MATCH_LOGS_CACHE = {}
+MATCH_LOGS_CACHE_TTL = 300  # 5 minutes in seconds
+
 # League mappings for soccerdata
 # League code mapping (Our codes → FBref league names)
 # Note: FBref only supports the Big 5 European leagues
@@ -557,6 +561,17 @@ def fetch_team_match_logs(team_name, league_code, season=None):
     if not season:
         season = get_xg_season()
     
+    # Check cache first
+    cache_key = f"{team_name}_{league_code}_{season}"
+    current_time = datetime.now().timestamp()
+    
+    if cache_key in MATCH_LOGS_CACHE:
+        cached_data = MATCH_LOGS_CACHE[cache_key]
+        cache_age = current_time - cached_data['timestamp']
+        if cache_age < MATCH_LOGS_CACHE_TTL:
+            print(f"✅ Using cached match logs for {team_name} (age: {cache_age:.1f}s)")
+            return cached_data['data']
+    
     try:
         # Fetch schedule data
         print(f"📊 Fetching match logs for {team_name} in {league_name} (season {season})...")
@@ -666,6 +681,13 @@ def fetch_team_match_logs(team_name, league_code, season=None):
         matches.sort(key=lambda x: x['date'], reverse=True)
         
         print(f"✅ Found {len(matches)} completed matches for {team_name}")
+        
+        # Cache the results
+        MATCH_LOGS_CACHE[cache_key] = {
+            'data': matches,
+            'timestamp': datetime.now().timestamp()
+        }
+        
         return matches
         
     except Exception as e:
