@@ -3089,7 +3089,7 @@
                     const xgOverUnder = xgData.over_under_2_5;
                     html += `
                         <div class="alert ${xgOverUnder.over_probability >= 60 ? 'alert-success' : 'alert-secondary'} mb-2">
-                            <strong>⚽ xG Over/Under 2.5:</strong> ${xgOverUnder.prediction}
+                            <strong>⚽ xG Over/Under 2.5:</strong> ${xgOverUnder.prediction} <i class="fas fa-info-circle ms-1" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Statistical model based on xG data. Different from Market-based Over/Under which uses bookmaker odds. xG calculates from team offensive/defensive strength." style="cursor: help; font-size: 0.75em;"></i>
                             <br><span class="badge ${xgOverUnder.over_probability >= 60 ? 'bg-success' : 'bg-secondary'}">
                                 ${xgOverUnder.prediction === 'OVER' ? xgOverUnder.over_probability : xgOverUnder.under_probability}% probability
                             </span>
