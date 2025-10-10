@@ -340,10 +340,13 @@ def fetch_league_xg_stats(league_code, season=None):
             except Exception:
                 pass
             
+            # NOTE: FBref only provides PSxG (Post-Shot xG Against), NOT true xGA
+            # True defensive xGA comes from Understat (via /context endpoint)
+            # We store PSxGA in both xg_against (legacy) and ps_xg_against (explicit) fields
             xg_data[team_name] = {
                 'xg_for': xg_for,
-                'xg_against': ps_xg_against,  # Keep for backwards compatibility - this is actually PSxG
-                'ps_xg_against': ps_xg_against,  # Post-Shot xG Against (goalkeeper quality metric)
+                'xg_against': ps_xg_against,  # PSxGA (goalkeeper quality) - legacy field name for backwards compatibility
+                'ps_xg_against': ps_xg_against,  # PSxGA (goalkeeper quality) - explicit field name
                 'matches_played': int(matches_played) if matches_played > 0 else 1,  # Avoid division by zero
                 'goals_for': goals_for,
                 'goals_against': goals_against,
@@ -353,7 +356,9 @@ def fetch_league_xg_stats(league_code, season=None):
             if xg_data[team_name]['matches_played'] > 0:
                 matches = xg_data[team_name]['matches_played']
                 xg_data[team_name]['xg_for_per_game'] = round(xg_data[team_name]['xg_for'] / matches, 2)
-                xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)  # Actually PSxG  
+                # Note: xg_against_per_game is PSxGA (goalkeeper quality), NOT defensive xGA
+                # Defensive xGA comes from Understat via /context endpoint
+                xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)  
                 xg_data[team_name]['ps_xg_against_per_game'] = round(xg_data[team_name]['ps_xg_against'] / matches, 2)
                 xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
                 xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)

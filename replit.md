@@ -19,6 +19,20 @@ The application offers odds-based predictions derived from real bookmaker consen
 
 ### Recent Updates
 
+#### xGA vs PSxGA Metric Separation - October 10, 2025 (Late Night)
+- **Critical Distinction Implemented**: Separated defensive xGA (Expected Goals Against) from goalkeeper PSxGA (Post-Shot xG Against) metrics
+  - **Understat xGA** (Season xGA): Defensive quality metric - measures all shots allowed by the defense (includes on-target, off-target, and blocked shots)
+  - **FBref PSxGA** (Recent PSxGA/g): Goalkeeper quality metric - measures only on-target shots faced, considering shot placement, power, and trajectory
+  - **Important**: FBref does NOT provide true defensive xGA in their keeper_adv_stats - they only provide PSxGA
+- **Backend Implementation**: Updated `xg_data_fetcher.py` to correctly label FBref data as PSxGA
+  - FBref's `keeper_adv_stats` PSxG field stored as both `xg_against` (legacy) and `ps_xg_against` (explicit)
+  - Added `ps_xg_performance` metric (PSxG+/- per game) to measure goalkeeper shot-stopping quality
+  - Clear documentation that defensive xGA comes from Understat via `/context` endpoint, not FBref
+- **Frontend Labels**: Updated all FBref xGA labels to "Recent PSxGA/g (FBref)" with accurate tooltips
+  - PSxGA tooltip: "Only counts on-target shots, considers shot placement, power, and trajectory. Lower = Better shot-stopping."
+  - Understat xGA tooltip: "Defensive quality - all shots allowed. Lower xGA = Stronger Defense"
+  - Prevents confusion between defensive quality (xGA) and goalkeeper performance (PSxGA)
+
 #### Data Source Label Formatting - October 10, 2025 (Late Evening)
 - **Line Break Implementation**: Updated all xG/xGA data source labels to display source attribution on separate lines using `<br>` tags for better visual clarity
   - Format changed from "Season xG <small>(Understat)</small>" to "Season xG<br><small>(Understat)</small>"

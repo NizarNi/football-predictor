@@ -271,24 +271,46 @@ def get_match_btts(event_id):
         btts_market = calculate_btts_from_odds(odds_data)
         
         # Get xG-based prediction if xG data available
+        # NOTE: BTTS needs TRUE defensive xGA from Understat, not FBref's PSxGA (goalkeeper metric)
         btts_xg = None
         if home_team and away_team and league_code:
             try:
+                # Get offensive xG from FBref
                 xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
                 
+                # Get defensive xGA from Understat context (TRUE defensive metric, not goalkeeper PSxGA)
+                from understat_client import fetch_understat_standings
+                current_season = get_current_season()
+                standings = fetch_understat_standings(league_code, current_season)
+                
+                home_xg_per_game = None
+                away_xg_per_game = None
+                home_xga_per_game = None
+                away_xga_per_game = None
+                
+                # Get offensive xG/game from FBref
                 if xg_prediction.get('available') and xg_prediction.get('xg'):
                     home_xg_per_game = xg_prediction['xg'].get('home_stats', {}).get('xg_for_per_game')
                     away_xg_per_game = xg_prediction['xg'].get('away_stats', {}).get('xg_for_per_game')
-                    home_xga_per_game = xg_prediction['xg'].get('home_stats', {}).get('xg_against_per_game')
-                    away_xga_per_game = xg_prediction['xg'].get('away_stats', {}).get('xg_against_per_game')
+                
+                # Get defensive xGA/game from Understat standings (NOT PSxGA)
+                if standings:
+                    home_standings = next((team for team in standings if fuzzy_team_match(team['name'], home_team)), None)
+                    away_standings = next((team for team in standings if fuzzy_team_match(team['name'], away_team)), None)
                     
-                    if all([x is not None for x in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]]):
-                        btts_xg = calculate_btts_probability_from_xg(
-                            home_xg_per_game,
-                            away_xg_per_game,
-                            home_xga_per_game,
-                            away_xga_per_game
-                        )
+                    if home_standings and home_standings.get('xGA') is not None and home_standings.get('played', 0) > 0:
+                        home_xga_per_game = home_standings['xGA'] / home_standings['played']
+                    
+                    if away_standings and away_standings.get('xGA') is not None and away_standings.get('played', 0) > 0:
+                        away_xga_per_game = away_standings['xGA'] / away_standings['played']
+                    
+                if all([x is not None for x in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]]):
+                    btts_xg = calculate_btts_probability_from_xg(
+                        home_xg_per_game,
+                        away_xg_per_game,
+                        home_xga_per_game,
+                        away_xga_per_game
+                    )
             except Exception as e:
                 print(f"⚠️  Could not calculate xG-based BTTS: {e}")
                 btts_xg = None
