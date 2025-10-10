@@ -1,110 +1,29 @@
 # Football Prediction - Safe Bet Analyzer
 
 ## Overview
-A Flask-based web application providing football match predictions using real bookmaker odds. It fetches upcoming matches and live odds, converts odds to implied probabilities, detects arbitrage opportunities, and offers consensus predictions based on market data. The project aims to empower users with data-driven insights for sports betting, covering key European leagues and competitions. The business vision is to provide a robust, user-friendly platform for data-driven sports betting analysis, leveraging market potential in the growing sports analytics sector.
+This Flask-based web application provides football match predictions using real bookmaker odds. It fetches upcoming matches and live odds, converts odds to implied probabilities, detects arbitrage opportunities, and offers consensus predictions based on market data. The project aims to empower users with data-driven insights for sports betting, covering key European leagues and competitions. The business vision is to provide a robust, user-friendly platform for data-driven sports betting analysis, leveraging market potential in the growing sports analytics sector.
 
 ## User Preferences
 I prefer detailed explanations. Ask before making major changes. I want iterative development. I prefer simple language.
 
-## Recent Changes (October 2025)
-### Critical Bug Fix: Pandas Boolean NA Error (October 10, 2025)
-- **Issue Resolved:** Fixed "boolean value of NA is ambiguous" error that prevented match logs from loading
-- **Root Cause:** Pandas Series being used in boolean conditionals (e.g., `if pd.notna(series)`) when extracting values from DataFrame rows
-- **Solution:** Implemented `safe_extract_value()` helper function that checks `isinstance(value, pd.Series)` and extracts scalar with `.iloc[0]` before boolean operations
-- **Performance Impact:** Eliminated 6-13 second delays per match context load (from ~26s total to ~7s for both teams)
-- **Restored Features:**
-  - Team form display with opponent names (e.g., "L vs Newcastle Utd"), gameweeks, and results
-  - xG rolling trend charts now receive complete recent_matches data with 5-game averages (e.g., rolling xG: 0.76)
-  - Match logs provide date, opponent, xG for/against, and parsed results for Chart.js visualizations
-- **Technical Details:** Applied safe extraction to all row values (date, opponent, score, home_xg, away_xg) to prevent Series/scalar type inconsistencies
-
-### Rolling xG Averages & Transparency Improvements (October 10, 2025)
-- **Smart xG Calculations:** xG predictions now use rolling 5-game averages when ≥3 matches available, falling back to season averages otherwise for better recent form accuracy
-- **Verified Results:** Nottingham Forest rolling xGF 0.76 (vs season 0.94), Chelsea rolling xGF 1.32 (vs season 1.56) - predictions now reflect current team performance
-- **Transparency Tooltips Added:**
-  - Betting Tips: "Probabilities calculated from bookmaker consensus (30+ sources via The Odds API)"
-  - xG Analysis: "Uses rolling 5-game averages when available (≥3 matches), otherwise FBref 2025/26 season averages"
-- **Performance:** Rolling averages calculated from match logs (now working after NA bug fix) provide more responsive predictions to recent team form changes
-
-### Season Calculation & Dynamic Display (October 10, 2025)
-- **Season Functions Fixed:** `get_current_season()` now returns END YEAR for Understat (Oct 2025 → 2026), `get_xg_season()` returns START YEAR for FBref (Oct 2025 → 2025)
-- **Dynamic Season Display:** Backend sends `season_display: "2025/26"` to frontend, replacing all hardcoded "2024/25" references in tooltips
-- **Documentation Updated:** Function docstrings now clarify Understat uses end-year convention (2025-26 = "2026"), FBref uses start-year convention (2025-26 = "2025")
-- **Verified:** Union Berlin now shows correct 2025-26 season context (position 12, xG 9.56, form "LLWDL"), logs confirm "Fetching season 2026"
-
-### UX & Data Accuracy Improvements
-- **Team Form Display:** Improved layout with colored square emoji first (e.g., "🟩 W vs Arsenal"), chronological ordering (oldest→newest), truncated opponent names (>15 chars), reduced font size (0.85rem)
-- **Dark Mode Visibility:** xG predictions and betting tips now use `var(--bs-body-color)` for proper light/dark theme contrast
-- **Dynamic Tooltips:** xG/xGA Season tooltips display actual league averages from backend (e.g., "League avg: 1.47/game for La Liga 2025/26")
-- **league_stats Calculation Fix:** Corrected backend to calculate per-game averages (xG/game, xGA/game) instead of totals, with zero-value teams properly included to prevent upward bias
-
-### Multi-League Testing (October 10, 2025)
-Comprehensive testing completed across all 7 supported leagues:
-- **Domestic Leagues:** Premier League, La Liga (1.47 xG/game avg), Bundesliga (1.63), Serie A (1.38), Ligue 1 (1.59) - all verified with correct standings, xG/xGA/PPDA metrics, and league statistics
-- **Cup Competitions:** Champions League and Europa League - graceful degradation confirmed (no standings data as expected, Elo predictions functional)
-
-### UX Polish & Model Consistency Fixes (October 10, 2025)
-- **Gameweek Display Fix:** Removed fake index-based gameweek fallbacks - now only displays actual gameweek numbers from match data, hiding GW prefix when unavailable for accuracy
-- **xG Chart Chronology:** Reversed xG Trends chart X-axis to show chronological progression (oldest→newest, left→right) matching team form display order for intuitive time-series reading
-- **VALUE BET Model Consistency:** Fixed betting tips to use Hybrid probabilities (60% Elo + 40% Market) instead of Market alone, now matching 1X2 prediction table calculations exactly
-- **Double Chance Calculations:** Updated all Double Chance options (1X, 12, X2) to use Hybrid probabilities when Elo data available, ensuring consistency across all betting recommendations
-- **Over/Under Clarity:** Added tooltip to xG-based Over 2.5 explaining it's a statistical model different from Market-based odds, clarifying the two prediction sources (xG vs Bookmaker)
-- **Home Advantage Transparency:** Enhanced xG Analysis tooltip to explicitly state "Home xG × 1.15 boost, Away xG (no boost)" removing ambiguity about asymmetric calculations
-- **Draw Probability Explainer:** Added tooltip to Draw row in 1X2 table explaining why probabilities vary: "Market uses bookmaker odds, Elo uses historical ratings, xG uses goal expectations - each calculates differently"
-- **Loading Indicators Verified:** Confirmed progressive loading already implemented with 5 stages (Initiating → Standings → xG metrics → PPDA → Finalizing) providing step-by-step user feedback during Match Context loads
-
-### Animated Loading System & Performance Optimizations (October 10, 2025)
-- **CSS Animations:** Implemented @keyframes animations for pulse (pulsing icons), fadeInUp (content transitions), shimmer (progress bar gradient), with smooth 0.3-0.5s transitions
-- **Dynamic Progress Bar:** Replaced static spinner with animated gradient progress bar showing steps 1-5/5 with percentages (20%, 40%, 60%, 80%, 100%), smooth width transitions
-- **Educational Tips Carousel:** Added 14 rotating betting/xG tips displayed below progress bar, auto-rotate every 2.5 seconds with fade transitions, cleared on completion
-- **Context-Aware Icons:** Each loading step uses specific pulsing icons - database (Understat fetch), chart-line (FBref xG), bullseye (PPDA), check-circle (finalization)
-- **Match Logs Caching:** Implemented in-memory cache (MATCH_LOGS_CACHE) with 5-minute TTL keyed by team+league+season, eliminates duplicate FBref fetches between /context and /xg endpoints
-- **Parallel Data Fetching:** ThreadPoolExecutor with max_workers=2 fetches home/away match logs simultaneously instead of sequentially, reduces load time from ~14s to ~7s (50% improvement)
-- **Team Abbreviations:** Created get_team_abbreviation() with 80+ team mappings (MCI, CHE, ARS, LIV, BAR, RMA, BAY, INT, PSG, etc.), fallback to first 3 letters of first word
-- **Compact Form Display:** Team form now shows 3-letter opponent codes (e.g., "🟩 🏠 GW5 vs MCI"), reduced font to 0.75rem, chronological oldest→newest for space efficiency
-- **Performance Impact:** Combined caching + parallel fetching + optimized display reduces total Match Context load time from 20-26 seconds to ~7-10 seconds across all supported leagues
-
-### Historical xG Feature: Career Averages (2010-2025) - October 10, 2025
-- **Long-Term Performance Context:** Added career xG statistics spanning 2010-2025 to complement current season data, providing historical perspective for informed betting decisions
-- **Backend Implementation:**
-  - Created `fetch_career_xg_stats()` function that aggregates xG/xGA data across all available seasons (2010-current) from FBref
-  - Fixed FBref multi-index column extraction bug: now correctly accesses `('Expected','xG')`, `('Expected','xGA')`, `('Standard','MP')` tuples
-  - Implements 7-day file-based caching (CAREER_XG_CACHE_TTL = 604800s) to minimize API calls for historical data
-  - Handles missing seasons gracefully (e.g., newly promoted teams with limited history)
-- **New API Endpoint:** `/career_xg?team={name}&league={code}` returns career statistics:
-  - `career_xg_per_game`: Weighted average xG across all seasons
-  - `career_xga_per_game`: Weighted average xGA across all seasons
-  - `seasons_count`: Number of seasons with data
-  - `total_games`: Total matches analyzed
-  - `first_season` / `last_season`: Date range (e.g., "2010/11" - "2025/26")
-  - `seasons_data`: Individual season breakdown for trend analysis
-- **Frontend Integration (index.html):**
-  - Parallel data fetching: Adds homeCareerFetch and awayCareerFetch to existing Promise.all with contextData and xgData
-  - UI Display: Career xG/xGA shown below FBref current season stats with visual separator (horizontal rule)
-  - Rich HTML tooltips compare season vs career: "📈 Above career average" or "📉 Below career average" for xG, "🛡️ Better" or "⚠️ Worse" for xGA
-  - Seasons count badge (e.g., "15 seasons") provides at-a-glance historical depth indicator
-  - Graceful degradation: Career section only displays if data available, errors caught silently
-- **Use Case Example:** Barcelona shows career xG 1.82/game (2010-2025, 15 seasons) vs current season 1.95/game → 📈 Above career average, indicating strong current form
-- **Performance:** Career data fetched in parallel with other match context, minimal impact on total load time due to caching strategy
-
 ## System Architecture
 
 ### UI/UX Decisions
-The application features a responsive design using Bootstrap, optimized for desktop and mobile. Key UI elements include a prominent search bar with autocomplete, a unified filter bar, and dynamic visual cues like badges, team logos, and colored form indicators. Enhanced tooltips provide comprehensive information for metrics like xG, Elo ratings, and PPDA, with dynamic league averages calculated from real data. A complete dark mode with localStorage persistence and WCAG AAA contrast is implemented. Team form is displayed chronologically with colored square emoji first, followed by result and opponent context. xG visualizations utilize Chart.js for enlarged, chronological displays.
+The application features a responsive design using Bootstrap, optimized for desktop and mobile. Key UI elements include a prominent search bar with autocomplete, a unified filter bar, and dynamic visual cues like badges, team logos, and colored form indicators. Enhanced tooltips provide comprehensive information for metrics like xG, Elo ratings, and PPDA, with dynamic league averages calculated from real data. A complete dark mode with localStorage persistence and WCAG AAA contrast is implemented. Team form is displayed chronologically with colored square emoji first, followed by result and opponent context. xG visualizations utilize Chart.js for enlarged, chronological displays. Animated loading indicators with progress bars and educational tips enhance user experience during data fetching.
 
 ### Technical Implementations
-Core technical implementations include robust team name normalization, conversion of various odds formats to implied probabilities, and arbitrage detection with optimal stake calculation. API key management incorporates rotation and retry logic for continuous operation. Data loading is optimized through on-demand fetching for detailed information. Prediction models integrate Elo ratings (ClubElo) and market odds using a hybrid approach (60% Elo, 40% Market). Value bets are identified when the Elo model's probability significantly exceeds market probability (≥10% divergence). The system also integrates FBref and Understat data for Expected Goals (xG), Expected Goals Against (xGA), and PPDA metrics, and dynamically determines the current football season for accurate data retrieval.
+Core technical implementations include robust team name normalization, conversion of various odds formats to implied probabilities, and arbitrage detection with optimal stake calculation. API key management incorporates rotation and retry logic. Data loading is optimized through on-demand fetching and parallel processing using `ThreadPoolExecutor`, with in-memory caching for match logs to reduce API calls. Prediction models integrate Elo ratings (ClubElo) and market odds using a hybrid approach (60% Elo, 40% Market). Value bets are identified when the Elo model's probability significantly exceeds market probability (≥10% divergence). The system integrates FBref and Understat data for Expected Goals (xG), Expected Goals Against (xGA), and PPDA metrics, dynamically determining the current football season for accurate data retrieval. Rolling 5-game xG averages are used for predictions when sufficient data is available, otherwise season averages are used.
 
 ### Feature Specifications
-The application offers odds-based predictions derived from real bookmaker consensus, arbitrage detection with profit margins and bookmaker details, and displays the best available odds for each outcome. Prediction types include 1X2 (Home Win/Draw/Away Win) with probabilities and confidence scores. It supports major European leagues (Premier League, La Liga, Bundesliga, Serie A, Ligue 1) and European competitions (Champions League, Europa League). Match context includes league standings, team form, Elo ratings, and xG metrics. Value bets are highlighted based on Elo and Market probability divergence.
+The application offers odds-based predictions derived from real bookmaker consensus, arbitrage detection with profit margins and bookmaker details, and displays the best available odds for each outcome. Prediction types include 1X2 (Home Win/Draw/Away Win) with probabilities and confidence scores, and Over/Under 2.5 goals. It supports major European leagues (Premier League, La Liga, Bundesliga, Serie A, Ligue 1) and European competitions (Champions League, Europa League). Match context includes league standings, team form, Elo ratings, xG metrics, and career xG statistics for historical perspective (last 5 seasons, fetched on-demand). Value bets are highlighted based on Elo and Market probability divergence.
 
 ### System Design Choices
-The core is a Flask web application with a modular structure for API clients, odds calculations, and the main application logic. Gunicorn is used for production deployment to ensure scalability. Asynchronous data loading is implemented to improve initial page load times and conserve API quotas. A centralized `config.py` manages over 85 constants for timeouts, cache durations, model weights, and betting thresholds, while `utils.py` centralizes shared functions like season calculation and team name normalization to eliminate code duplication and improve maintainability.
+The core is a Flask web application with a modular structure for API clients, odds calculations, and the main application logic. Gunicorn is used for production deployment. Asynchronous data loading is implemented to improve initial page load times and conserve API quotas. A centralized `config.py` manages constants for timeouts, cache durations, model weights, and betting thresholds, while `utils.py` centralizes shared functions like season calculation and team name normalization to eliminate code duplication and improve maintainability.
 
 ## External Dependencies
 - **The Odds API:** Primary source for live bookmaker odds.
 - **football-data.org:** API for match schedules, league standings, and team form.
-- **Understat (via `understat` library):** Fallback for league standings and comprehensive xG metrics with caching.
+- **Understat (via `understat` library):** League standings and comprehensive xG metrics.
 - **FBref (via `soccerdata`):** Real Expected Goals (xG) statistics for top European leagues.
 - **ClubElo.com:** Historical Elo ratings for team strength assessment.
 - **`luukhopman/football-logos` (GitHub Repo):** Source for team logos.
