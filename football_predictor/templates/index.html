@@ -1634,12 +1634,21 @@
                     return data;
                 });
             
-            // Fetch both standings context and xG data in parallel with timeout
+            // Start career xG fetches for both teams
+            const homeCareerFetch = fetch(`/career_xg?team=${encodeURIComponent(match.home_team)}&league=${finalLeagueCode}`)
+                .then(r => r.json())
+                .catch(e => ({ career_xg: null }));
+            
+            const awayCareerFetch = fetch(`/career_xg?team=${encodeURIComponent(match.away_team)}&league=${finalLeagueCode}`)
+                .then(r => r.json())
+                .catch(e => ({ career_xg: null }));
+            
+            // Fetch all data in parallel with timeout
             Promise.race([
-                Promise.all([contextFetch, xgFetch]),
+                Promise.all([contextFetch, xgFetch, homeCareerFetch, awayCareerFetch]),
                 timeoutPromise
             ])
-            .then(([contextData, xgData]) => {
+            .then(([contextData, xgData, homeCareer, awayCareer]) => {
                 updateProgressStatus('Finalizing data...', 'check-circle', 5, 5);
                 
                 if (contextData.error) {
@@ -1648,8 +1657,10 @@
                     return;
                 }
                 
-                // Merge xG data into context data
+                // Merge xG and career data into context data
                 contextData.xg = xgData.xg || null;
+                contextData.home_career = homeCareer.career_xg || null;
+                contextData.away_career = awayCareer.career_xg || null;
                 
                 setTimeout(() => {
                     clearTipRotation();
@@ -2784,6 +2795,21 @@
                             }
                             // Form is now displayed above with opponents, no need to duplicate here
                         }
+                        
+                        // Add career xG if available
+                        if (contextData.home_career) {
+                            const career = contextData.home_career;
+                            const seasonXg = contextData.xg && contextData.xg.home_stats ? contextData.xg.home_stats.xg_for_per_game : null;
+                            const seasonXga = contextData.xg && contextData.xg.home_stats ? contextData.xg.home_stats.xg_against_per_game : null;
+                            
+                            const careerTooltipXg = `<b>📊 Career xG Context (${career.first_season}-${career.last_season})</b><br><br>• <b>Career Average:</b> ${career.career_xg_per_game} xG/game<br>• <b>Seasons:</b> ${career.seasons_count} (${career.total_games} total games)${seasonXg ? `<br>• <b>Current Season:</b> ${seasonXg} xG/game<br>• <b>Comparison:</b> ${seasonXg > career.career_xg_per_game ? '📈 Above' : '📉 Below'} career average` : ''}<br><br><small>Historical data provides long-term performance context beyond current season form.</small>`;
+                            
+                            const careerTooltipXga = `<b>🛡️ Career xGA Context (${career.first_season}-${career.last_season})</b><br><br>• <b>Career Average:</b> ${career.career_xga_per_game} xGA/game<br>• <b>Seasons:</b> ${career.seasons_count} (${career.total_games} total games)${seasonXga ? `<br>• <b>Current Season:</b> ${seasonXga} xGA/game<br>• <b>Comparison:</b> ${seasonXga < career.career_xga_per_game ? '🛡️ Better' : '⚠️ Worse'} than career average` : ''}<br><br><small>Lower xGA indicates stronger defensive performance.</small>`;
+                            
+                            html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-history me-1"></i>Career xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="${careerTooltipXg}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${career.career_xg_per_game}</strong> <small class="text-muted">/game</small> <small class="badge bg-secondary">${career.seasons_count} seasons</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-history me-1"></i>Career xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="${careerTooltipXga}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${career.career_xga_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                        }
                         html += `</tbody></table>`;
                     } else {
                         html += `<p class="text-muted small"><i>No standings data available</i></p>`;
@@ -2850,6 +2876,21 @@
                                 html += `<tr><td class="text-muted">Scoring Clinicality: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Goals scored vs expected per game. Positive = clinical finishing, Negative = wasteful" style="cursor: help; font-size: 0.8em;"></i></td><td class="${clinicalityClass}"><strong>${clinicality > 0 ? '+' : ''}${clinicality}</strong> <small class="text-muted">/game</small></td></tr>`;
                             }
                             // Form is now displayed above with opponents, no need to duplicate here
+                        }
+                        
+                        // Add career xG if available
+                        if (contextData.away_career) {
+                            const career = contextData.away_career;
+                            const seasonXg = contextData.xg && contextData.xg.away_stats ? contextData.xg.away_stats.xg_for_per_game : null;
+                            const seasonXga = contextData.xg && contextData.xg.away_stats ? contextData.xg.away_stats.xg_against_per_game : null;
+                            
+                            const careerTooltipXg = `<b>📊 Career xG Context (${career.first_season}-${career.last_season})</b><br><br>• <b>Career Average:</b> ${career.career_xg_per_game} xG/game<br>• <b>Seasons:</b> ${career.seasons_count} (${career.total_games} total games)${seasonXg ? `<br>• <b>Current Season:</b> ${seasonXg} xG/game<br>• <b>Comparison:</b> ${seasonXg > career.career_xg_per_game ? '📈 Above' : '📉 Below'} career average` : ''}<br><br><small>Historical data provides long-term performance context beyond current season form.</small>`;
+                            
+                            const careerTooltipXga = `<b>🛡️ Career xGA Context (${career.first_season}-${career.last_season})</b><br><br>• <b>Career Average:</b> ${career.career_xga_per_game} xGA/game<br>• <b>Seasons:</b> ${career.seasons_count} (${career.total_games} total games)${seasonXga ? `<br>• <b>Current Season:</b> ${seasonXga} xGA/game<br>• <b>Comparison:</b> ${seasonXga < career.career_xga_per_game ? '🛡️ Better' : '⚠️ Worse'} than career average` : ''}<br><br><small>Lower xGA indicates stronger defensive performance.</small>`;
+                            
+                            html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-history me-1"></i>Career xG: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="${careerTooltipXg}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${career.career_xg_per_game}</strong> <small class="text-muted">/game</small> <small class="badge bg-secondary">${career.seasons_count} seasons</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-history me-1"></i>Career xGA: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="${careerTooltipXga}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${career.career_xga_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                         }
                         html += `</tbody></table>`;
                     } else {
