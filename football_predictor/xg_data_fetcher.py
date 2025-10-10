@@ -320,9 +320,9 @@ def fetch_league_xg_stats(league_code, season=None):
             except Exception:
                 pass
             
-            # Get goals against and xGA (PSxG) from keeper advanced stats
+            # Get goals against and PSxG (Post-Shot xG Against) from keeper advanced stats
             goals_against = 0
-            xg_against = 0
+            ps_xg_against = 0  # Post-Shot xG Against (goalkeeper quality)
             try:
                 if idx in keeper_adv_stats.index:
                     keeper_row = keeper_adv_stats.loc[idx]
@@ -332,8 +332,9 @@ def fetch_league_xg_stats(league_code, season=None):
                     except (KeyError, ValueError, TypeError):
                         pass
                     try:
-                        # PSxG (Post-Shot xG) is FBref's version of xG Against
-                        xg_against = float(keeper_row[('Expected', 'PSxG')])
+                        # PSxG (Post-Shot xG Against) - measures goalkeeper shot-stopping quality
+                        # Only counts on-target shots, considers shot placement/power/trajectory
+                        ps_xg_against = float(keeper_row[('Expected', 'PSxG')])
                     except (KeyError, ValueError, TypeError):
                         pass
             except Exception:
@@ -341,7 +342,8 @@ def fetch_league_xg_stats(league_code, season=None):
             
             xg_data[team_name] = {
                 'xg_for': xg_for,
-                'xg_against': xg_against,
+                'xg_against': ps_xg_against,  # Keep for backwards compatibility - this is actually PSxG
+                'ps_xg_against': ps_xg_against,  # Post-Shot xG Against (goalkeeper quality metric)
                 'matches_played': int(matches_played) if matches_played > 0 else 1,  # Avoid division by zero
                 'goals_for': goals_for,
                 'goals_against': goals_against,
@@ -351,7 +353,8 @@ def fetch_league_xg_stats(league_code, season=None):
             if xg_data[team_name]['matches_played'] > 0:
                 matches = xg_data[team_name]['matches_played']
                 xg_data[team_name]['xg_for_per_game'] = round(xg_data[team_name]['xg_for'] / matches, 2)
-                xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)
+                xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)  # Actually PSxG  
+                xg_data[team_name]['ps_xg_against_per_game'] = round(xg_data[team_name]['ps_xg_against'] / matches, 2)
                 xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
                 xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
                 
@@ -359,12 +362,19 @@ def fetch_league_xg_stats(league_code, season=None):
                 # Positive = clinical finishing, Negative = wasteful
                 scoring_clinicality_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
                 xg_data[team_name]['scoring_clinicality'] = round(scoring_clinicality_total / matches, 2)
+                
+                # Calculate goalkeeper performance (PSxG+/- per game)
+                # Positive = saves more than expected, Negative = concedes more than expected  
+                ps_xg_performance = xg_data[team_name]['ps_xg_against'] - xg_data[team_name]['goals_against']
+                xg_data[team_name]['ps_xg_performance'] = round(ps_xg_performance / matches, 2)
             else:
                 xg_data[team_name]['xg_for_per_game'] = 0
                 xg_data[team_name]['xg_against_per_game'] = 0
+                xg_data[team_name]['ps_xg_against_per_game'] = 0
                 xg_data[team_name]['goals_for_per_game'] = 0
                 xg_data[team_name]['goals_against_per_game'] = 0
                 xg_data[team_name]['scoring_clinicality'] = 0
+                xg_data[team_name]['ps_xg_performance'] = 0
         
         
         # Save to cache
