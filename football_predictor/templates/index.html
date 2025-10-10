@@ -1634,21 +1634,12 @@
                     return data;
                 });
             
-            // Start career xG fetches for both teams
-            const homeCareerFetch = fetch(`/career_xg?team=${encodeURIComponent(match.home_team)}&league=${finalLeagueCode}`)
-                .then(r => r.json())
-                .catch(e => ({ career_xg: null }));
-            
-            const awayCareerFetch = fetch(`/career_xg?team=${encodeURIComponent(match.away_team)}&league=${finalLeagueCode}`)
-                .then(r => r.json())
-                .catch(e => ({ career_xg: null }));
-            
-            // Fetch all data in parallel with timeout
+            // Fetch essential data only (career xG now loads on-demand to prevent timeouts)
             Promise.race([
-                Promise.all([contextFetch, xgFetch, homeCareerFetch, awayCareerFetch]),
+                Promise.all([contextFetch, xgFetch]),
                 timeoutPromise
             ])
-            .then(([contextData, xgData, homeCareer, awayCareer]) => {
+            .then(([contextData, xgData]) => {
                 updateProgressStatus('Finalizing data...', 'check-circle', 5, 5);
                 
                 if (contextData.error) {
@@ -1657,10 +1648,11 @@
                     return;
                 }
                 
-                // Merge xG and career data into context data
+                // Merge xG data into context data
                 contextData.xg = xgData.xg || null;
-                contextData.home_career = homeCareer.career_xg || null;
-                contextData.away_career = awayCareer.career_xg || null;
+                // Career xG will be loaded separately on demand
+                contextData.home_career = null;
+                contextData.away_career = null;
                 
                 setTimeout(() => {
                     clearTipRotation();
@@ -1761,7 +1753,8 @@
             const hasHomeData = contextData.home_team && (contextData.home_team.position || contextData.home_team.points || contextData.home_team.form);
             const hasAwayData = contextData.away_team && (contextData.away_team.position || contextData.away_team.points || contextData.away_team.form);
             
-            if (hasHomeData || hasAwayData) {
+            // Always display team sections if we have team info (even without standings)
+            if (contextData.home_team || contextData.away_team || contextData.elo_predictions) {
                 html += `<div class="row">`;
                 
                 // Home team column
@@ -1775,7 +1768,15 @@
                 if (hasHomeData) {
                     html += displayTeamStats(contextData.home_team, contextData.xg?.home_stats);
                 } else {
-                    html += `<p class="text-muted small"><i>No standings data available</i></p>`;
+                    // Show Elo rating even without standings
+                    if (contextData.home_team && contextData.home_team.elo_rating) {
+                        html += `<p class="text-muted small mb-2"><i>Standings not available for this competition</i></p>`;
+                        html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
+                        html += `<tr><td class="text-muted" style="width: 100px;">Elo Rating:</td><td><strong>${contextData.home_team.elo_rating}</strong></td></tr>`;
+                        html += `</tbody></table>`;
+                    } else {
+                        html += `<p class="text-muted small"><i>No standings data available</i></p>`;
+                    }
                 }
                 html += `</div>`;
                 
@@ -1789,7 +1790,15 @@
                 if (hasAwayData) {
                     html += displayTeamStats(contextData.away_team, contextData.xg?.away_stats);
                 } else {
-                    html += `<p class="text-muted small"><i>No standings data available</i></p>`;
+                    // Show Elo rating even without standings
+                    if (contextData.away_team && contextData.away_team.elo_rating) {
+                        html += `<p class="text-muted small mb-2"><i>Standings not available for this competition</i></p>`;
+                        html += `<table class="table table-sm table-borderless mb-0"><tbody>`;
+                        html += `<tr><td class="text-muted" style="width: 100px;">Elo Rating:</td><td><strong>${contextData.away_team.elo_rating}</strong></td></tr>`;
+                        html += `</tbody></table>`;
+                    } else {
+                        html += `<p class="text-muted small"><i>No standings data available</i></p>`;
+                    }
                 }
                 html += `</div>`;
                 html += `</div>`;
