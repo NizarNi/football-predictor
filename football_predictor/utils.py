@@ -15,45 +15,39 @@ from config import (
 
 def get_current_season():
     """
-    Calculate current football season based on calendar month.
+    Calculate current football season END YEAR for Understat.
     
+    Understat uses END YEAR for season naming (2025-2026 season = 2026).
     Football seasons run August to May:
-    - August-December (months 8-12): Use current year as season (e.g., Oct 2025 → Season 2025)
-    - January-July (months 1-7): Use previous year as season (e.g., Jan 2026 → Season 2025)
+    - August-December (months 8-12): Return current year + 1 (e.g., Oct 2025 → 2026 for 2025-2026 season)
+    - January-July (months 1-7): Return current year (e.g., Jan 2026 → 2026 for 2025-2026 season)
     
     Returns:
-        int: Current season year (e.g., 2025)
+        int: Current season END YEAR for Understat (e.g., 2026 for 2025-2026 season)
     """
     today = datetime.now()
-    return today.year if today.month >= SEASON_START_MONTH else today.year - 1
+    if today.month >= SEASON_START_MONTH:
+        return today.year + 1  # Aug-Dec: return next year as END YEAR
+    else:
+        return today.year  # Jan-Jul: return current year as END YEAR
 
 
 def get_xg_season():
     """
-    Determine current season for xG data with conservative approach.
+    Determine current season START YEAR for FBref/soccerdata.
     
-    Football season typically starts in August, but early season has limited data.
-    Use previous season data until December to have substantial statistics.
+    FBref uses START YEAR for season naming (2025-2026 season = 2025).
+    Always returns the current season start year.
     
     Logic:
-    - December onwards: Use current season (enough data accumulated)
-    - August-November: Use previous season (more complete data)
-    - January-July: Use previous season (standard)
+    - August-December: Return current year as START YEAR (e.g., Oct 2025 → 2025 for 2025-2026 season)
+    - January-July: Return previous year as START YEAR (e.g., Jan 2026 → 2025 for 2025-2026 season)
     
     Returns:
-        int: Season year for xG data (e.g., 2024 for conservative stats)
+        int: Current season START YEAR for FBref (e.g., 2025 for 2025-2026 season)
     """
     now = datetime.now()
-    
-    # December onwards, use current season
-    if now.month >= SEASON_MID_MONTH:
-        return now.year if now.month >= SEASON_START_MONTH else now.year - 1
-    # August-November, use previous season (more complete data)
-    elif now.month >= SEASON_START_MONTH:
-        return now.year - 1
-    # January-July, use previous season
-    else:
-        return now.year - 1
+    return now.year if now.month >= SEASON_START_MONTH else now.year - 1
 
 
 def normalize_team_name(name):

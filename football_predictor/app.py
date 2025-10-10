@@ -331,6 +331,10 @@ def get_match_context(match_id):
             else:
                 narrative = f"Standings not available for {league_code}. This may be a cup competition or teams not found in league standings."
             
+            # Calculate season display string
+            season_start = current_season - 1
+            season_display = f"{season_start}/{str(current_season)[-2:]}"
+            
             context = {
                 "home_team": {
                     "position": home_data.get('position') if home_data else None,
@@ -373,7 +377,8 @@ def get_match_context(match_id):
                 "elo_predictions": elo_probs,
                 "narrative": narrative,
                 "has_data": bool(home_data or away_data),
-                "source": source
+                "source": source,
+                "season_display": season_display
             }
             
             if elo_probs:
