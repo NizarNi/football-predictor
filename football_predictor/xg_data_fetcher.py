@@ -399,12 +399,24 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         print(f"Could not fetch rolling data for {away_team}: {e}")
     
     # Calculate expected goals for the match
-    # Home team expected goals = (home xGF + away xGA) / 2 * home advantage factor
-    # Away team expected goals = (away xGF + home xGA) / 2
+    # Use rolling 5-game averages if available (better recent form indicator)
+    # Fallback to season averages if insufficient data
     home_advantage_factor = 1.15  # 15% home advantage
     
-    home_xg = ((home_stats['xg_for_per_game'] + away_stats['xg_against_per_game']) / 2) * home_advantage_factor
-    away_xg = (away_stats['xg_for_per_game'] + home_stats['xg_against_per_game']) / 2
+    # Determine which xG values to use (rolling vs season averages)
+    # Prefer rolling if we have at least 3 matches
+    use_home_rolling = home_rolling['matches_count'] >= 3 and home_rolling['xg_for_rolling'] is not None
+    use_away_rolling = away_rolling['matches_count'] >= 3 and away_rolling['xg_for_rolling'] is not None
+    
+    home_xgf = home_rolling['xg_for_rolling'] if use_home_rolling else home_stats['xg_for_per_game']
+    home_xga = home_rolling['xg_against_rolling'] if use_home_rolling else home_stats['xg_against_per_game']
+    away_xgf = away_rolling['xg_for_rolling'] if use_away_rolling else away_stats['xg_for_per_game']
+    away_xga = away_rolling['xg_against_rolling'] if use_away_rolling else away_stats['xg_against_per_game']
+    
+    # Home team expected goals = (home xGF + away xGA) / 2 * home advantage factor
+    # Away team expected goals = (away xGF + home xGA) / 2
+    home_xg = ((home_xgf + away_xga) / 2) * home_advantage_factor
+    away_xg = (away_xgf + home_xga) / 2
     
     total_xg = home_xg + away_xg
     
