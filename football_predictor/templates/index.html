@@ -155,9 +155,10 @@
         
         /* Tooltip styling - wider to prevent text wrapping and enable multi-line */
         .tooltip-inner {
-            min-width: 250px !important;
-            max-width: 350px !important;
+            min-width: 200px !important;
+            max-width: 300px !important;
             text-align: left;
+            font-size: 0.8rem !important;
             white-space: pre-line !important;
         }
         
@@ -1761,6 +1762,21 @@
             return teamName.substring(0, 3).toUpperCase();
         }
         
+        // League code mapping for FBref API
+        function mapLeagueCodeForFBref(frontendCode) {
+            const leagueMapping = {
+                'EPL': 'PL',
+                'PL': 'PL',
+                'LaLiga': 'ESP',
+                'Bundesliga': 'GER',
+                'SerieA': 'ITA',
+                'Ligue1': 'FRA',
+                'CL': 'CL',
+                'Europa': 'Europa'
+            };
+            return leagueMapping[frontendCode] || frontendCode;
+        }
+        
         async function loadCareerStats(teamName, leagueCode, side) {
             const btnId = `${side}-career-btn`;
             const btn = document.getElementById(btnId);
@@ -1773,7 +1789,9 @@
             btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Loading...';
             
             try {
-                const response = await fetch(`/career_xg?team=${encodeURIComponent(teamName)}&league=${leagueCode}`);
+                // Map league code to FBref format
+                const mappedLeagueCode = mapLeagueCodeForFBref(leagueCode);
+                const response = await fetch(`/career_xg?team=${encodeURIComponent(teamName)}&league=${mappedLeagueCode}`);
                 
                 if (!response.ok) {
                     throw new Error(`Failed to load career stats: ${response.statusText}`);
@@ -2884,8 +2902,8 @@
                             const homeXgaPerGame = homeGamesPlayed > 0 ? (contextData.home_team.xGA / homeGamesPlayed).toFixed(2) : '0.00';
                             const leagueXgaAvg = contextData.home_team.league_stats && contextData.home_team.league_stats.xga_mean ? contextData.home_team.league_stats.xga_mean.toFixed(2) : '1.40';
                             const homeXgaTooltip = homeGamesPlayed > 0 
-                                ? `${contextData.home_team.xGA} xGA in ${homeGamesPlayed} games (avg ${homeXgaPerGame}/game).\n\nLeague avg: ${leagueXgaAvg}/game\nLower xGA = Stronger Defense 🛡️\nHigher xGA = Weaker Defense ⚠️`
-                                : `Cumulative Expected Goals Against for ${seasonDisplay} season from Understat.\n\nLower xGA = Stronger Defense`;
+                                ? `${contextData.home_team.xGA} xGA in ${homeGamesPlayed} games\n(${homeXgaPerGame}/game avg)\n\nLeague: ${leagueXgaAvg}/game avg\nLower = Stronger 🛡️`
+                                : `Expected Goals Against\n(Understat)\n\nLower = Stronger Defense`;
                             html += `<tr><td class="text-muted"><i class="fas fa-info-circle me-1" data-bs-toggle="tooltip" data-bs-title="${homeXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i>Season xGA <small>(Understat)</small>:</td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
                         }
                         
@@ -2971,8 +2989,8 @@
                             const awayXgaPerGame = awayGamesPlayed > 0 ? (contextData.away_team.xGA / awayGamesPlayed).toFixed(2) : '0.00';
                             const leagueXgaAvg = contextData.away_team.league_stats && contextData.away_team.league_stats.xga_mean ? contextData.away_team.league_stats.xga_mean.toFixed(2) : '1.40';
                             const awayXgaTooltip = awayGamesPlayed > 0 
-                                ? `${contextData.away_team.xGA} xGA in ${awayGamesPlayed} games (avg ${awayXgaPerGame}/game).\n\nLeague avg: ${leagueXgaAvg}/game\nLower xGA = Stronger Defense 🛡️\nHigher xGA = Weaker Defense ⚠️`
-                                : `Cumulative Expected Goals Against for ${seasonDisplay} season from Understat.\n\nLower xGA = Stronger Defense`;
+                                ? `${contextData.away_team.xGA} xGA in ${awayGamesPlayed} games\n(${awayXgaPerGame}/game avg)\n\nLeague: ${leagueXgaAvg}/game avg\nLower = Stronger 🛡️`
+                                : `Expected Goals Against\n(Understat)\n\nLower = Stronger Defense`;
                             html += `<tr><td class="text-muted"><i class="fas fa-info-circle me-1" data-bs-toggle="tooltip" data-bs-title="${awayXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i>Season xGA <small>(Understat)</small>:</td><td><strong>${contextData.away_team.xGA}</strong></td></tr>`;
                         }
                         
