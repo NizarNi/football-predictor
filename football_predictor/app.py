@@ -283,6 +283,40 @@ def get_match_xg(event_id):
             "source": "FBref via soccerdata"
         }), 200
 
+@app.route("/career_xg", methods=["GET"])
+def get_career_xg():
+    """Get career xG statistics (2010-2025) for a team"""
+    try:
+        team = request.args.get("team")
+        league = request.args.get("league")
+        
+        if not team or not league:
+            return jsonify({"error": "team and league parameters required"}), 400
+        
+        from xg_data_fetcher import fetch_career_xg_stats
+        
+        career_stats = fetch_career_xg_stats(team, league)
+        
+        if not career_stats:
+            return jsonify({
+                "career_xg": None,
+                "error": "No historical xG data available for this team",
+                "source": "FBref (2010-2025)"
+            }), 200
+        
+        return jsonify({
+            "career_xg": career_stats,
+            "source": "FBref (2010-2025)"
+        })
+        
+    except Exception as e:
+        print(f"Error fetching career xG: {e}")
+        return jsonify({
+            "career_xg": None,
+            "error": "Unable to load career xG data",
+            "source": "FBref"
+        }), 200
+
 @app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
     """Get match context including standings, form, and Elo ratings"""

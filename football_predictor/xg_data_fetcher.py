@@ -21,6 +21,10 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 MATCH_LOGS_CACHE = {}
 MATCH_LOGS_CACHE_TTL = 300  # 5 minutes in seconds
 
+# Career xG cache (team+league -> {data, timestamp})
+CAREER_XG_CACHE = {}
+CAREER_XG_CACHE_TTL = 604800  # 7 days in seconds for historical data
+
 # League mappings for soccerdata
 # League code mapping (Our codes → FBref league names)
 # Note: FBref only supports the Big 5 European leagues
@@ -98,54 +102,134 @@ def save_to_cache(cache_key, data):
         print(f"Error saving cache: {e}")
 
 
-def fetch_fbref_league_standings(league_code, season=None):
+def fetch_career_xg_stats(team_name, league_code):
     """
-    Fetch league standings from FBref as fallback for football-data.org
+    Fetch historical xG statistics for a team across multiple seasons (2010-2025)
     
     Args:
-        league_code: League code (PL, PD, BL1, SA, FL1, CL, EL)
-        season: Season year (optional)
+        team_name: Team name to fetch career stats for
+        league_code: League code (e.g., 'PL', 'PD')
     
     Returns:
-        list: Standings data in format compatible with football-data.org
+        dict: Career xG statistics with averages across all seasons
     """
-    if season is None:
-        season = get_xg_season()
-    
     # Check if league is supported
     if league_code not in LEAGUE_MAPPING:
-        print(f"⚠️  League {league_code} not supported for FBref standings")
-        return []
+        print(f"⚠️  League {league_code} not supported for career xG")
+        return None
+    
+    # Check cache first
+    cache_key = f"{team_name}_{league_code}_career"
+    current_time = datetime.now().timestamp()
+    
+    if cache_key in CAREER_XG_CACHE:
+        cached_data = CAREER_XG_CACHE[cache_key]
+        cache_age = current_time - cached_data['timestamp']
+        if cache_age < CAREER_XG_CACHE_TTL:
+            print(f"✅ Using cached career xG for {team_name} (age: {cache_age/86400:.1f} days)")
+            return cached_data['data']
     
     league_name = LEAGUE_MAPPING[league_code]
+    normalized_name = normalize_team_name_for_fbref(team_name)
     
-    try:
-        print(f"📊 Fetching FBref standings for {league_name} (season {season})...")
-        fbref = sd.FBref(leagues=league_name, seasons=season)
-        standings_df = fbref.read_league_table()
-        
-        # Convert DataFrame to list of dicts compatible with football-data.org format
-        standings = []
-        for idx, row in standings_df.iterrows():
-            # Extract team name from MultiIndex if needed
-            if isinstance(idx, tuple):
-                team_name = idx[-1]  # Last element is usually the team name
-            else:
-                team_name = row.get('Squad', str(idx))
+    # Collect xG data across seasons
+    seasons_data = []
+    current_season = get_xg_season()
+    
+    print(f"📊 Fetching career xG for {team_name} in {league_name} (2010-{current_season})...")
+    
+    # Try seasons from 2010 to current
+    for season in range(2010, current_season + 1):
+        try:
+            fbref = sd.FBref(leagues=league_name, seasons=season)
+            stats_df = fbref.read_team_season_stats(stat_type='standard')
             
-            standings.append({
-                'name': team_name,
-                'position': int(row.get('Rk', 0)) if pd.notna(row.get('Rk')) else 0,
-                'points': int(row.get('Pts', 0)) if pd.notna(row.get('Pts')) else 0,
-                'form': None  # FBref league table doesn't have form string
-            })
-        
-        print(f"✅ Fetched FBref standings for {len(standings)} teams")
-        return standings
-        
-    except Exception as e:
-        print(f"❌ Error fetching FBref standings for {league_code}: {e}")
-        return []
+            # Find team in stats
+            team_stats = None
+            for idx, row in stats_df.iterrows():
+                # Extract team name from MultiIndex
+                if isinstance(idx, tuple):
+                    team_in_row = idx[-1]
+                else:
+                    team_in_row = str(idx)
+                
+                if team_in_row == normalized_name or team_in_row == team_name:
+                    team_stats = row
+                    break
+            
+            if team_stats is not None:
+                # Extract xG metrics - FBref uses multi-index columns
+                # Try different column name variations for xG
+                xg_for = 0
+                xga = 0
+                games = 0
+                
+                # Expected xG columns
+                if ('Expected', 'xG') in team_stats.index:
+                    xg_for = float(team_stats[('Expected', 'xG')]) if pd.notna(team_stats[('Expected', 'xG')]) else 0
+                elif 'xG' in team_stats.index:
+                    xg_for = float(team_stats['xG']) if pd.notna(team_stats['xG']) else 0
+                
+                # Expected xGA columns
+                if ('Expected', 'xGA') in team_stats.index:
+                    xga = float(team_stats[('Expected', 'xGA')]) if pd.notna(team_stats[('Expected', 'xGA')]) else 0
+                elif 'xGA' in team_stats.index:
+                    xga = float(team_stats['xGA']) if pd.notna(team_stats['xGA']) else 0
+                
+                # Matches Played columns
+                if ('Standard', 'MP') in team_stats.index:
+                    games = int(team_stats[('Standard', 'MP')]) if pd.notna(team_stats[('Standard', 'MP')]) else 0
+                elif ('Playing Time', 'MP') in team_stats.index:
+                    games = int(team_stats[('Playing Time', 'MP')]) if pd.notna(team_stats[('Playing Time', 'MP')]) else 0
+                elif 'MP' in team_stats.index:
+                    games = int(team_stats['MP']) if pd.notna(team_stats['MP']) else 0
+                
+                if games > 0:
+                    seasons_data.append({
+                        'season': f"{season}/{str(season+1)[-2:]}",
+                        'season_year': season,
+                        'xg_for': xg_for,
+                        'xga': xga,
+                        'games': games,
+                        'xg_for_per_game': round(xg_for / games, 2),
+                        'xga_per_game': round(xga / games, 2)
+                    })
+                    
+        except Exception as e:
+            # Team might not have been in this league this season
+            continue
+    
+    if not seasons_data:
+        print(f"⚠️  No historical xG data found for {team_name}")
+        return None
+    
+    # Calculate career averages
+    total_xg = sum(s['xg_for'] for s in seasons_data)
+    total_xga = sum(s['xga'] for s in seasons_data)
+    total_games = sum(s['games'] for s in seasons_data)
+    seasons_count = len(seasons_data)
+    
+    career_stats = {
+        'team': team_name,
+        'league': league_code,
+        'seasons_count': seasons_count,
+        'total_games': total_games,
+        'career_xg_per_game': round(total_xg / total_games, 2) if total_games > 0 else 0,
+        'career_xga_per_game': round(total_xga / total_games, 2) if total_games > 0 else 0,
+        'first_season': seasons_data[0]['season'],
+        'last_season': seasons_data[-1]['season'],
+        'seasons_data': seasons_data  # Include individual season data
+    }
+    
+    print(f"✅ Career xG for {team_name}: {career_stats['career_xg_per_game']} xG/game over {seasons_count} seasons ({total_games} games)")
+    
+    # Cache the results
+    CAREER_XG_CACHE[cache_key] = {
+        'data': career_stats,
+        'timestamp': datetime.now().timestamp()
+    }
+    
+    return career_stats
 
 
 def fetch_league_xg_stats(league_code, season=None):
