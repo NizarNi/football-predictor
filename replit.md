@@ -43,6 +43,16 @@ Comprehensive testing completed across all 7 supported leagues:
 - **Domestic Leagues:** Premier League, La Liga (1.47 xG/game avg), Bundesliga (1.63), Serie A (1.38), Ligue 1 (1.59) - all verified with correct standings, xG/xGA/PPDA metrics, and league statistics
 - **Cup Competitions:** Champions League and Europa League - graceful degradation confirmed (no standings data as expected, Elo predictions functional)
 
+### UX Polish & Model Consistency Fixes (October 10, 2025)
+- **Gameweek Display Fix:** Removed fake index-based gameweek fallbacks - now only displays actual gameweek numbers from match data, hiding GW prefix when unavailable for accuracy
+- **xG Chart Chronology:** Reversed xG Trends chart X-axis to show chronological progression (oldest→newest, left→right) matching team form display order for intuitive time-series reading
+- **VALUE BET Model Consistency:** Fixed betting tips to use Hybrid probabilities (60% Elo + 40% Market) instead of Market alone, now matching 1X2 prediction table calculations exactly
+- **Double Chance Calculations:** Updated all Double Chance options (1X, 12, X2) to use Hybrid probabilities when Elo data available, ensuring consistency across all betting recommendations
+- **Over/Under Clarity:** Added tooltip to xG-based Over 2.5 explaining it's a statistical model different from Market-based odds, clarifying the two prediction sources (xG vs Bookmaker)
+- **Home Advantage Transparency:** Enhanced xG Analysis tooltip to explicitly state "Home xG × 1.15 boost, Away xG (no boost)" removing ambiguity about asymmetric calculations
+- **Draw Probability Explainer:** Added tooltip to Draw row in 1X2 table explaining why probabilities vary: "Market uses bookmaker odds, Elo uses historical ratings, xG uses goal expectations - each calculates differently"
+- **Loading Indicators Verified:** Confirmed progressive loading already implemented with 5 stages (Initiating → Standings → xG metrics → PPDA → Finalizing) providing step-by-step user feedback during Match Context loads
+
 ## System Architecture
 
 ### UI/UX Decisions
