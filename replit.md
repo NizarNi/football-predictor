@@ -19,6 +19,15 @@ The application offers odds-based predictions derived from real bookmaker consen
 
 ### Recent Updates
 
+#### Tooltip & Career Stats Fixes - October 10, 2025 (Evening)
+- **Tooltip Size Optimization**: Reduced Bootstrap tooltip font-size from default to 0.8rem and adjusted max-width to 300px for better on-screen readability
+- **Simplified xGA Tooltip Text**: Condensed tooltip content by ~40%, using concise multi-line format with line breaks instead of verbose sentences (e.g., "23.4 xGA in 12 games\n(1.95/game avg)\n\nLeague: 1.40/game avg\nLower = Stronger 🛡️")
+- **Career Stats League Code Fix**: Fixed career stats button which was sending wrong league code (EPL) to backend that expected FBref format (PL)
+  - Added `mapLeagueCodeForFBref()` function to convert frontend codes (EPL, LaLiga, Bundesliga, SerieA, Ligue1) to FBref-compatible codes (PL, ESP, GER, ITA, FRA)
+  - Updated `loadCareerStats()` to automatically map league codes before API requests
+  - Backend now successfully loads career xG data for all supported leagues
+- **BTTS Container Reset**: Created `resetBTTSButton()` function to clear BTTS predictions when switching between matches, matching behavior of Over/Under and Betting Analysis panels
+
 #### UI Bug Fixes - October 10, 2025
 - **Career Stats Button Fix**: Removed `-simple` suffix from button IDs (`home-career-btn-simple` → `home-career-btn`) so JavaScript loadCareerStats() function can find buttons correctly
 - **Shortened xG Labels**: Changed labels to prevent text overlap while keeping full details in tooltips:
