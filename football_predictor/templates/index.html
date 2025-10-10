@@ -1841,7 +1841,7 @@
                     
                     // Add "Show Career Stats" button if FBref data exists and career not loaded
                     if (contextData.xg?.home_stats && !contextData.home_career) {
-                        html += `<div class="text-center mt-2"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.home_team}', '${currentMatchData.league}', 'home')" id="home-career-btn-simple"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></div>`;
+                        html += `<div class="text-center mt-2"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.home_team}', '${currentMatchData.league}', 'home')" id="home-career-btn"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></div>`;
                     }
                 } else {
                     // Show Elo rating even without standings
@@ -1868,7 +1868,7 @@
                     
                     // Add "Show Career Stats" button if FBref data exists and career not loaded
                     if (contextData.xg?.away_stats && !contextData.away_career) {
-                        html += `<div class="text-center mt-2"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.away_team}', '${currentMatchData.league}', 'away')" id="away-career-btn-simple"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></div>`;
+                        html += `<div class="text-center mt-2"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.away_team}', '${currentMatchData.league}', 'away')" id="away-career-btn"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></div>`;
                     }
                 } else {
                     // Show Elo rating even without standings
@@ -2008,7 +2008,7 @@
                 // Add match impact prediction
                 xgTooltip += `\n\n💡 Impact: ${parseFloat(xgPerGame) >= 1.8 ? 'High goal threat - expect multiple chances' : parseFloat(xgPerGame) >= 1.2 ? 'Decent attacking threat - should create chances' : parseFloat(xgPerGame) >= 0.8 ? 'Moderate threat - limited chances expected' : 'Low scoring threat - struggle to create'}`;
                 
-                html += `<div class="match-context-label">Season Total xG (Understat): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgTooltip}" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong>${teamData.xG.toFixed(1)}</strong></div>`;
+                html += `<div class="match-context-label">Season xG <small>(Understat)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgTooltip}" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong>${teamData.xG.toFixed(1)}</strong></div>`;
             }
             if (teamData.xGA !== null && teamData.xGA !== undefined) {
                 const gamesPlayed = teamData.played || 0;
@@ -2052,14 +2052,14 @@
                 // Add match context analysis
                 xgaTooltip += `\n\n💡 Match Impact: ${parseFloat(xgaPerGame) < 0.9 ? 'Very tight defense - opponent will struggle to score' : parseFloat(xgaPerGame) < 1.3 ? 'Decent defense - opponent may get limited chances' : parseFloat(xgaPerGame) < 1.7 ? 'Vulnerable defense - opponent likely to create chances' : 'Weak defense - opponent expected to score easily'}`;
                 
-                html += `<div class="match-context-label">Season Total xGA (Understat): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgaTooltip}" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong>${teamData.xGA.toFixed(1)}</strong></div>`;
+                html += `<div class="match-context-label">Season xGA <small>(Understat)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${xgaTooltip}" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong>${teamData.xGA.toFixed(1)}</strong></div>`;
             }
             
             // Add xG metrics from FBref if available
             if (xgStats) {
                 html += `<div style="grid-column: 1 / -1;"><hr class="my-1"></div>`;
-                html += `<div class="match-context-label"><i class="fas fa-chart-line me-1"></i>Recent xG/game (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xG Model: 8-10 factors including shot location, goalkeeper position, defenders blocking path, game state, and pressure context. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value"><strong>${xgStats.xg_for_per_game}</strong> <small class="text-muted">/game</small></div>`;
-                html += `<div class="match-context-label"><i class="fas fa-shield-alt me-1"></i>Recent xGA/game (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xGA Model: Post-shot xG considering goalkeeper position, shot power, and defensive pressure. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value"><strong>${xgStats.xg_against_per_game}</strong> <small class="text-muted">/game</small></div>`;
+                html += `<div class="match-context-label"><i class="fas fa-chart-line me-1"></i>Recent xG/g <small>(FBref)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xG Model: 8-10 factors including shot location, goalkeeper position, defenders blocking path, game state, and pressure context. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value"><strong>${xgStats.xg_for_per_game}</strong> <small class="text-muted">/game</small></div>`;
+                html += `<div class="match-context-label"><i class="fas fa-shield-alt me-1"></i>Recent xGA/g <small>(FBref)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xGA Model: Post-shot xG considering goalkeeper position, shot power, and defensive pressure. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value"><strong>${xgStats.xg_against_per_game}</strong> <small class="text-muted">/game</small></div>`;
                 if (xgStats.scoring_clinicality !== undefined && xgStats.scoring_clinicality !== null) {
                     const clinicality = xgStats.scoring_clinicality;
                     const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
@@ -2861,7 +2861,7 @@
                             const homeXgTooltip = homeGamesPlayed > 0 
                                 ? `${contextData.home_team.xG} xG in ${homeGamesPlayed} games (avg ${homeXgPerGame}/game). League avg: ${leagueXgAvg}/game. Based on shot quality.`
                                 : `Cumulative Expected Goals for ${seasonDisplay} season from Understat.`;
-                            html += `<tr><td class="text-muted">Season Total xG (Understat): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${homeXgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xG}</strong></td></tr>`;
+                            html += `<tr><td class="text-muted">Season xG <small>(Understat)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${homeXgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xG}</strong></td></tr>`;
                         }
                         if (contextData.home_team.xGA !== null && contextData.home_team.xGA !== undefined) {
                             const homeGamesPlayed = contextData.home_team.played || 0;
@@ -2870,14 +2870,14 @@
                             const homeXgaTooltip = homeGamesPlayed > 0 
                                 ? `${contextData.home_team.xGA} xGA in ${homeGamesPlayed} games (avg ${homeXgaPerGame}/game).\n\nLeague avg: ${leagueXgaAvg}/game\nLower xGA = Stronger Defense 🛡️\nHigher xGA = Weaker Defense ⚠️`
                                 : `Cumulative Expected Goals Against for ${seasonDisplay} season from Understat.\n\nLower xGA = Stronger Defense`;
-                            html += `<tr><td class="text-muted">Season Total xGA (Understat): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${homeXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
+                            html += `<tr><td class="text-muted">Season xGA <small>(Understat)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${homeXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.home_team.xGA}</strong></td></tr>`;
                         }
                         
                         // Add xG metrics if available
                         if (contextData.xg && contextData.xg.home_stats) {
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>Recent xG/game (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xG Model: 8-10 factors including shot location, goalkeeper position, defenders blocking path, game state, and pressure context. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>Recent xGA/game (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xGA Model: Post-shot xG considering goalkeeper position, shot power, and defensive pressure. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>Recent xG/g <small>(FBref)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xG Model: 8-10 factors including shot location, goalkeeper position, defenders blocking path, game state, and pressure context. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>Recent xGA/g <small>(FBref)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xGA Model: Post-shot xG considering goalkeeper position, shot power, and defensive pressure. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.home_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                             if (contextData.xg.home_stats.scoring_clinicality !== undefined && contextData.xg.home_stats.scoring_clinicality !== null) {
                                 const clinicality = contextData.xg.home_stats.scoring_clinicality;
                                 const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
@@ -2948,7 +2948,7 @@
                             const awayXgTooltip = awayGamesPlayed > 0 
                                 ? `${contextData.away_team.xG} xG in ${awayGamesPlayed} games (avg ${awayXgPerGame}/game). League avg: ${leagueXgAvg}/game. Based on shot quality.`
                                 : `Cumulative Expected Goals for ${seasonDisplay} season from Understat.`;
-                            html += `<tr><td class="text-muted">Season Total xG (Understat): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${awayXgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xG}</strong></td></tr>`;
+                            html += `<tr><td class="text-muted">Season xG <small>(Understat)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${awayXgTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xG}</strong></td></tr>`;
                         }
                         if (contextData.away_team.xGA !== null && contextData.away_team.xGA !== undefined) {
                             const awayGamesPlayed = contextData.away_team.played || 0;
@@ -2957,14 +2957,14 @@
                             const awayXgaTooltip = awayGamesPlayed > 0 
                                 ? `${contextData.away_team.xGA} xGA in ${awayGamesPlayed} games (avg ${awayXgaPerGame}/game).\n\nLeague avg: ${leagueXgaAvg}/game\nLower xGA = Stronger Defense 🛡️\nHigher xGA = Weaker Defense ⚠️`
                                 : `Cumulative Expected Goals Against for ${seasonDisplay} season from Understat.\n\nLower xGA = Stronger Defense`;
-                            html += `<tr><td class="text-muted">Season Total xGA (Understat): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${awayXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xGA}</strong></td></tr>`;
+                            html += `<tr><td class="text-muted">Season xGA <small>(Understat)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="${awayXgaTooltip}" style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.away_team.xGA}</strong></td></tr>`;
                         }
                         
                         // Add xG metrics if available
                         if (contextData.xg && contextData.xg.away_stats) {
                             html += `<tr><td colspan="2" class="pt-2"><hr class="my-1"></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>Recent xG/game (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xG Model: 8-10 factors including shot location, goalkeeper position, defenders blocking path, game state, and pressure context. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
-                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>Recent xGA/game (FBref): <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xGA Model: Post-shot xG considering goalkeeper position, shot power, and defensive pressure. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-chart-line me-1"></i>Recent xG/g <small>(FBref)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xG Model: 8-10 factors including shot location, goalkeeper position, defenders blocking path, game state, and pressure context. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_for_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
+                            html += `<tr><td class="text-muted"><i class="fas fa-shield-alt me-1"></i>Recent xGA/g <small>(FBref)</small>: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="FBref xGA Model: Post-shot xG considering goalkeeper position, shot power, and defensive pressure. Uses Opta/StatsBomb data. Shows rolling 5-game average for recent form." style="cursor: help; font-size: 0.8em;"></i></td><td><strong>${contextData.xg.away_stats.xg_against_per_game}</strong> <small class="text-muted">/game</small></td></tr>`;
                             if (contextData.xg.away_stats.scoring_clinicality !== undefined && contextData.xg.away_stats.scoring_clinicality !== null) {
                                 const clinicality = contextData.xg.away_stats.scoring_clinicality;
                                 const clinicalityClass = clinicality > 0 ? 'text-success' : 'text-danger';
@@ -3661,22 +3661,24 @@
                             // Market consensus
                             if (data.btts && data.btts.market) {
                                 const market = data.btts.market;
+                                const bestYesOdds = market.best_odds && market.best_odds.yes ? market.best_odds.yes.price.toFixed(2) : 'N/A';
+                                const bestNoOdds = market.best_odds && market.best_odds.no ? market.best_odds.no.price.toFixed(2) : 'N/A';
                                 html += `
                                     <div class="alert alert-info mb-3">
-                                        <h6 class="mb-2"><i class="fas fa-chart-line me-2"></i>Market Consensus (${market.num_bookmakers || 'Multiple'} Bookmakers)</h6>
+                                        <h6 class="mb-2"><i class="fas fa-chart-line me-2"></i>Market Consensus (${market.bookmaker_count || market.num_bookmakers || 'Multiple'} Bookmakers)</h6>
                                         <div class="row text-center">
                                             <div class="col-6">
                                                 <div class="p-2 bg-success bg-opacity-10 rounded">
                                                     <div class="fw-bold">Yes</div>
-                                                    <div class="h5 mb-0">${market.yes_probability.toFixed(1)}%</div>
-                                                    <small class="text-muted">Best: ${market.best_yes_odds || 'N/A'}</small>
+                                                    <div class="h5 mb-0">${(market.yes_probability * 100).toFixed(1)}%</div>
+                                                    <small class="text-muted">Best: ${bestYesOdds}</small>
                                                 </div>
                                             </div>
                                             <div class="col-6">
                                                 <div class="p-2 bg-danger bg-opacity-10 rounded">
                                                     <div class="fw-bold">No</div>
-                                                    <div class="h5 mb-0">${market.no_probability.toFixed(1)}%</div>
-                                                    <small class="text-muted">Best: ${market.best_no_odds || 'N/A'}</small>
+                                                    <div class="h5 mb-0">${(market.no_probability * 100).toFixed(1)}%</div>
+                                                    <small class="text-muted">Best: ${bestNoOdds}</small>
                                                 </div>
                                             </div>
                                         </div>
@@ -3687,7 +3689,7 @@
                             // xG-based prediction
                             if (data.btts && data.btts.xg_model) {
                                 const xg = data.btts.xg_model;
-                                const confidence = Math.max(xg.yes_probability, xg.no_probability);
+                                const confidence = Math.max(xg.yes_probability, xg.no_probability) * 100;
                                 const alertClass = confidence >= 65 ? 'alert-success' : 'alert-secondary';
                                 
                                 html += `
@@ -3696,11 +3698,11 @@
                                         <div class="row text-center">
                                             <div class="col-6">
                                                 <div class="fw-bold">Yes</div>
-                                                <div class="h6 mb-0">${xg.yes_probability.toFixed(1)}%</div>
+                                                <div class="h6 mb-0">${(xg.yes_probability * 100).toFixed(1)}%</div>
                                             </div>
                                             <div class="col-6">
                                                 <div class="fw-bold">No</div>
-                                                <div class="h6 mb-0">${xg.no_probability.toFixed(1)}%</div>
+                                                <div class="h6 mb-0">${(xg.no_probability * 100).toFixed(1)}%</div>
                                             </div>
                                         </div>
                                         <small class="text-muted d-block mt-2">
