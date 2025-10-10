@@ -457,13 +457,16 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         'home_xg': round(home_xg, 2),
         'away_xg': round(away_xg, 2),
         'total_xg': round(total_xg, 2),
+        'data_source_home': 'rolling_5' if use_home_rolling else 'season_avg',
+        'data_source_away': 'rolling_5' if use_away_rolling else 'season_avg',
         'home_stats': {
             'xg_for_per_game': home_stats['xg_for_per_game'],
             'xg_against_per_game': home_stats['xg_against_per_game'],
             'scoring_clinicality': home_stats['scoring_clinicality'],
             'rolling_5': home_rolling,
             'form': home_form,
-            'recent_matches': home_recent_matches
+            'recent_matches': home_recent_matches,
+            'using_rolling': use_home_rolling
         },
         'away_stats': {
             'xg_for_per_game': away_stats['xg_for_per_game'],
@@ -471,7 +474,8 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
             'scoring_clinicality': away_stats['scoring_clinicality'],
             'rolling_5': away_rolling,
             'form': away_form,
-            'recent_matches': away_recent_matches
+            'recent_matches': away_recent_matches,
+            'using_rolling': use_away_rolling
         },
         'over_under_2_5': {
             'prediction': 'OVER' if over_2_5_probability > 50 else 'UNDER',

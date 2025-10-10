@@ -703,7 +703,7 @@
                                     <div class="card">
                                         <div class="card-header bg-primary text-white">
                                             <i class="fas fa-trophy me-2"></i> 1X2 Prediction
-                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Hybrid Model: 60% Elo (ClubElo historical ratings) + 40% Market (30+ bookmaker consensus). Combines historical performance with current market sentiment for balanced predictions. Source: ClubElo.com + The Odds API" style="cursor: help; font-size: 0.9em;"></i>
+                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<b>Hybrid Prediction Model</b><br><br>• <b>60%</b> Elo ratings (ClubElo 2010-present)<br>• <b>40%</b> Market consensus (30+ bookmakers)<br><br>Combines historical team performance with live betting market sentiment for balanced, data-driven predictions.<br><br><small><b>Sources:</b> ClubElo.com + The Odds API</small>" style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
                                             <div id="prediction-1x2">
@@ -723,7 +723,7 @@
                                     <div class="card">
                                         <div class="card-header bg-secondary text-white">
                                             <i class="fas fa-chart-line me-2"></i> Match Context
-                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="League standings (Understat), Historical xG trends (FBref), PPDA defensive metrics (Understat), and team form indicators" style="cursor: help; font-size: 0.9em;"></i>
+                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<b>Match Context Data Sources</b><br><br>• League standings → <b>Understat</b><br>• xG trends → <b>FBref</b> (2025/26 season)<br>• PPDA metrics → <b>Understat</b><br>• Team form → <b>FBref</b> with opponents<br><br>Provides comprehensive statistical context for informed betting decisions." style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
                                             <div id="match-context">
@@ -739,7 +739,7 @@
                                     <div class="card">
                                         <div class="card-header bg-primary text-white">
                                             <i class="fas fa-exchange-alt me-2"></i> Over/Under Predictions
-                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Averaged across 2.25, 2.5, and 2.75 goal lines from 30+ bookmakers for more robust predictions. Source: The Odds API" style="cursor: help; font-size: 0.9em;"></i>
+                                            <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<b>Enhanced Over/Under Predictions</b><br><br>• Averaged across <b>3 goal lines:</b> 2.25, 2.5, 2.75<br>• Data from <b>30+ bookmakers</b><br><br>Multi-line averaging provides more robust predictions than single-line odds.<br><br><small><b>Source:</b> The Odds API</small>" style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
                                             <div id="prediction-over-under">
@@ -1852,7 +1852,7 @@
             const hasFBrefForm = xgStats && xgStats.recent_matches && xgStats.recent_matches.length > 0;
             if (hasFBrefForm) {
                 const formDisplay = formatFormWithOpponents(xgStats.recent_matches);
-                html += `<div class="match-context-label">Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Last 5 match results from FBref with opponents (🟩 Win, ⬜ Draw, 🟥 Loss)" style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value">${formDisplay}</div>`;
+                html += `<div class="match-context-label">Form: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="<b>Recent Form (Last 5 Matches)</b><br><br>• 🟩 Win<br>• ⬜ Draw<br>• 🟥 Loss<br><br><small><b>Source:</b> FBref 2025/26 season with opponent names</small>" style="cursor: help; font-size: 0.8em;"></i></div><div class="match-context-value">${formDisplay}</div>`;
             } else if (teamData.form) {
                 // Fallback to Understat form if FBref unavailable
                 html += `<div class="match-context-label">Form:</div><div class="match-context-value">${formatFormIndicators(teamData.form)}</div>`;
@@ -1861,13 +1861,13 @@
             // Add Elo rating if available
             if (teamData.elo_rating !== null && teamData.elo_rating !== undefined) {
                 const eloClass = teamData.elo_rating >= 1900 ? 'text-success' : teamData.elo_rating >= 1700 ? 'text-primary' : 'text-muted';
-                html += `<div class="match-context-label">⚡ Elo Rating: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="ClubElo.com rating based on historical performance from 2010 to present, updated twice daily (5am/5pm UTC). Ranges: 1900+ = Elite (top European clubs), 1700-1900 = Strong (Europa League quality), 1500-1700 = Average (mid-table), <1500 = Weak" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value ${eloClass}"><strong>${teamData.elo_rating.toFixed(0)}</strong></div>`;
+                html += `<div class="match-context-label">⚡ Elo Rating: <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="<b>ClubElo Historical Ratings</b><br><br><b>Data Range:</b> 2010 to October 2025<br><b>Updates:</b> Twice daily (5am/5pm UTC)<br><br><b>Rating Ranges:</b><br>• <b>1900+</b> = Elite (top European clubs)<br>• <b>1700-1900</b> = Strong (Europa League quality)<br>• <b>1500-1700</b> = Average (mid-table)<br>• <b><1500</b> = Weak<br><br><small><b>Source:</b> ClubElo.com</small>" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value ${eloClass}"><strong>${teamData.elo_rating.toFixed(0)}</strong></div>`;
             }
             
             // Add PPDA prominently if available
             if (teamData.ppda_coef !== null && teamData.ppda_coef !== undefined) {
                 html += `<div style="grid-column: 1 / -1;"><hr class="my-1"></div>`;
-                html += `<div class="match-context-label"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Passes Per Defensive Action - measures pressing intensity. <8.0 = Extreme High Press (Klopp/Guardiola style), 8-12 = High Press (modern attacking teams), 12-15 = Medium Press (balanced), 15-20 = Low/Passive Block (defensive teams), >20 = Extremely Passive (deep defending). Lower = more aggressive pressing." style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong class="text-primary">${teamData.ppda_coef}</strong></div>`;
+                html += `<div class="match-context-label"><strong>🛡️ PPDA:</strong> <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="<b>Passes Per Defensive Action</b><br><br>Measures pressing intensity - <b>lower values = more aggressive pressing</b><br><br><b>Rating Scale:</b><br>• <b><8.0</b> = Extreme High Press (Klopp/Guardiola)<br>• <b>8-12</b> = High Press (modern attacking)<br>• <b>12-15</b> = Medium Press (balanced)<br>• <b>15-20</b> = Low Press (defensive)<br>• <b>>20</b> = Passive (deep defending)<br><br><small><b>Source:</b> Understat 2025/26 season</small>" style="cursor: help; font-size: 0.8em; min-width: 250px;"></i></div><div class="match-context-value"><strong class="text-primary">${teamData.ppda_coef}</strong></div>`;
             }
             if (teamData.xG !== null && teamData.xG !== undefined) {
                 const gamesPlayed = teamData.played || 0;
@@ -3009,9 +3009,9 @@
                                 <thead>
                                     <tr class="table-active">
                                         <th>Outcome</th>
-                                        <th>Market Odds <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Bookmaker consensus from 30+ bookmakers" style="cursor: help; font-size: 0.7em;"></i></th>
-                                        <th>Elo Model <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Historical performance from ClubElo (2010-present)" style="cursor: help; font-size: 0.7em;"></i></th>
-                                        <th>Hybrid (60/40) <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="60% Elo + 40% Market for balanced predictions" style="cursor: help; font-size: 0.7em;"></i></th>
+                                        <th>Market Odds <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="<b>Bookmaker Consensus</b><br><br>Averaged from <b>30+ bookmakers</b><br><small>Source: The Odds API</small>" style="cursor: help; font-size: 0.7em;"></i></th>
+                                        <th>Elo Model <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="<b>Historical Performance</b><br><br>ClubElo ratings<br>Data: <b>2010 to October 2025</b>" style="cursor: help; font-size: 0.7em;"></i></th>
+                                        <th>Hybrid (60/40) <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="<b>Balanced Hybrid Model</b><br><br>• 60% Elo<br>• 40% Market<br><br>Best of both worlds" style="cursor: help; font-size: 0.7em;"></i></th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -3022,7 +3022,7 @@
                                         <td><strong>${(hybridHome * 100).toFixed(1)}%</strong></td>
                                     </tr>
                                     <tr>
-                                        <td><strong>🤝 Draw <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-title="Draw% varies across models: Market uses bookmaker odds, Elo uses historical team ratings, xG uses statistical goal expectations. Each model calculates differently - this is normal!" style="cursor: help; font-size: 0.7em;"></i></strong></td>
+                                        <td><strong>🤝 Draw <i class="fas fa-info-circle" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="<b>Why Draw % Varies:</b><br><br>• <b>Market:</b> Uses bookmaker odds<br>• <b>Elo:</b> Uses historical ratings<br>• <b>xG:</b> Uses goal expectations<br><br>Each model calculates differently - variations are normal!" style="cursor: help; font-size: 0.7em;"></i></strong></td>
                                         <td>${(prediction.probabilities.DRAW * 100).toFixed(1)}%</td>
                                         <td>${(eloPredictions.draw * 100).toFixed(1)}% ${drawDiv >= 0.10 ? (eloPredictions.draw > prediction.probabilities.DRAW ? '⬆️' : '⬇️') : ''}</td>
                                         <td><strong>${(hybridDraw * 100).toFixed(1)}%</strong></td>
@@ -3048,7 +3048,7 @@
                     // Fallback to original display if no Elo
                     html += `
                         <div class="mt-3">
-                            <h6>Probability Breakdown: <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-title="Probabilities calculated from bookmaker consensus (30+ sources via The Odds API). Converted from decimal odds using implied probability formula." style="cursor: help; font-size: 0.75em;"></i></h6>
+                            <h6>Probability Breakdown: <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-html="true" data-bs-title="<b>Probability Calculation</b><br><br>• Source: 30+ bookmakers via The Odds API<br>• Formula: Implied Probability = 1 / Decimal Odds<br>• Averaged across all bookmakers<br><br>Shows market consensus on outcome likelihood." style="cursor: help; font-size: 0.75em;"></i></h6>
                             <div class="mb-2">
                                 <div class="d-flex justify-content-between">
                                     <span>Home Win:</span>
@@ -3233,7 +3233,7 @@
                 const risky = options.find(opt => opt.prob >= 0.15 && opt.prob < 0.30);
                 
                 let html = '<div class="analysis-section mb-3">';
-                html += '<div class="analysis-title">💡 Betting Tips <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="AI-powered recommendations using Hybrid Model (60% Elo historical data + 40% Market odds). Identifies value bets where Elo and Market diverge ≥10%. Source: ClubElo.com + 30+ bookmakers" style="cursor: help; font-size: 0.85em;"></i></div>';
+                html += '<div class="analysis-title">💡 Betting Tips <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title="<b>AI-Powered Betting Recommendations</b><br><br><b>Hybrid Prediction Model:</b><br>• 60% Elo ratings (ClubElo 2010-present)<br>• 40% Market odds (30+ bookmakers)<br><br><b>Value Bet Detection:</b><br>Identifies opportunities where Elo probability exceeds Market probability by ≥10%<br><br><small><b>Sources:</b> ClubElo.com + The Odds API</small>" style="cursor: help; font-size: 0.85em;"></i></div>';
                 
                 // Show value bet alert ONLY if Elo > Market (true value bet)
                 if (hasEloDivergence && valueBetOutcome && valueBetOutcome.eloProb > valueBetOutcome.marketProb) {
@@ -3285,8 +3285,14 @@
                 // Add xG-based insights if available
                 if (xgData && xgData.available) {
                     const themeColors = getThemeColors();
+                    
+                    // Build dynamic tooltip with actual data source used
+                    const homeSource = xgData.data_source_home === 'rolling_5' ? '✅ <b>Rolling 5-game avg</b> (current form)' : '⚠️ <b>Season average</b> (fallback - insufficient recent data)';
+                    const awaySource = xgData.data_source_away === 'rolling_5' ? '✅ <b>Rolling 5-game avg</b> (current form)' : '⚠️ <b>Season average</b> (fallback - insufficient recent data)';
+                    const xgTooltip = `<b>xG Prediction Calculation</b><br><br><b>Formula:</b><br>• Home xG = (Team xGF + Opp xGA) / 2 × <b>1.15 boost</b><br>• Away xG = (Team xGF + Opp xGA) / 2 (no boost)<br><br><b>Data Sources Used:</b><br>• ${xgData.home_team}: ${homeSource}<br>• ${xgData.away_team}: ${awaySource}<br><br><small>Rolling averages provide better form insights than full season stats.</small>`;
+                    
                     html += `<div class="analysis-section mb-3" style="border: 2px solid ${themeColors.xgAnalysisBorder}; background-color: ${themeColors.xgAnalysisBg};">`;
-                    html += `<div class="analysis-title" style="color: ${themeColors.xgAnalysisText};"><i class="fas fa-chart-line me-2"></i>xG Analysis <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Calculation: Home xG = (Team xGF + Opponent xGA) / 2 × 1.15 home boost, Away xG = (Team xGF + Opponent xGA) / 2 (no boost). Uses rolling 5-game averages when ≥3 matches available, otherwise FBref 2025/26 season averages for recent form accuracy." style="cursor: help; font-size: 0.85em;"></i></div>`;
+                    html += `<div class="analysis-title" style="color: ${themeColors.xgAnalysisText};"><i class="fas fa-chart-line me-2"></i>xG Analysis <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title="${xgTooltip}" style="cursor: help; font-size: 0.85em;"></i></div>`;
                     
                     html += `
                         <p class="mb-2">
@@ -3317,7 +3323,7 @@
                     const xgOverUnder = xgData.over_under_2_5;
                     html += `
                         <div class="alert ${xgOverUnder.over_probability >= 60 ? 'alert-success' : 'alert-secondary'} mb-2">
-                            <strong>⚽ xG Over/Under 2.5:</strong> ${xgOverUnder.prediction} <i class="fas fa-info-circle ms-1" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="Statistical model based on xG data. Different from Market-based Over/Under which uses bookmaker odds. xG calculates from team offensive/defensive strength." style="cursor: help; font-size: 0.75em;"></i>
+                            <strong>⚽ xG Over/Under 2.5:</strong> ${xgOverUnder.prediction} <i class="fas fa-info-circle ms-1" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title="<b>xG-Based Statistical Model</b><br><br>• Calculates probability from team xG data<br>• Different from Market Over/Under (bookmaker odds)<br>• Based on offensive/defensive strength metrics<br><br><small>This is a <b>separate prediction model</b> from market consensus.</small>" style="cursor: help; font-size: 0.75em;"></i>
                             <br><span class="badge ${xgOverUnder.over_probability >= 60 ? 'bg-success' : 'bg-secondary'}">
                                 ${xgOverUnder.prediction === 'OVER' ? xgOverUnder.over_probability : xgOverUnder.under_probability}% probability
                             </span>
