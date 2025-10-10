@@ -19,8 +19,18 @@ The application offers odds-based predictions derived from real bookmaker consen
 
 ### Recent Updates
 
+#### UI Bug Fixes - October 10, 2025
+- **Career Stats Button Fix**: Removed `-simple` suffix from button IDs (`home-career-btn-simple` → `home-career-btn`) so JavaScript loadCareerStats() function can find buttons correctly
+- **Shortened xG Labels**: Changed labels to prevent text overlap while keeping full details in tooltips:
+  - "Season Total xG (Understat)" → "Season xG <small>(Understat)</small>"
+  - "Recent xG/game (FBref, last 5)" → "Recent xG/g <small>(FBref)</small>"
+  - Applied consistently in both simple view and side-by-side table view
+- **BTTS Display Fixes**: Fixed two frontend bugs in BTTS predictions:
+  - Percentages: Multiplied decimal probabilities by 100 (now shows "45.9%" instead of "0.4%")
+  - Best Odds: Correctly access nested structure `market.best_odds.yes.price` (now shows "2.10" instead of "N/A")
+
 #### BTTS Predictions & Data Source Clarity - October 10, 2025
-- **Explicit Data Source Labels**: Fixed naming inconsistency by changing "Season xG" to "Season Total xG (Understat)" and "xG For (Season)" to "Recent xG/game (FBref, last 5)" with explicit source attribution
+- **Explicit Data Source Labels**: Added clear attribution with "Season xG (Understat)" and "Recent xG/g (FBref)" labels using HTML small tags
 - **xG Model Explanations**: Added detailed tooltips explaining differences between Understat (6-8 factors: shot position, angle, body part, assist type, game state, defensive pressure) and FBref (8-10 factors: shot type, location, goalkeeper position, defenders, game state, via Opta/StatsBomb data)
 - **BTTS Feature Implementation**: Added Both Teams To Score predictions combining market consensus from 30+ bookmakers with xG-based statistical model
   - Backend: Created `/match/<event_id>/btts` endpoint fetching BTTS odds from The Odds API
