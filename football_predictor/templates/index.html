@@ -469,7 +469,7 @@
         @media (max-width: 768px) {
             .card-header {
                 font-size: 1rem;
-            }
+            };
             
             .prediction-badge {
                 font-size: 0.8rem;
@@ -2738,7 +2738,7 @@
                 }
             }
             
-            function displayMatchContextData(contextData) {
+            window.displayMatchContextData = function(contextData) {
                 const matchContext = document.getElementById('match-context');
                 let html = '';
                 
