@@ -3,6 +3,26 @@ Configuration constants for Football Prediction Platform
 Centralizes all magic numbers and configuration values for maintainability
 """
 
+import os
+from pathlib import Path
+
+# -----------------------------------------------------------------------------
+# Paths & Environment Configuration
+# -----------------------------------------------------------------------------
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("FP_DATA_DIR", BASE_DIR / "data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Odds API configuration
+ODDS_INVALID_KEYS_PATH = Path(
+    os.environ.get("ODDS_INVALID_KEYS_PATH", DATA_DIR / "invalid_odds_keys.json")
+)
+DEFAULT_ODDS_REGIONS = os.environ.get("ODDS_REGIONS", "us,uk,eu")
+DEFAULT_ODDS_MARKETS = os.environ.get("ODDS_MARKETS", "h2h")
+DEFAULT_TOTALS_MARKETS = os.environ.get("ODDS_TOTALS_MARKETS", "totals")
+DEFAULT_BTTS_MARKETS = os.environ.get("ODDS_BTTS_MARKETS", "btts")
+
 # Hybrid Model Weights
 HYBRID_ELO_WEIGHT = 0.60  # Elo ratings contribution to hybrid predictions
 HYBRID_MARKET_WEIGHT = 0.40  # Market odds contribution to hybrid predictions
@@ -42,6 +62,17 @@ ENHANCED_PREDICTION_LINES = [2.25, 2.5, 2.75]  # Multi-line averaging for robust
 # Match Data
 DEFAULT_NEXT_N_DAYS = 30  # Default days ahead for match fetching
 MATCH_CONTEXT_TIMEOUT = 40  # Timeout for match context loading (seconds)
+
+# League Mapping for Odds API
+LEAGUE_CODE_MAPPING = {
+    "PL": "soccer_epl",
+    "PD": "soccer_spain_la_liga",
+    "BL1": "soccer_germany_bundesliga",
+    "SA": "soccer_italy_serie_a",
+    "FL1": "soccer_france_ligue_one",
+    "CL": "soccer_uefa_champs_league",
+    "EL": "soccer_uefa_europa_league",
+}
 
 # PPDA (Passes Per Defensive Action) Ratings
 PPDA_EXTREME_HIGH_PRESS = 8  # < 8 PPDA: Extreme high press (Liverpool, Man City style)

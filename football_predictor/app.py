@@ -1,20 +1,101 @@
-from flask import Flask, render_template, request, jsonify
+import logging
 import os
-import json
-from datetime import datetime
 import sys
+from datetime import datetime
+from typing import List, Optional
+
+from flask import Flask, jsonify, render_template, request
 
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from config import (  # noqa: E402
+    DEFAULT_BTTS_MARKETS,
+    DEFAULT_PROBABILITY,
+    DEFAULT_NEXT_N_DAYS,
+    DEFAULT_ODDS_REGIONS,
+    DEFAULT_TOTALS_MARKETS,
+    LEAGUE_CODE_MAPPING,
+)
 # football-data.org API removed - using Understat as primary source for standings
-from odds_api_client import get_upcoming_matches_with_odds, OddsAPIError, LEAGUE_CODE_MAPPING
-from odds_calculator import calculate_predictions_from_odds
-from xg_data_fetcher import get_match_xg_prediction
-from utils import get_current_season, normalize_team_name, fuzzy_team_match
+from odds_api_client import get_upcoming_matches_with_odds, OddsAPIError  # noqa: E402
+from odds_calculator import calculate_predictions_from_odds  # noqa: E402
+from utils import fuzzy_team_match, get_current_season, normalize_team_name  # noqa: E402
+from xg_data_fetcher import get_match_xg_prediction  # noqa: E402
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+
+def json_error(message: str, status_code: int, *, code: Optional[str] = None):
+    payload = {"error": message}
+    if code:
+        payload["code"] = code
+    return jsonify(payload), status_code
+
+
+def _resolve_league_codes(league_code: Optional[str]) -> List[str]:
+    if league_code:
+        if league_code not in LEAGUE_CODE_MAPPING:
+            raise ValueError(f"League code \"{league_code}\" not supported")
+        return [league_code]
+    return list(LEAGUE_CODE_MAPPING.keys())
+
+
+def _names_match(lhs: str, rhs: str) -> bool:
+    return fuzzy_team_match(lhs, rhs) or normalize_team_name(lhs) == normalize_team_name(rhs)
+
+
+def _match_involves_team(match: dict, team_name: str) -> bool:
+    return _names_match(team_name, match.get("home_team", "")) or _names_match(team_name, match.get("away_team", ""))
+
+
+def _fetch_and_enrich_matches(league_codes: List[str], next_n_days: int) -> List[dict]:
+    odds_matches = get_upcoming_matches_with_odds(league_codes=league_codes, next_n_days=next_n_days)
+    if not odds_matches:
+        return []
+
+    from elo_client import calculate_elo_probabilities, get_team_elo  # Local import to avoid circular dependency
+
+    enriched_matches = []
+    for raw_match in odds_matches:
+        match = dict(raw_match)
+        predictions = calculate_predictions_from_odds(raw_match)
+
+        commence_dt = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00'))
+        match["datetime"] = match["commence_time"]
+        match["timestamp"] = commence_dt.timestamp()
+
+        match["predictions"] = {
+            "1x2": {
+                "prediction": predictions["prediction"],
+                "confidence": predictions["confidence"],
+                "probabilities": predictions["probabilities"],
+                "is_safe_bet": predictions["confidence"] >= 60,
+                "bookmaker_count": predictions["bookmaker_count"],
+            },
+            "best_odds": predictions["best_odds"],
+            "arbitrage": predictions["arbitrage"],
+        }
+
+        home_team = match.get("home_team")
+        away_team = match.get("away_team")
+        if home_team and away_team:
+            home_elo = get_team_elo(home_team)
+            away_elo = get_team_elo(away_team)
+            if home_elo and away_elo:
+                match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
+
+        enriched_matches.append(match)
+
+    return sorted(enriched_matches, key=lambda x: x["timestamp"])
 
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
@@ -35,160 +116,98 @@ def demo():
     try:
         with open('/tmp/demo_static.html', 'r') as f:
             return f.read()
-    except:
+    except OSError as exc:
+        logger.warning("Demo page not available: %s", exc)
         return "Demo page not available", 404
 
 @app.route("/upcoming", methods=["GET"])
 def upcoming():
     """Get upcoming matches with predictions using The Odds API (primary) and football-data.org (fallback)"""
-    league_code = request.args.get("league", None)
-    next_n_days = request.args.get("next_n_days", 30, type=int)
-    
+    league_code = request.args.get("league")
+    requested_days = request.args.get("next_n_days", DEFAULT_NEXT_N_DAYS, type=int)
+    next_n_days = requested_days if requested_days and requested_days > 0 else DEFAULT_NEXT_N_DAYS
+
     try:
-        # Try The Odds API first (provides both matches and odds-based predictions)
-        print(f"🔍 Fetching matches with odds from The Odds API...")
-        try:
-            if league_code:
-                if league_code not in LEAGUE_CODE_MAPPING:
-                    return jsonify({"error": f"League code \"{league_code}\" not supported"}), 404
-                leagues_to_fetch = [league_code]
-            else:
-                leagues_to_fetch = list(LEAGUE_CODE_MAPPING.keys())
-            
-            odds_matches = get_upcoming_matches_with_odds(league_codes=leagues_to_fetch, next_n_days=next_n_days)
-            
-            if odds_matches:
-                # Import Elo client for predictions
-                from elo_client import get_team_elo, calculate_elo_probabilities
-                
-                # Calculate predictions from odds for each match
-                for match in odds_matches:
-                    predictions = calculate_predictions_from_odds(match)
-                    
-                    # Format match data
-                    match["datetime"] = match["commence_time"]
-                    match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                    
-                    # Add Elo predictions
-                    home_team = match.get("home_team")
-                    away_team = match.get("away_team")
-                    if home_team and away_team:
-                        home_elo = get_team_elo(home_team)
-                        away_elo = get_team_elo(away_team)
-                        if home_elo and away_elo:
-                            match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
-                    
-                    # Add predictions in the expected format
-                    match["predictions"] = {
-                        "1x2": {
-                            "prediction": predictions["prediction"],
-                            "confidence": predictions["confidence"],
-                            "probabilities": predictions["probabilities"],
-                            "is_safe_bet": predictions["confidence"] >= 60,
-                            "bookmaker_count": predictions["bookmaker_count"]
-                        },
-                        "best_odds": predictions["best_odds"],
-                        "arbitrage": predictions["arbitrage"]
-                    }
-                
-                print(f"✅ Found {len(odds_matches)} matches from The Odds API")
-                return jsonify({
-                    "matches": odds_matches,
-                    "total_matches": len(odds_matches),
-                    "source": "The Odds API"
-                })
-        except OddsAPIError as e:
-            print(f"⚠️  The Odds API unavailable: {e}")
-            return jsonify({"error": "The Odds API is temporarily unavailable. Please try again later."}), 503
-        except Exception as e:
-            print(f"⚠️  The Odds API error: {e}")
-            return jsonify({"error": "Unable to fetch matches. Please try again later."}), 500
-        
-    except Exception as e:
-        print(f"❌ Critical error: {e}")
-        return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 500
+        leagues_to_fetch = _resolve_league_codes(league_code)
+    except ValueError as exc:
+        logger.warning("Invalid league requested for /upcoming: %s", exc)
+        return json_error(str(exc), 404, code="unknown_league")
 
+    try:
+        matches = _fetch_and_enrich_matches(leagues_to_fetch, next_n_days)
+    except OddsAPIError as odds_error:
+        logger.warning("Odds API unavailable for /upcoming: %s", odds_error)
+        return json_error(
+            "The Odds API is temporarily unavailable. Please try again later.",
+            503,
+            code="odds_api_unavailable",
+        )
+    except Exception:
+        logger.exception("Unexpected error fetching upcoming matches")
+        return json_error("Unable to fetch matches. Please try again later.", 500, code="upcoming_error")
 
+    if not matches:
+        logger.info("No upcoming matches returned for leagues=%s", leagues_to_fetch)
+        return json_error("No upcoming matches found", 404, code="no_matches")
 
-
+    logger.info(
+        "Serving %s upcoming matches (leagues=%s, window=%s days)",
+        len(matches),
+        ",".join(leagues_to_fetch),
+        next_n_days,
+    )
+    return jsonify({"matches": matches, "source": "The Odds API"})
 
 @app.route("/search", methods=["POST"])
 def search():
     """Search for matches by team name"""
     team_name = request.form.get("team_name", "").strip()
-    
-    if not team_name:
-        return jsonify({"error": "Please provide a team name"}), 400
-    
+    league_code = request.form.get("league")
+    requested_days = request.form.get("next_n_days")
+
     try:
-        print(f"🔍 Searching for team: {team_name}")
-        
-        # Use The Odds API to fetch matches from all leagues
-        try:
-            odds_matches = get_upcoming_matches_with_odds(
-                league_codes=list(LEAGUE_CODE_MAPPING.keys()), 
-                next_n_days=30
-            )
-            
-            if not odds_matches:
-                # No matches from Odds API - return empty result
-                print(f"ℹ️ No matches available from The Odds API")
-                return jsonify({"error": f"No matches found for team '{team_name}' - try again later"}), 404
-            
-            # Filter matches by team name
-            team_name_lower = team_name.lower()
-            filtered_matches = [
-                match for match in odds_matches
-                if team_name_lower in match.get("home_team", "").lower() or 
-                   team_name_lower in match.get("away_team", "").lower()
-            ]
-            
-            if not filtered_matches:
-                return jsonify({"error": f"No matches found for team '{team_name}'"}), 404
-            
-            # Calculate predictions from odds for each match
-            for match in filtered_matches:
-                predictions = calculate_predictions_from_odds(match)
-                
-                # Format match data
-                match["datetime"] = match["commence_time"]
-                match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                
-                # Add predictions in the expected format
-                match["predictions"] = {
-                    "1x2": {
-                        "prediction": predictions["prediction"],
-                        "confidence": predictions["confidence"],
-                        "probabilities": predictions["probabilities"],
-                        "is_safe_bet": predictions["confidence"] >= 60,
-                        "bookmaker_count": predictions["bookmaker_count"]
-                    },
-                    "best_odds": predictions["best_odds"],
-                    "arbitrage": predictions["arbitrage"]
-                }
-            
-            # Sort by date
-            filtered_matches = sorted(filtered_matches, key=lambda x: x["timestamp"])
-            
-            print(f"✅ Found {len(filtered_matches)} matches for '{team_name}' from The Odds API")
-            return jsonify({
-                "matches": filtered_matches,
-                "source": "The Odds API"
-            })
-                
-        except Exception as odds_e:
-            print(f"⚠️ The Odds API error during search: {odds_e}")
-            return jsonify({"error": "Search service temporarily unavailable"}), 503
-        
-    except Exception as e:
-        print(f"Error in search: {e}")
-        return jsonify({"error": "Search failed. Please try again later."}), 500
+        next_n_days = int(requested_days) if requested_days else DEFAULT_NEXT_N_DAYS
+    except (TypeError, ValueError):
+        next_n_days = DEFAULT_NEXT_N_DAYS
+    if next_n_days <= 0:
+        next_n_days = DEFAULT_NEXT_N_DAYS
+
+    if not team_name:
+        return json_error("Please provide a team name", 400, code="missing_team")
+
+    try:
+        leagues_to_fetch = _resolve_league_codes(league_code)
+    except ValueError as exc:
+        logger.warning("Invalid league requested for /search: %s", exc)
+        return json_error(str(exc), 404, code="unknown_league")
+
+    try:
+        matches = _fetch_and_enrich_matches(leagues_to_fetch, next_n_days)
+    except OddsAPIError as odds_error:
+        logger.warning("Odds API error during search: %s", odds_error)
+        return json_error("Search service temporarily unavailable", 503, code="odds_api_unavailable")
+    except Exception:
+        logger.exception("Error in search")
+        return json_error("Search failed. Please try again later.", 500, code="search_error")
+
+    filtered_matches = [match for match in matches if _match_involves_team(match, team_name)]
+
+    if not filtered_matches:
+        logger.info("No matches found for team=%s", team_name)
+        return json_error(f"No matches found for team '{team_name}'", 404, code="no_matches")
+
+    logger.info("Found %s matches for team=%s", len(filtered_matches), team_name)
+    return jsonify({"matches": filtered_matches, "source": "The Odds API"})
 
 @app.route("/match/<match_id>", methods=["GET"])
 def get_match(match_id):
     """Get detailed information about a specific match"""
     # Endpoint deprecated - match details now come from The Odds API in /upcoming
-    return jsonify({"error": "This endpoint is deprecated. Match details are included in the /upcoming endpoint."}), 410
+    return json_error(
+        "This endpoint is deprecated. Match details are included in the /upcoming endpoint.",
+        410,
+        code="deprecated_match_endpoint",
+    )
 
 @app.route("/predict/<match_id>", methods=["GET"])
 def predict_match(match_id):
@@ -200,9 +219,9 @@ def predict_match(match_id):
                     "prediction": "N/A",
                     "confidence": 0,
                     "probabilities": {
-                        "HOME_WIN": 0.33,
-                        "DRAW": 0.33,
-                        "AWAY_WIN": 0.33
+                        "HOME_WIN": DEFAULT_PROBABILITY,
+                        "DRAW": DEFAULT_PROBABILITY,
+                        "AWAY_WIN": DEFAULT_PROBABILITY
                     },
                     "is_safe_bet": False,
                     "note": "Individual match predictions available when browsing upcoming matches with odds"
@@ -212,12 +231,12 @@ def predict_match(match_id):
             },
             "note": "Prediction data with odds is available when browsing upcoming matches"
         }
-        
+
         return jsonify(response)
-        
+
     except Exception as e:
-        print(f"Error predicting match {match_id}: {e}")
-        return jsonify({"error": "Unable to load predictions. Please try again later."}), 500
+        logger.exception("Error predicting match %s", match_id)
+        return json_error("Unable to load predictions. Please try again later.", 500, code="prediction_error")
 
 @app.route("/match/<event_id>/totals", methods=["GET"])
 def get_match_totals(event_id):
@@ -225,26 +244,33 @@ def get_match_totals(event_id):
     try:
         sport_key = request.args.get("sport_key")
         if not sport_key:
-            return jsonify({"error": "sport_key parameter required"}), 400
-        
+            return json_error("sport_key parameter required", 400, code="missing_sport_key")
+
         from odds_api_client import get_event_odds
         from odds_calculator import calculate_totals_from_odds
-        
-        odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="totals")
-        
+
+        odds_data = get_event_odds(
+            sport_key,
+            event_id,
+            regions=DEFAULT_ODDS_REGIONS,
+            markets=DEFAULT_TOTALS_MARKETS,
+        )
+
         if not odds_data:
-            return jsonify({"error": "No totals odds found for this match"}), 404
-        
+            return json_error("No totals odds found for this match", 404, code="totals_not_found")
+
         totals_predictions = calculate_totals_from_odds(odds_data)
-        
+
         return jsonify({
             "totals": totals_predictions,
             "source": "The Odds API"
         })
-        
-    except Exception as e:
-        print(f"Error fetching totals for {event_id}: {e}")
-        return jsonify({"error": "Unable to load over/under data. Please try again later."}), 500
+    except OddsAPIError as odds_error:
+        logger.warning("Odds API error fetching totals for %s: %s", event_id, odds_error)
+        return json_error("Totals data temporarily unavailable. Please try again later.", 503, code="odds_api_unavailable")
+    except Exception:
+        logger.exception("Error fetching totals for %s", event_id)
+        return json_error("Unable to load over/under data. Please try again later.", 500, code="totals_error")
 
 @app.route("/match/<event_id>/btts", methods=["GET"])
 def get_match_btts(event_id):
@@ -254,22 +280,27 @@ def get_match_btts(event_id):
         home_team = request.args.get("home_team")
         away_team = request.args.get("away_team")
         league_code = request.args.get("league")
-        
+
         if not sport_key:
-            return jsonify({"error": "sport_key parameter required"}), 400
-        
+            return json_error("sport_key parameter required", 400, code="missing_sport_key")
+
         from odds_api_client import get_event_odds
         from odds_calculator import calculate_btts_from_odds, calculate_btts_probability_from_xg
-        
+
         # Fetch BTTS odds from The Odds API
-        odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="btts")
-        
+        odds_data = get_event_odds(
+            sport_key,
+            event_id,
+            regions=DEFAULT_ODDS_REGIONS,
+            markets=DEFAULT_BTTS_MARKETS,
+        )
+
         if not odds_data:
-            return jsonify({"error": "No BTTS odds found for this match"}), 404
-        
+            return json_error("No BTTS odds found for this match", 404, code="btts_not_found")
+
         # Calculate market consensus from bookmakers
         btts_market = calculate_btts_from_odds(odds_data)
-        
+
         # Get xG-based prediction if xG data available
         # NOTE: BTTS needs TRUE defensive xGA from Understat, not FBref's PSxGA (goalkeeper metric)
         btts_xg = None
@@ -303,7 +334,7 @@ def get_match_btts(event_id):
                     
                     if away_standings and away_standings.get('xGA') is not None and away_standings.get('played', 0) > 0:
                         away_xga_per_game = away_standings['xGA'] / away_standings['played']
-                    
+
                 if all([x is not None for x in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]]):
                     btts_xg = calculate_btts_probability_from_xg(
                         home_xg_per_game,
@@ -311,10 +342,10 @@ def get_match_btts(event_id):
                         home_xga_per_game,
                         away_xga_per_game
                     )
-            except Exception as e:
-                print(f"⚠️  Could not calculate xG-based BTTS: {e}")
+            except Exception:
+                logger.warning("Could not calculate xG-based BTTS for %s vs %s: league=%s", home_team, away_team, league_code, exc_info=True)
                 btts_xg = None
-        
+
         return jsonify({
             "btts": {
                 "market": btts_market,
@@ -322,10 +353,12 @@ def get_match_btts(event_id):
             },
             "source": "The Odds API + xG Analysis"
         })
-        
-    except Exception as e:
-        print(f"Error fetching BTTS for {event_id}: {e}")
-        return jsonify({"error": "Unable to load BTTS data. Please try again later."}), 500
+    except OddsAPIError as odds_error:
+        logger.warning("Odds API error fetching BTTS for %s: %s", event_id, odds_error)
+        return json_error("BTTS data temporarily unavailable. Please try again later.", 503, code="odds_api_unavailable")
+    except Exception:
+        logger.exception("Error fetching BTTS for %s", event_id)
+        return json_error("Unable to load BTTS data. Please try again later.", 500, code="btts_error")
 
 @app.route("/match/<event_id>/xg", methods=["GET"])
 def get_match_xg(event_id):
@@ -334,69 +367,31 @@ def get_match_xg(event_id):
         home_team = request.args.get("home_team")
         away_team = request.args.get("away_team")
         league_code = request.args.get("league")
-        
+
         if not home_team or not away_team:
-            return jsonify({"error": "home_team and away_team parameters required"}), 400
-        
+            return json_error("home_team and away_team parameters required", 400, code="missing_team")
+
         if not league_code:
-            return jsonify({"error": "league parameter required"}), 400
-        
+            return json_error("league parameter required", 400, code="missing_league")
+
         # Get xG prediction for the match
         xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
-        
+
         if not xg_prediction.get('available'):
             return jsonify({
                 "xg": None,
                 "error": xg_prediction.get('error', 'xG data not available'),
                 "source": "FBref via soccerdata"
             }), 200
-        
+
         return jsonify({
             "xg": xg_prediction,
             "source": "FBref via soccerdata"
         })
-        
-    except Exception as e:
-        print(f"Error fetching xG for {event_id}: {e}")
-        return jsonify({
-            "xg": None,
-            "error": "Unable to load xG data. Please try again later.",
-            "source": "FBref via soccerdata"
-        }), 200
 
-@app.route("/career_xg", methods=["GET"])
-def get_career_xg():
-    """Get career xG statistics (2010-2025) for a team"""
-    try:
-        team = request.args.get("team")
-        league = request.args.get("league")
-        
-        if not team or not league:
-            return jsonify({"error": "team and league parameters required"}), 400
-        
-        from xg_data_fetcher import fetch_career_xg_stats
-        
-        career_stats = fetch_career_xg_stats(team, league)
-        
-        if not career_stats:
-            return jsonify({
-                "career_xg": None,
-                "error": "No historical xG data available for this team",
-                "source": "FBref (2010-2025)"
-            }), 200
-        
-        return jsonify({
-            "career_xg": career_stats,
-            "source": "FBref (2010-2025)"
-        })
-        
-    except Exception as e:
-        print(f"Error fetching career xG: {e}")
-        return jsonify({
-            "career_xg": None,
-            "error": "Unable to load career xG data",
-            "source": "FBref"
-        }), 200
+    except Exception:
+        logger.exception("Error fetching xG for %s", event_id)
+        return json_error("Unable to load xG data. Please try again later.", 500, code="xg_error")
 
 @app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
@@ -405,22 +400,22 @@ def get_match_context(match_id):
         league_code = request.args.get("league")
         home_team = request.args.get("home_team")
         away_team = request.args.get("away_team")
-        
+
         if not league_code:
-            return jsonify({"error": "league parameter required"}), 400
-        
+            return json_error("league parameter required", 400, code="missing_league")
+
         from understat_client import fetch_understat_standings
         from elo_client import get_team_elo, calculate_elo_probabilities
-        
+
         try:
             # Use Understat as primary source for standings with dynamic season
             current_season = get_current_season()
-            print(f"📊 Fetching standings from Understat for season {current_season}...")
+            logger.info("Fetching standings from Understat for season %s", current_season)
             standings = fetch_understat_standings(league_code, current_season)
             source = "Understat" if standings else None
-            
+
             # Fetch Elo ratings for both teams
-            print(f"🎯 Fetching Elo ratings from ClubElo...")
+            logger.info("Fetching Elo ratings from ClubElo")
             home_elo = get_team_elo(home_team) if home_team else None
             away_elo = get_team_elo(away_team) if away_team else None
             
@@ -440,7 +435,7 @@ def get_match_context(match_id):
             if home_data and away_data:
                 narrative = generate_match_narrative(home_data, away_data)
                 if source:
-                    print(f"✅ Standings from {source}")
+                    logger.info("Standings retrieved from %s", source)
             elif home_data or away_data:
                 narrative = "Partial standings available. Full context data unavailable for this match."
             else:
@@ -495,19 +490,26 @@ def get_match_context(match_id):
                 "source": source,
                 "season_display": season_display
             }
-            
+
             if elo_probs:
-                print(f"✅ Elo predictions: Home {elo_probs['home_win']*100:.1f}% | Draw {elo_probs['draw']*100:.1f}% | Away {elo_probs['away_win']*100:.1f}%")
-            
+                logger.info(
+                    "Elo predictions for %s vs %s – Home: %.1f%%, Draw: %.1f%%, Away: %.1f%%",
+                    home_team,
+                    away_team,
+                    elo_probs['home_win'] * 100,
+                    elo_probs['draw'] * 100,
+                    elo_probs['away_win'] * 100,
+                )
+
             return jsonify(context)
-            
-        except Exception as e:
-            print(f"Error fetching context: {e}")
+
+        except Exception:
+            logger.exception("Error fetching context for match %s", match_id)
             return jsonify({"narrative": "Match context unavailable"}), 200
-        
-    except Exception as e:
-        print(f"Error in match context: {e}")
-        return jsonify({"error": "Unable to load match context. Please try again later."}), 500
+
+    except Exception:
+        logger.exception("Error in match context for %s", match_id)
+        return json_error("Unable to load match context. Please try again later.", 500, code="context_error")
 
 def generate_match_narrative(home_data, away_data):
     """Generate a narrative description of the match importance"""
@@ -531,9 +533,14 @@ def generate_match_narrative(home_data, away_data):
 def process_data():
     """Process all scraped match data"""
     try:
-        return jsonify({"error": "Data processing via this endpoint is deprecated. Please use API-Football for data."}), 400
-    except Exception as e:
-        return jsonify({"error": "Service error. Please try again later."}), 500
+        return json_error(
+            "Data processing via this endpoint is deprecated. Please use API-Football for data.",
+            400,
+            code="deprecated_processing_endpoint",
+        )
+    except Exception:
+        logger.exception("Error processing data")
+        return json_error("Service error. Please try again later.", 500, code="processing_error")
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
