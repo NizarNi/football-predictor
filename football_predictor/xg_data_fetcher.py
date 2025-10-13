@@ -10,7 +10,11 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import get_xg_season
-from config import XG_CACHE_DURATION_HOURS, TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING
+from config import (
+    XG_CACHE_DURATION_HOURS,
+    TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING,
+    setup_logger,
+)
 
 # Cache settings
 CACHE_DIR = "processed_data/xg_cache"
@@ -25,6 +29,8 @@ MATCH_LOGS_CACHE_TTL = 300  # 5 minutes in seconds
 # Career xG cache (team+league -> {data, timestamp})
 CAREER_XG_CACHE = {}
 CAREER_XG_CACHE_TTL = 604800  # 7 days in seconds for historical data
+
+logger = setup_logger(__name__)
 
 # League mappings for soccerdata
 # League code mapping (Our codes → FBref league names)
@@ -82,11 +88,14 @@ def load_from_cache(cache_key):
             for team_name, team_data in data.items():
                 if 'xg_overperformance' in team_data and 'scoring_clinicality' not in team_data:
                     team_data['scoring_clinicality'] = team_data['xg_overperformance']
-                    print(f"🔄 Migrated {team_name}: xg_overperformance → scoring_clinicality")
-                
+                    logger.debug(
+                        "Migrated legacy xG cache fields",
+                        extra={"team_name": team_name},
+                    )
+
             return data
         except Exception as e:
-            print(f"Error loading cache: {e}")
+            logger.exception("Error loading xG cache", extra={"cache_key": cache_key})
             return None
     
     return None
@@ -100,7 +109,7 @@ def save_to_cache(cache_key, data):
         with open(cache_file, 'w') as f:
             json.dump(data, f, indent=2)
     except Exception as e:
-        print(f"Error saving cache: {e}")
+        logger.exception("Error saving xG cache", extra={"cache_key": cache_key})
 
 
 def fetch_career_xg_stats(team_name, league_code):
@@ -116,7 +125,10 @@ def fetch_career_xg_stats(team_name, league_code):
     """
     # Check if league is supported
     if league_code not in LEAGUE_MAPPING:
-        print(f"⚠️  League {league_code} not supported for career xG")
+        logger.warning(
+            "League not supported for career xG",
+            extra={"league_code": league_code, "team_name": team_name},
+        )
         return None
     
     # Check cache first
@@ -127,7 +139,14 @@ def fetch_career_xg_stats(team_name, league_code):
         cached_data = CAREER_XG_CACHE[cache_key]
         cache_age = current_time - cached_data['timestamp']
         if cache_age < CAREER_XG_CACHE_TTL:
-            print(f"✅ Using cached career xG for {team_name} (age: {cache_age/86400:.1f} days)")
+            logger.info(
+                "Using cached career xG",
+                extra={
+                    "team_name": team_name,
+                    "league_code": league_code,
+                    "cache_age_days": round(cache_age / 86400, 2),
+                },
+            )
             return cached_data['data']
     
     league_name = LEAGUE_MAPPING[league_code]
@@ -140,7 +159,15 @@ def fetch_career_xg_stats(team_name, league_code):
     # Fetch last 5 seasons only to avoid rate limiting (reduced from 2010)
     start_season = max(2021, current_season - 4)
     
-    print(f"📊 Fetching career xG for {team_name} in {league_name} ({start_season}-{current_season})...")
+    logger.info(
+        "Fetching career xG",
+        extra={
+            "team_name": team_name,
+            "league_name": league_name,
+            "start_season": start_season,
+            "end_season": current_season,
+        },
+    )
     
     # Try seasons from start to current
     for season in range(start_season, current_season + 1):
@@ -208,9 +235,12 @@ def fetch_career_xg_stats(team_name, league_code):
             time.sleep(2)
     
     if not seasons_data:
-        print(f"⚠️  No historical xG data found for {team_name}")
+        logger.warning(
+            "No historical xG data found",
+            extra={"team_name": team_name, "league_code": league_code},
+        )
         return None
-    
+
     # Calculate career averages
     total_xg = sum(s['xg_for'] for s in seasons_data)
     total_xga = sum(s['xga'] for s in seasons_data)
@@ -229,7 +259,16 @@ def fetch_career_xg_stats(team_name, league_code):
         'seasons_data': seasons_data  # Include individual season data
     }
     
-    print(f"✅ Career xG for {team_name}: {career_stats['career_xg_per_game']} xG/game over {seasons_count} seasons ({total_games} games)")
+    logger.info(
+        "Career xG computed",
+        extra={
+            "team_name": team_name,
+            "league_code": league_code,
+            "seasons_count": seasons_count,
+            "total_games": total_games,
+            "career_xg_per_game": career_stats['career_xg_per_game'],
+        },
+    )
     
     # Cache the results
     CAREER_XG_CACHE[cache_key] = {
@@ -258,12 +297,18 @@ def fetch_league_xg_stats(league_code, season=None):
     cache_key = get_cache_key(league_code, season)
     cached_data = load_from_cache(cache_key)
     if cached_data:
-        print(f"✅ Loaded xG data for {league_code} from cache")
+        logger.info(
+            "Loaded xG data from cache",
+            extra={"league_code": league_code, "season": season},
+        )
         return cached_data
-    
+
     # Get league name for soccerdata
     if league_code not in LEAGUE_MAPPING:
-        print(f"⚠️  League {league_code} not supported for xG stats")
+        logger.warning(
+            "League not supported for xG stats",
+            extra={"league_code": league_code},
+        )
         return {}
     
     league_name = LEAGUE_MAPPING[league_code]
@@ -274,7 +319,14 @@ def fetch_league_xg_stats(league_code, season=None):
             season_display = f"{season}-{season+1}"
         else:
             season_display = str(season)
-        print(f"📊 Fetching xG stats for {league_name} (season {season_display})...")
+        logger.info(
+            "Fetching league xG stats",
+            extra={
+                "league_name": league_name,
+                "league_code": league_code,
+                "season": season_display,
+            },
+        )
         
         # Fetch team stats from FBref
         fbref = sd.FBref(leagues=league_name, seasons=season)
@@ -385,11 +437,21 @@ def fetch_league_xg_stats(league_code, season=None):
         # Save to cache
         save_to_cache(cache_key, xg_data)
         
-        print(f"✅ Fetched xG stats for {len(xg_data)} teams in {league_name}")
+        logger.info(
+            "Fetched league xG stats",
+            extra={
+                "league_name": league_name,
+                "league_code": league_code,
+                "team_count": len(xg_data),
+            },
+        )
         return xg_data
-        
+
     except Exception as e:
-        print(f"❌ Error fetching xG stats for {league_code}: {e}")
+        logger.exception(
+            "Error fetching league xG stats",
+            extra={"league_code": league_code, "season": season},
+        )
         return {}
 
 
@@ -427,8 +489,11 @@ def get_team_xg_stats(team_name, league_code, season=None):
     for fbref_team, stats in league_stats.items():
         if team_name_lower in fbref_team.lower() or fbref_team.lower() in team_name_lower:
             return stats
-    
-    print(f"⚠️  Team '{team_name}' not found in {league_code} xG stats")
+
+    logger.warning(
+        "Team not found in league xG stats",
+        extra={"team_name": team_name, "league_code": league_code},
+    )
     return None
 
 
@@ -477,7 +542,15 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     home_matches = []
     away_matches = []
     
-    print("🔄 Fetching match logs in parallel for both teams...")
+    logger.info(
+        "Fetching match logs in parallel",
+        extra={
+            "home_team": home_team,
+            "away_team": away_team,
+            "league_code": league_code,
+            "season": season,
+        },
+    )
     with ThreadPoolExecutor(max_workers=2) as executor:
         # Submit both fetch tasks
         future_home = executor.submit(fetch_team_match_logs, home_fbref_name, league_code, season)
@@ -487,12 +560,20 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         try:
             home_matches = future_home.result(timeout=30)
         except Exception as e:
-            print(f"Could not fetch rolling data for {home_team}: {e}")
-        
+            logger.warning(
+                "Failed to fetch rolling data for home team",
+                exc_info=e,
+                extra={"team": home_team, "league_code": league_code, "season": season},
+            )
+
         try:
             away_matches = future_away.result(timeout=30)
         except Exception as e:
-            print(f"Could not fetch rolling data for {away_team}: {e}")
+            logger.warning(
+                "Failed to fetch rolling data for away team",
+                exc_info=e,
+                extra={"team": away_team, "league_code": league_code, "season": season},
+            )
     
     # Process home team data
     if home_matches:
@@ -674,7 +755,10 @@ def fetch_team_match_logs(team_name, league_code, season=None):
     """
     # Check if league is supported
     if league_code not in LEAGUE_MAPPING:
-        print(f"⚠️  League {league_code} not supported for match logs")
+        logger.warning(
+            "League not supported for match logs",
+            extra={"league_code": league_code, "team_name": team_name},
+        )
         return []
     
     league_name = LEAGUE_MAPPING[league_code]
@@ -691,12 +775,28 @@ def fetch_team_match_logs(team_name, league_code, season=None):
         cached_data = MATCH_LOGS_CACHE[cache_key]
         cache_age = current_time - cached_data['timestamp']
         if cache_age < MATCH_LOGS_CACHE_TTL:
-            print(f"✅ Using cached match logs for {team_name} (age: {cache_age:.1f}s)")
+            logger.info(
+                "Using cached match logs",
+                extra={
+                    "team_name": team_name,
+                    "league_code": league_code,
+                    "season": season,
+                    "cache_age_seconds": round(cache_age, 1),
+                },
+            )
             return cached_data['data']
     
     try:
         # Fetch schedule data
-        print(f"📊 Fetching match logs for {team_name} in {league_name} (season {season})...")
+        logger.info(
+            "Fetching match logs",
+            extra={
+                "team_name": team_name,
+                "league_name": league_name,
+                "league_code": league_code,
+                "season": season,
+            },
+        )
         fbref = sd.FBref(league_name, season)
         schedule = fbref.read_schedule()
         
@@ -802,7 +902,15 @@ def fetch_team_match_logs(team_name, league_code, season=None):
         # Sort by date (most recent first)
         matches.sort(key=lambda x: x['date'], reverse=True)
         
-        print(f"✅ Found {len(matches)} completed matches for {team_name}")
+        logger.info(
+            "Match logs fetched",
+            extra={
+                "team_name": team_name,
+                "league_code": league_code,
+                "season": season,
+                "match_count": len(matches),
+            },
+        )
         
         # Cache the results
         MATCH_LOGS_CACHE[cache_key] = {
@@ -813,7 +921,10 @@ def fetch_team_match_logs(team_name, league_code, season=None):
         return matches
         
     except Exception as e:
-        print(f"❌ Error fetching match logs for {team_name}: {e}")
+        logger.exception(
+            "Error fetching match logs",
+            extra={"team_name": team_name, "league_code": league_code, "season": season},
+        )
         return []
 
 
@@ -873,19 +984,19 @@ def extract_last_5_results(matches, limit=5):
 # Test function
 if __name__ == "__main__":
     # Test fetching xG stats
-    print("Testing xG Data Fetcher...")
+    logger.info("Testing xG Data Fetcher")
     
     # Test Premier League
     stats = fetch_league_xg_stats("PL")
     if stats:
-        print(f"Found {len(stats)} teams")
+        logger.info("League stats fetched", extra={"league_code": "PL", "team_count": len(stats)})
         # Print first team as example
         first_team = list(stats.keys())[0]
-        print(f"\nExample - {first_team}:")
-        print(json.dumps(stats[first_team], indent=2))
+        logger.info("Example team stats", extra={"team": first_team, "stats": stats[first_team]})
     
     # Test match prediction
-    print("\n" + "="*50)
     prediction = get_match_xg_prediction("Arsenal", "Chelsea", "PL")
-    print("Match Prediction:")
-    print(json.dumps(prediction, indent=2))
+    logger.info(
+        "Sample match prediction",
+        extra={"home_team": "Arsenal", "away_team": "Chelsea", "prediction": prediction},
+    )

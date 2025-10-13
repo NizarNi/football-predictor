@@ -10,11 +10,12 @@ from io import StringIO
 from typing import Optional, Dict, Any
 import os
 from config import (
-    ELO_CACHE_DURATION_HOURS, 
-    API_TIMEOUT_ELO, 
-    HYBRID_ELO_WEIGHT, 
+    ELO_CACHE_DURATION_HOURS,
+    API_TIMEOUT_ELO,
+    HYBRID_ELO_WEIGHT,
     HYBRID_MARKET_WEIGHT,
-    TEAM_NAME_MAP_ELO as TEAM_NAME_MAP
+    TEAM_NAME_MAP_ELO as TEAM_NAME_MAP,
+    setup_logger,
 )
 
 # ClubElo.com API - Original source for Elo ratings
@@ -26,6 +27,8 @@ _elo_cache: Dict[str, Optional[Any]] = {
     "data": None,
     "timestamp": None
 }
+
+logger = setup_logger(__name__)
 
 
 def fetch_team_elo_ratings():
@@ -40,11 +43,15 @@ def fetch_team_elo_ratings():
     if _elo_cache["data"] and _elo_cache["timestamp"]:
         cache_age = datetime.now() - _elo_cache["timestamp"]
         if cache_age < timedelta(hours=ELO_CACHE_DURATION_HOURS):
-            print(f"✅ Using cached Elo ratings (age: {cache_age.seconds // 3600}h {(cache_age.seconds % 3600) // 60}m)")
+            cache_age_minutes = int(cache_age.total_seconds() // 60)
+            logger.info(
+                "Using cached Elo ratings",
+                extra={"cache_age_minutes": cache_age_minutes},
+            )
             return _elo_cache["data"]
-    
+
     try:
-        print("🔍 Fetching latest Elo ratings from ClubElo.com...")
+        logger.info("Fetching latest Elo ratings from ClubElo.com")
         
         # ClubElo API requires date parameter (YYYY-MM-DD)
         today = datetime.now().strftime("%Y-%m-%d")
@@ -75,17 +82,20 @@ def fetch_team_elo_ratings():
             # Update cache
             _elo_cache["data"] = team_elo_ratings
             _elo_cache["timestamp"] = datetime.now()
-            print(f"✅ Successfully fetched Elo ratings for {len(team_elo_ratings)} teams")
+            logger.info(
+                "Successfully fetched Elo ratings",
+                extra={"team_count": len(team_elo_ratings)},
+            )
             return team_elo_ratings
         else:
-            print("⚠️ No Elo ratings found in ClubElo data")
+            logger.warning("No Elo ratings found in ClubElo data")
             return None
-    
+
     except Exception as e:
-        print(f"❌ Error fetching Elo ratings: {e}")
+        logger.exception("Error fetching Elo ratings")
         # Return cached data if available, even if expired
         if _elo_cache["data"]:
-            print("⚠️ Using expired cache due to fetch error")
+            logger.warning("Using expired Elo cache due to fetch error")
             return _elo_cache["data"]
         return None
 
@@ -108,29 +118,56 @@ def get_team_elo(team_name):
     # Step 1: Check alias map first
     mapped_name = TEAM_NAME_MAP.get(team_name)
     if mapped_name and mapped_name in elo_ratings:
-        print(f"✅ Mapped '{team_name}' → '{mapped_name}' (Elo: {elo_ratings[mapped_name]:.1f})")
+        logger.info(
+            "Mapped team name to ClubElo alias",
+            extra={
+                "requested_name": team_name,
+                "resolved_name": mapped_name,
+                "elo": elo_ratings[mapped_name],
+            },
+        )
         return elo_ratings[mapped_name]
     
     # Step 2: Try exact match
     if team_name in elo_ratings:
-        print(f"✅ Exact match '{team_name}' (Elo: {elo_ratings[team_name]:.1f})")
+        logger.info(
+            "Exact team name match found",
+            extra={"team_name": team_name, "elo": elo_ratings[team_name]},
+        )
         return elo_ratings[team_name]
     
     # Step 3: Try case-insensitive match
     team_name_lower = team_name.lower()
     for elo_team_name, elo_rating in elo_ratings.items():
         if elo_team_name.lower() == team_name_lower:
-            print(f"✅ Case-insensitive match '{team_name}' → '{elo_team_name}' (Elo: {elo_rating:.1f})")
+            logger.info(
+                "Case-insensitive team name match",
+                extra={
+                    "requested_name": team_name,
+                    "resolved_name": elo_team_name,
+                    "elo": elo_rating,
+                },
+            )
             return elo_rating
     
     # Step 4: Try partial matching (substring)
     for elo_team_name, elo_rating in elo_ratings.items():
         if team_name_lower in elo_team_name.lower() or elo_team_name.lower() in team_name_lower:
-            print(f"✅ Partial match '{team_name}' → '{elo_team_name}' (Elo: {elo_rating:.1f})")
+            logger.info(
+                "Partial team name match",
+                extra={
+                    "requested_name": team_name,
+                    "resolved_name": elo_team_name,
+                    "elo": elo_rating,
+                },
+            )
             return elo_rating
-    
+
     # Team not found - this is expected for smaller teams/leagues not tracked by ClubElo
-    print(f"ℹ️  Elo rating unavailable for '{team_name}' (team not in ClubElo database)")
+    logger.info(
+        "Elo rating unavailable for team",
+        extra={"requested_name": team_name},
+    )
     return None
 
 
@@ -255,29 +292,35 @@ def detect_value_bets(elo_probs, market_probs, threshold=0.10):
 
 if __name__ == "__main__":
     # Test the Elo client
-    print("\n=== Testing Elo Rating Client ===\n")
-    
+    logger.info("Testing Elo Rating Client")
+
     # Fetch all ratings
     ratings = fetch_team_elo_ratings()
     if ratings:
-        print(f"\nSample Elo Ratings:")
-        for team, elo in list(ratings.items())[:5]:
-            print(f"  {team}: {elo:.1f}")
-    
+        sample = list(ratings.items())[:5]
+        logger.info(
+            "Sample Elo ratings",
+            extra={"samples": {team: elo for team, elo in sample}},
+        )
+
     # Test specific team lookup
-    print("\n=== Testing Team Lookup ===")
     arsenal_elo = get_team_elo("Arsenal")
     if arsenal_elo:
-        print(f"Arsenal Elo: {arsenal_elo:.1f}")
-    
+        logger.info("Arsenal Elo rating", extra={"elo": arsenal_elo})
+
     # Test probability calculation
     if arsenal_elo:
         city_elo = get_team_elo("Manchester City")
         if city_elo:
-            print(f"\n=== Testing Probability Calculation ===")
-            print(f"Arsenal ({arsenal_elo:.1f}) vs Manchester City ({city_elo:.1f})")
             probs = calculate_elo_probabilities(arsenal_elo, city_elo)
             if probs:
-                print(f"  Home Win: {probs['home_win']*100:.1f}%")
-                print(f"  Draw: {probs['draw']*100:.1f}%")
-                print(f"  Away Win: {probs['away_win']*100:.1f}%")
+                logger.info(
+                    "Probability calculation sample",
+                    extra={
+                        "home_team": "Arsenal",
+                        "away_team": "Manchester City",
+                        "home_win_pct": probs['home_win'] * 100,
+                        "draw_pct": probs['draw'] * 100,
+                        "away_win_pct": probs['away_win'] * 100,
+                    },
+                )

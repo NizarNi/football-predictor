@@ -3,6 +3,49 @@ Configuration constants for Football Prediction Platform
 Centralizes all magic numbers and configuration values for maintainability
 """
 
+import logging
+import os
+from logging.handlers import RotatingFileHandler
+
+
+def setup_logger(name: str) -> logging.Logger:
+    """Configure and return a module-specific logger.
+
+    The logger writes to both stdout and ``football_predictor.log`` with a
+    default level of DEBUG that can be overridden via the ``LOG_LEVEL``
+    environment variable.
+    """
+
+    logger = logging.getLogger(name)
+
+    if logger.handlers:
+        return logger
+
+    log_level_name = os.getenv("LOG_LEVEL", "DEBUG").upper()
+    log_level = getattr(logging, log_level_name, logging.DEBUG)
+    logger.setLevel(log_level)
+
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(log_level)
+    logger.addHandler(console_handler)
+
+    file_handler = RotatingFileHandler(
+        "football_predictor.log", maxBytes=5 * 1024 * 1024, backupCount=3
+    )
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(log_level)
+    logger.addHandler(file_handler)
+
+    logger.propagate = False
+
+    return logger
+
 # Hybrid Model Weights
 HYBRID_ELO_WEIGHT = 0.60  # Elo ratings contribution to hybrid predictions
 HYBRID_MARKET_WEIGHT = 0.40  # Market odds contribution to hybrid predictions
