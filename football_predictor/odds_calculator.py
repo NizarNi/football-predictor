@@ -1,3 +1,11 @@
+import logging
+
+from config import DEFAULT_PROBABILITY
+from utils import fuzzy_team_match, normalize_team_name
+
+
+logger = logging.getLogger(__name__)
+
 def decimal_to_probability(decimal_odds):
     if decimal_odds <= 1:
         return 0
@@ -9,37 +17,67 @@ def american_to_probability(american_odds):
     else:
         return abs(american_odds) / (abs(american_odds) + 100)
 
+
+def _identify_outcome_side(outcome_name, home_team, away_team):
+    if not outcome_name:
+        return None
+
+    name_lower = outcome_name.lower()
+    if name_lower == 'draw':
+        return 'draw'
+
+    def _matches(candidate):
+        return bool(candidate) and (
+            normalize_team_name(outcome_name) == normalize_team_name(candidate)
+            or fuzzy_team_match(outcome_name, candidate)
+        )
+
+    if _matches(home_team):
+        return 'home'
+    if _matches(away_team):
+        return 'away'
+
+    return None
+
+
 def calculate_averaged_probabilities(bookmakers, home_team, away_team):
     home_probs = []
     draw_probs = []
     away_probs = []
-    
+
     for bookmaker in bookmakers:
         for market in bookmaker.get('markets', []):
             if market['key'] == 'h2h':
                 outcomes = market.get('outcomes', [])
-                
+
                 for outcome in outcomes:
                     prob = decimal_to_probability(outcome['price'])
-                    name = outcome['name']
-                    
-                    if name == home_team:
+                    side = _identify_outcome_side(outcome.get('name'), home_team, away_team)
+
+                    if side == 'home':
                         home_probs.append(prob)
-                    elif name.lower() == 'draw':
+                    elif side == 'draw':
                         draw_probs.append(prob)
-                    elif name == away_team:
+                    elif side == 'away':
                         away_probs.append(prob)
-    
-    avg_home = sum(home_probs) / len(home_probs) if home_probs else 0.33
-    avg_draw = sum(draw_probs) / len(draw_probs) if draw_probs else 0.33
-    avg_away = sum(away_probs) / len(away_probs) if away_probs else 0.33
-    
+                    else:
+                        logger.debug(
+                            "Unmatched outcome '%s' for fixture %s vs %s",
+                            outcome.get('name'),
+                            home_team,
+                            away_team,
+                        )
+
+    avg_home = sum(home_probs) / len(home_probs) if home_probs else DEFAULT_PROBABILITY
+    avg_draw = sum(draw_probs) / len(draw_probs) if draw_probs else DEFAULT_PROBABILITY
+    avg_away = sum(away_probs) / len(away_probs) if away_probs else DEFAULT_PROBABILITY
+
     total = avg_home + avg_draw + avg_away
     if total > 0:
         avg_home /= total
         avg_draw /= total
         avg_away /= total
-    
+
     return {
         "HOME_WIN": round(avg_home, 4),
         "DRAW": round(avg_draw, 4),
@@ -50,24 +88,24 @@ def extract_best_odds(bookmakers, home_team, away_team):
     best_home_odds = {"price": 0, "bookmaker": None}
     best_draw_odds = {"price": 0, "bookmaker": None}
     best_away_odds = {"price": 0, "bookmaker": None}
-    
+
     for bookmaker in bookmakers:
         for market in bookmaker.get('markets', []):
             if market['key'] == 'h2h':
                 for outcome in market.get('outcomes', []):
                     price = outcome['price']
-                    name = outcome['name']
-                    
-                    if name == home_team:
+                    side = _identify_outcome_side(outcome.get('name'), home_team, away_team)
+
+                    if side == 'home':
                         if price > best_home_odds["price"]:
                             best_home_odds = {"price": price, "bookmaker": bookmaker['title']}
-                    elif name.lower() == 'draw':
+                    elif side == 'draw':
                         if price > best_draw_odds["price"]:
                             best_draw_odds = {"price": price, "bookmaker": bookmaker['title']}
-                    elif name == away_team:
+                    elif side == 'away':
                         if price > best_away_odds["price"]:
                             best_away_odds = {"price": price, "bookmaker": bookmaker['title']}
-    
+
     return {
         "home": best_home_odds,
         "draw": best_draw_odds,
