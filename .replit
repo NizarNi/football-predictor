@@ -4,7 +4,7 @@ expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["chromedriver", "geckodriver", "ungoogled-chromium", "xcodebuild", "zlib"]
+packages = ["chromedriver", "geckodriver", "ungoogled-chromium", "xcodebuild", "zlib", "vim-full"]
 
 [workflows]
 runButton = "Project"
@@ -24,7 +24,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd football_predictor && python app.py"
+args = "python -m football_predictor.app"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
