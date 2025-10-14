@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from flask import jsonify, request, current_app
 
 from . import config
+from .errors import APIError
 
 # Routes that must continue returning legacy (unwrapped) JSON so the
 # front-end can consume the responses without modifications.
@@ -105,6 +106,9 @@ def make_ok(data: Optional[Any] = None, message: str = "success", status_code: i
 
 def make_error(error: Any, message: str = "An error occurred", status_code: int = 400):
     """Return a standardized error response (legacy-aware)."""
+    if isinstance(error, APIError):
+        error = error.to_dict()
+
     payload = _build_error_payload(error, message)
     response = jsonify(payload)
     return response, status_code

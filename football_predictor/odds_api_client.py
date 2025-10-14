@@ -1,11 +1,14 @@
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Optional
+
 import requests
 
 from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
 from .constants import BASE_URL, LEAGUE_CODE_MAPPING
 from .utils import create_retry_session, request_with_retries
+from .errors import APIError
 
 API_KEYS = [
     os.environ.get("ODDS_API_KEY_1"),
@@ -47,13 +50,10 @@ def sanitize_error_message(message):
     
     return sanitized
 
-class OddsAPIError(Exception):
-    pass
-
 def get_next_api_key():
     global current_key_index
     if not API_KEYS:
-        raise OddsAPIError("No ODDS_API_KEY environment variables set.")
+        raise APIError("OddsAPI", "CONFIG_ERROR", "No ODDS_API_KEY environment variables set.")
     
     key = API_KEYS[current_key_index]
     current_key_index = (current_key_index + 1) % len(API_KEYS)
@@ -62,7 +62,7 @@ def get_next_api_key():
 def get_available_sports():
     api_key = get_next_api_key()
     url = f"{BASE_URL}/sports/"
-    
+
     try:
         response = request_with_retries(
             _session,
@@ -77,11 +77,20 @@ def get_available_sports():
             context="Odds API call",
             sanitize=sanitize_error_message,
         )
-        return response.json()
-    except requests.exceptions.RequestException as e:
+    except requests.Timeout:
+        logger.error("Failed to fetch available sports: request timed out")
+        raise APIError("OddsAPI", "TIMEOUT", "The Odds API did not respond in time.")
+    except requests.RequestException as e:
         error_msg = sanitize_error_message(str(e))
         logger.error("Failed to fetch available sports: %s", error_msg)
-        raise OddsAPIError(f"Error fetching sports: {error_msg}")
+        raise APIError("OddsAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from e
+
+    try:
+        return response.json()
+    except ValueError as e:
+        error_msg = sanitize_error_message(str(e))
+        logger.error("Failed to parse available sports response: %s", error_msg)
+        raise APIError("OddsAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg) from e
 
 def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format="decimal"):
     global invalid_keys
@@ -91,10 +100,14 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
     valid_keys = [k for k in API_KEYS if k not in invalid_keys]
     
     if not valid_keys:
-        raise OddsAPIError("All API keys are invalid. Please check your ODDS_API_KEY configurations.")
-    
+        raise APIError(
+            "OddsAPI",
+            "AUTH_ERROR",
+            "All API keys are invalid. Please check your ODDS_API_KEY configurations.",
+        )
+
     # Try each valid key until one works
-    last_error = None
+    last_error: Optional[APIError] = None
     for attempt, api_key in enumerate(valid_keys):
         params = {
             "apiKey": api_key,
@@ -102,7 +115,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
             "markets": markets,
             "oddsFormat": odds_format
         }
-        
+
         try:
             response = request_with_retries(
                 _session,
@@ -117,17 +130,6 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                 context=f"Odds API call for {sport_key}",
                 sanitize=sanitize_error_message,
             )
-            data = response.json()
-
-            quota_remaining = response.headers.get('x-requests-remaining', 'unknown')
-            quota_used = response.headers.get('x-requests-used', 'unknown')
-            logger.info(
-                "📊 Odds API quota: %s remaining, %s used",
-                quota_remaining,
-                quota_used,
-            )
-            
-            return data
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 # Invalid/expired key - mark it and try next
@@ -139,25 +141,78 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                     key_position,
                     total_keys,
                 )
-                last_error = e
+                last_error = APIError(
+                    "OddsAPI",
+                    "AUTH_ERROR",
+                    "The provided Odds API key was rejected.",
+                )
                 continue
             else:
                 error_msg = sanitize_error_message(str(e))
                 logger.error("Failed odds fetch for %s: %s", sport_key, error_msg)
-                raise OddsAPIError(f"Error fetching odds for {sport_key}: {error_msg}")
-        except requests.exceptions.RequestException as e:
-            last_error = e
+                raise APIError(
+                    "OddsAPI",
+                    "HTTP_ERROR",
+                    f"Error fetching odds for {sport_key}.",
+                    error_msg,
+                ) from e
+        except requests.Timeout:
+            logger.warning(
+                "Timeout retrieving odds for %s with key %s", sport_key, api_key
+            )
+            last_error = APIError(
+                "OddsAPI",
+                "TIMEOUT",
+                "The Odds API did not respond in time.",
+            )
+            continue
+        except requests.RequestException as e:
+            sanitized_error = sanitize_error_message(str(e))
             logger.warning(
                 "Retryable error with key %s for %s: %s",
                 api_key,
                 sport_key,
-                sanitize_error_message(str(e)),
+                sanitized_error,
+            )
+            last_error = APIError(
+                "OddsAPI",
+                "NETWORK_ERROR",
+                "A network error occurred.",
+                sanitized_error,
             )
             continue
-    
+
+        try:
+            data = response.json()
+        except ValueError as e:
+            error_msg = sanitize_error_message(str(e))
+            logger.error("Failed odds fetch for %s: %s", sport_key, error_msg)
+            raise APIError(
+                "OddsAPI",
+                "PARSE_ERROR",
+                "Failed to parse API response.",
+                error_msg,
+            ) from e
+
+        quota_remaining = response.headers.get('x-requests-remaining', 'unknown')
+        quota_used = response.headers.get('x-requests-used', 'unknown')
+        logger.info(
+            "📊 Odds API quota: %s remaining, %s used",
+            quota_remaining,
+            quota_used,
+        )
+
+        return data
+
     # If we get here, all keys failed
-    error_msg = sanitize_error_message(str(last_error)) if last_error else "All API keys exhausted"
-    raise OddsAPIError(f"Error fetching odds for {sport_key}: {error_msg}")
+    if last_error is not None:
+        raise last_error
+
+    raise APIError(
+        "OddsAPI",
+        "NETWORK_ERROR",
+        f"Error fetching odds for {sport_key}.",
+    )
 
 def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
     if league_codes is None:
@@ -200,17 +255,18 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
             league_matches = len([m for m in all_matches if m['sport_key'] == sport_key])
             logger.info("✅ Found %d matches for %s", league_matches, league_code)
 
-        except OddsAPIError as e:
-            error_msg = sanitize_error_message(str(e))
+        except APIError as e:
+            error_detail = e.details or e.message
+            error_msg = sanitize_error_message(error_detail)
             logger.warning("⚠️  Error fetching %s: %s", league_code, error_msg)
             continue
         except Exception as e:
             error_msg = sanitize_error_message(str(e))
             logger.error("⚠️  Unexpected error for %s: %s", league_code, error_msg)
             continue
-    
+
     if not all_matches:
-        raise OddsAPIError("No matches with odds found")
+        raise APIError("OddsAPI", "NO_DATA", "No matches with odds found.")
     
     all_matches.sort(key=lambda x: x['commence_time'])
     return all_matches
@@ -223,10 +279,14 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
     valid_keys = [k for k in API_KEYS if k not in invalid_keys]
     
     if not valid_keys:
-        raise OddsAPIError("All API keys are invalid. Please check your ODDS_API_KEY configurations.")
+        raise APIError(
+            "OddsAPI",
+            "AUTH_ERROR",
+            "All API keys are invalid. Please check your ODDS_API_KEY configurations.",
+        )
     
     # Try each valid key until one works
-    last_error = None
+    last_error: Optional[APIError] = None
     for attempt, api_key in enumerate(valid_keys):
         params = {
             "apiKey": api_key,
@@ -249,10 +309,8 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                 context=f"Event odds call for {sport_key}",
                 sanitize=sanitize_error_message,
             )
-            return response.json()
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
-                # Invalid/expired key - mark it and try next
                 invalid_keys.add(api_key)
                 key_position = attempt + 1
                 total_keys = len(valid_keys)
@@ -261,22 +319,66 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                     key_position,
                     total_keys,
                 )
-                last_error = e
+                last_error = APIError(
+                    "OddsAPI",
+                    "AUTH_ERROR",
+                    "The provided Odds API key was rejected.",
+                )
                 continue
-            else:
-                error_msg = sanitize_error_message(str(e))
-                logger.error("Failed event odds fetch for %s: %s", sport_key, error_msg)
-                raise OddsAPIError(f"Error fetching event odds: {error_msg}")
-        except requests.exceptions.RequestException as e:
-            last_error = e
+
+            error_msg = sanitize_error_message(str(e))
+            logger.error("Failed event odds fetch for %s: %s", sport_key, error_msg)
+            raise APIError(
+                "OddsAPI",
+                "HTTP_ERROR",
+                "Error fetching event odds.",
+                error_msg,
+            ) from e
+        except requests.Timeout:
+            logger.warning(
+                "Timeout retrieving event odds for %s with key %s",
+                sport_key,
+                api_key,
+            )
+            last_error = APIError(
+                "OddsAPI",
+                "TIMEOUT",
+                "The Odds API did not respond in time.",
+            )
+            continue
+        except requests.RequestException as e:
+            sanitized_error = sanitize_error_message(str(e))
             logger.warning(
                 "Retryable error retrieving event odds for %s with key %s: %s",
                 sport_key,
                 api_key,
-                sanitize_error_message(str(e)),
+                sanitized_error,
+            )
+            last_error = APIError(
+                "OddsAPI",
+                "NETWORK_ERROR",
+                "A network error occurred.",
+                sanitized_error,
             )
             continue
-    
-    # If we get here, all keys failed
-    error_msg = sanitize_error_message(str(last_error)) if last_error else "All API keys exhausted"
-    raise OddsAPIError(f"Error fetching event odds: {error_msg}")
+
+        try:
+            return response.json()
+        except ValueError as e:
+            error_msg = sanitize_error_message(str(e))
+            logger.error("Failed event odds fetch for %s: %s", sport_key, error_msg)
+            raise APIError(
+                "OddsAPI",
+                "PARSE_ERROR",
+                "Failed to parse API response.",
+                error_msg,
+            ) from e
+
+    if last_error is not None:
+        raise last_error
+
+    raise APIError(
+        "OddsAPI",
+        "NETWORK_ERROR",
+        "Error fetching event odds.",
+    )

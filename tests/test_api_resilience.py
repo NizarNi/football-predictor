@@ -20,6 +20,7 @@ if "pandas" not in sys.modules:
 from football_predictor import config
 from football_predictor import odds_api_client
 from football_predictor import xg_data_fetcher
+from football_predictor.errors import APIError
 from football_predictor.app import app as flask_app
 
 
@@ -61,11 +62,11 @@ def test_odds_api_retries_on_timeout(monkeypatch, api_key_setup):
 
     monkeypatch.setattr(odds_api_client._session, "request", fake_request)
 
-    with pytest.raises(odds_api_client.OddsAPIError) as exc:
+    with pytest.raises(APIError) as exc:
         odds_api_client.get_available_sports()
 
     assert call_counter["count"] == config.API_MAX_RETRIES
-    assert "timeout" in str(exc.value).lower()
+    assert exc.value.code == "TIMEOUT"
 
 
 def test_odds_api_recovers_after_server_error(monkeypatch, api_key_setup):
@@ -101,15 +102,16 @@ def test_odds_api_permanent_server_error(monkeypatch, api_key_setup):
 
     monkeypatch.setattr(odds_api_client._session, "request", fake_request)
 
-    with pytest.raises(odds_api_client.OddsAPIError):
+    with pytest.raises(APIError) as exc:
         odds_api_client.get_available_sports()
 
     assert call_counter["count"] == config.API_MAX_RETRIES
+    assert exc.value.code in {"NETWORK_ERROR", "HTTP_ERROR"}
 
 
 def test_upcoming_route_returns_make_error_on_failure(monkeypatch):
     def raise_error(*args, **kwargs):
-        raise odds_api_client.OddsAPIError("The Odds API is temporarily unavailable")
+        raise APIError("OddsAPI", "NETWORK_ERROR", "The Odds API is temporarily unavailable.")
 
     monkeypatch.setattr(
         "football_predictor.app.get_upcoming_matches_with_odds", raise_error
@@ -137,5 +139,5 @@ def test_xg_fetcher_wraps_request_exceptions(monkeypatch):
 
     monkeypatch.setattr(xg_data_fetcher.sd, "FBref", FakeFBref)
 
-    with pytest.raises(xg_data_fetcher.XGDataError):
+    with pytest.raises(APIError):
         xg_data_fetcher.fetch_league_xg_stats("PL", season=2024)

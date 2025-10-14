@@ -14,6 +14,7 @@ import requests
 
 from .utils import create_retry_session, get_xg_season
 from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
+from .errors import APIError
 from .constants import (
     CACHE_DIR,
     CAREER_XG_CACHE_TTL,
@@ -36,12 +37,6 @@ _xg_session = create_retry_session(
     backoff_factor=BACKOFF_FACTOR,
     status_forcelist=STATUS_FORCELIST,
 )
-
-
-class XGDataError(Exception):
-    """Custom error for xG data retrieval issues."""
-
-
 # In-memory cache for match logs (team+league+season -> {data, timestamp})
 MATCH_LOGS_CACHE = {}
 
@@ -72,10 +67,17 @@ def _safe_soccerdata_call(func, context: str, *args, **kwargs):
 
     try:
         return func(*args, **kwargs)
+    except requests.exceptions.Timeout as exc:
+        logger.error("❌ %s timed out", context)
+        raise APIError("FBRefAPI", "TIMEOUT", "The FBRef API did not respond in time.") from exc
     except requests.exceptions.RequestException as exc:
         error_msg = str(exc)
         logger.error("❌ %s: %s", context, error_msg)
-        raise XGDataError(f"{context}: {error_msg}") from exc
+        raise APIError("FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
+    except ValueError as exc:
+        error_msg = str(exc)
+        logger.error("❌ %s parse error: %s", context, error_msg)
+        raise APIError("FBRefAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg) from exc
 
 
 def normalize_team_name_for_fbref(team_name):
@@ -252,12 +254,17 @@ def fetch_career_xg_stats(team_name, league_code):
                         'xga_per_game': round(xga / games, 2)
                     })
                     
-        except XGDataError:
+        except APIError:
             raise
         except requests.exceptions.RequestException as exc:
             error_msg = str(exc)
             logger.error("❌ FBref session error for %s: %s", league_code, error_msg)
-            raise XGDataError(f"Unable to fetch FBref data: {error_msg}") from exc
+            raise APIError(
+                "FBRefAPI",
+                "NETWORK_ERROR",
+                "Unable to fetch FBref data.",
+                error_msg,
+            ) from exc
         except Exception as e:
             # Team might not have been in this league this season
             continue
@@ -465,12 +472,17 @@ def fetch_league_xg_stats(league_code, season=None):
         logger.info("✅ Fetched xG stats for %d teams in %s", len(xg_data), league_name)
         return xg_data
 
-    except XGDataError:
+    except APIError:
         raise
     except requests.exceptions.RequestException as exc:
         error_msg = str(exc)
         logger.error("❌ FBref request failed for %s: %s", league_code, error_msg)
-        raise XGDataError(f"Unable to fetch xG stats: {error_msg}") from exc
+        raise APIError(
+            "FBRefAPI",
+            "NETWORK_ERROR",
+            "Unable to fetch xG stats.",
+            error_msg,
+        ) from exc
     except Exception as e:
         logger.exception("❌ Error fetching xG stats for %s", league_code)
         return {}
@@ -898,12 +910,17 @@ def fetch_team_match_logs(team_name, league_code, season=None):
         
         return matches
         
-    except XGDataError:
+    except APIError:
         raise
     except requests.exceptions.RequestException as exc:
         error_msg = str(exc)
         logger.error("❌ FBref schedule request failed for %s: %s", team_name, error_msg)
-        raise XGDataError(f"Unable to fetch match logs: {error_msg}") from exc
+        raise APIError(
+            "FBRefAPI",
+            "NETWORK_ERROR",
+            "Unable to fetch match logs.",
+            error_msg,
+        ) from exc
     except Exception as e:
         logger.exception("❌ Error fetching match logs for %s", team_name)
         return []
