@@ -42,19 +42,25 @@ def _logo_override_key(name: str) -> str:
 
 
 TEAM_LOGO_OVERRIDES = {
-    _logo_override_key("Sunderland"): "Sunderland AFC",
-    _logo_override_key("Leeds"): "Leeds United",
-    _logo_override_key("Spurs"): "Tottenham Hotspur",
-    _logo_override_key("Man United"): "Manchester United",
-    _logo_override_key("Man Utd"): "Manchester United",
-    _logo_override_key("Man City"): "Manchester City",
-    _logo_override_key("Newcastle"): "Newcastle United",
-    _logo_override_key("Wolves"): "Wolverhampton Wanderers",
-    _logo_override_key("Bayern Munich"): "Bayern Munich",
-    _logo_override_key("Paris SG"): "Paris Saint-Germain",
-    _logo_override_key("PSG"): "Paris Saint-Germain",
-    _logo_override_key("default"): "/static/images/default_badge.png",
+    "Sunderland": "Sunderland AFC.png",
+    "Leeds": "Leeds United",
+    "Spurs": "Tottenham Hotspur",
+    "Man United": "Manchester United",
+    "Man Utd": "Manchester United",
+    "Man City": "Manchester City",
+    "Newcastle": "Newcastle United",
+    "Wolves": "Wolverhampton Wanderers",
+    "Bayern Munich": "Bayern Munich",
+    "Paris SG": "Paris Saint-Germain",
+    "PSG": "Paris Saint-Germain",
+    "default": "/static/images/default_badge.png",
 }
+
+_NORMALIZED_TEAM_LOGO_OVERRIDES = {
+    _logo_override_key(name): value for name, value in TEAM_LOGO_OVERRIDES.items()
+}
+
+DEFAULT_TEAM_LOGO = TEAM_LOGO_OVERRIDES["default"]
 
 
 _LOGO_URL_CACHE: dict[str, bool] = {}
@@ -375,7 +381,7 @@ def _logo_url_exists(url: str) -> bool:
 def get_team_logo(team_name: Optional[str], league: Optional[str]) -> str:
     """Return a normalized logo URL for the given team and league."""
 
-    default_logo = TEAM_LOGO_OVERRIDES[_logo_override_key("default")]
+    default_logo = DEFAULT_TEAM_LOGO
 
     if not team_name:
         logger.warning("Missing team name for logo lookup (league=%s)", league)
@@ -386,19 +392,19 @@ def get_team_logo(team_name: Optional[str], league: Optional[str]) -> str:
         logger.warning("Missing league for team '%s' when resolving logo", team_name)
         return default_logo
 
-    lookup_keys = {
-        _logo_override_key(team_name),
-        _logo_override_key(normalize_team_name(team_name)),
-    }
+    override_value: Optional[str] = None
+    if team_name in TEAM_LOGO_OVERRIDES:
+        override_value = TEAM_LOGO_OVERRIDES[team_name]
+    else:
+        normalized_key = _logo_override_key(team_name)
+        override_value = _NORMALIZED_TEAM_LOGO_OVERRIDES.get(normalized_key)
+        if override_value is None:
+            normalized_name = normalize_team_name(team_name)
+            override_value = _NORMALIZED_TEAM_LOGO_OVERRIDES.get(
+                _logo_override_key(normalized_name)
+            )
 
-    filename: Optional[str] = None
-    for key in lookup_keys:
-        if key in TEAM_LOGO_OVERRIDES and key != _logo_override_key("default"):
-            filename = TEAM_LOGO_OVERRIDES[key]
-            break
-
-    if filename is None:
-        filename = team_name.strip()
+    filename = override_value or team_name.strip()
 
     if not filename:
         logger.warning(
@@ -410,7 +416,13 @@ def get_team_logo(team_name: Optional[str], league: Optional[str]) -> str:
 
     encoded_league = quote(league_directory, safe="")
     encoded_filename = quote(filename, safe="")
-    logo_url = f"{LOGO_BASE_URL}/{encoded_league}/{encoded_filename}.png"
+
+    if filename.lower().endswith(".png"):
+        logo_path = encoded_filename
+    else:
+        logo_path = f"{encoded_filename}.png"
+
+    logo_url = f"{LOGO_BASE_URL}/{encoded_league}/{logo_path}"
 
     if not _logo_url_exists(logo_url):
         logger.warning(
