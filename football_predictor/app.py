@@ -698,22 +698,22 @@ def get_match_context(match_id):
                 "✅ Context response finalized",
                 extra={"partial": timed_out, "missing": missing_sources},
             )
-            return make_ok(context)
+            return make_ok({"context": context})
 
         except Exception as e:
             logger.exception("Error fetching context for %s", match_id)
-            return make_error(
-                error="Context generation failed",
-                message=str(e),
-                status_code=500
-            )
-    
+            context = {"narrative": "Partial or unavailable data"}
+            return make_ok({"context": context})
+
     except Exception as e:
-        logger.exception("Error in match context for %s", match_id)
+        logger.exception(
+            "❌ Fatal error in match context",
+            extra={"match_id": match_id},
+        )
         return make_error(
-            error="Unable to load match context. Please try again later.",
-            message="Failed to fetch match context",
-            status_code=500
+            error="Internal server error while generating match context",
+            message=str(e),
+            status_code=500,
         )
 
 def generate_match_narrative(home_data, away_data):
