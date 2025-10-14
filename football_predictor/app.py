@@ -523,13 +523,21 @@ def get_match_context(match_id):
         logger.info("Handling /match context request", extra={"match_id": match_id})
         try:
             league_code = validate_league(request.args.get("league"), required=True)
-            home_team = validate_team(request.args.get("home_team"), field_name="home_team")
-            away_team = validate_team(request.args.get("away_team"), field_name="away_team")
+            home_team = validate_team(
+                request.args.get("home_team"),
+                required=False,
+                field_name="home_team",
+            )
+            away_team = validate_team(
+                request.args.get("away_team"),
+                required=False,
+                field_name="away_team",
+            )
         except ValueError as e:
             return make_error(
                 error=str(e),
                 message="Invalid request parameters",
-                status_code=400
+                status_code=400,
             )
 
         from .understat_client import fetch_understat_standings

@@ -110,13 +110,15 @@ def validate_team(
     normalized = _normalize(team)
     if normalized is None:
         if required:
-            _log_and_raise(field_name, f"{field_name.replace('_', ' ')} is required")
+            field_label = field_name.replace('_', ' ')
+            _log_and_raise(field_name, f"{field_label} is required")
         return None
 
     if not _TEAM_PATTERN.fullmatch(normalized):
+        field_label = field_name.replace('_', ' ')
         _log_and_raise(
             field_name,
-            f"Invalid {field_name.replace('_', ' ')}. Only letters, spaces, and .&'()- are allowed.",
+            f"Invalid {field_label}. Only letters, spaces, and .&'()- are allowed.",
         )
 
     return normalized

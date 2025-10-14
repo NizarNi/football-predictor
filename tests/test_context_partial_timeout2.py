@@ -12,6 +12,19 @@ def client():
     return app.test_client()
 
 
+def test_context_accepts_missing_team_params(client):
+    """Context endpoint should accept requests without team parameters."""
+    with patch("football_predictor.understat_client.fetch_understat_standings") as mock_understat:
+        mock_understat.return_value = []
+
+        resp = client.get("/match/test/context?league=EPL")
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["status"] == "ok"
+    assert "home_team" in payload["data"]
+
+
 def test_context_returns_full_data_on_time(client):
     """✅ Should return full response when both APIs finish before timeout."""
     with patch("football_predictor.understat_client.fetch_understat_standings") as mock_understat, \
