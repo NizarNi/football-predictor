@@ -1,7 +1,6 @@
 from flask import jsonify, request
 from typing import Any, Dict, Optional
 
-
 # Routes that must continue returning legacy (unwrapped) JSON so the
 # front-end can consume the responses without modifications.
 _LEGACY_EXACT_PATHS = {
@@ -16,7 +15,6 @@ _LEGACY_PREFIXES = ("/match/",)
 
 def _is_legacy_request() -> bool:
     """Determine if the current request should return legacy JSON."""
-
     try:
         path = request.path  # type: ignore[attr-defined]
     except RuntimeError:
@@ -34,6 +32,7 @@ def _is_legacy_request() -> bool:
 
 
 def _build_success_payload(data: Optional[Any], message: str) -> Dict[str, Any] | Any:
+    """Construct success payload, wrapping unless legacy route."""
     if _is_legacy_request():
         # Legacy endpoints historically returned the raw data structure.
         return data if data is not None else {}
@@ -46,6 +45,7 @@ def _build_success_payload(data: Optional[Any], message: str) -> Dict[str, Any] 
 
 
 def _build_error_payload(error: Any, message: str) -> Dict[str, Any] | Any:
+    """Construct error payload, wrapping unless legacy route."""
     if _is_legacy_request():
         legacy_payload = {"error": error}
         if message:
@@ -60,16 +60,14 @@ def _build_error_payload(error: Any, message: str) -> Dict[str, Any] | Any:
 
 
 def make_ok(data: Optional[Any] = None, message: str = "success", status_code: int = 200):
-    """Return a standardized success response."""
-
+    """Return a standardized success response (legacy-aware)."""
     payload = _build_success_payload(data, message)
     response = jsonify(payload)
     return response, status_code
 
 
 def make_error(error: Any, message: str = "An error occurred", status_code: int = 400):
-    """Return a standardized error response."""
-
+    """Return a standardized error response (legacy-aware)."""
     payload = _build_error_payload(error, message)
     response = jsonify(payload)
     return response, status_code
