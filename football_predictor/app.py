@@ -675,17 +675,19 @@ def get_match_context(match_id):
                 context["source"] = source
 
             logger.info(
-    "✅ Context response finalized",
-    extra={"partial": timed_out, "missing": missing_sources},
-)
+                "✅ Context response finalized",
+                extra={"partial": timed_out, "missing": missing_sources},
+            )
             return make_ok({"context": context})
 
         except Exception as e:
             logger.exception("Error fetching context for %s", match_id)
-        return make_error(error="Context generation failed",message=str(e),
-        status_code=500
-    )
-
+            return make_error(
+                error="Context generation failed",
+                message=str(e),
+                status_code=500
+            )
+    
     except Exception as e:
         logger.exception("Error in match context for %s", match_id)
         return make_error(
