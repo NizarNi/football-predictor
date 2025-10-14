@@ -2,7 +2,8 @@ import requests
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from config import setup_logger, API_TIMEOUT_ODDS
+from config import setup_logger
+from constants import API_TIMEOUT_ODDS, BASE_URL, LEAGUE_CODE_MAPPING
 
 API_KEYS = [
     os.environ.get("ODDS_API_KEY_1"),
@@ -15,8 +16,6 @@ API_KEYS = [
 ]
 API_KEYS = [key for key in API_KEYS if key]
 invalid_keys = set()  # Track invalid keys to skip them
-
-BASE_URL = "https://api.the-odds-api.com/v4"
 current_key_index = 0
 
 logger = setup_logger(__name__)
@@ -36,16 +35,6 @@ def sanitize_error_message(message):
     sanitized = re.sub(r'X-Auth-Token[:\s]+[A-Za-z0-9._-]+', 'X-Auth-Token: ***', sanitized)
     
     return sanitized
-
-LEAGUE_CODE_MAPPING = {
-    "PL": "soccer_epl",
-    "PD": "soccer_spain_la_liga",
-    "BL1": "soccer_germany_bundesliga",
-    "SA": "soccer_italy_serie_a",
-    "FL1": "soccer_france_ligue_one",
-    "CL": "soccer_uefa_champs_league",
-    "EL": "soccer_uefa_europa_league"
-}
 
 class OddsAPIError(Exception):
     pass
