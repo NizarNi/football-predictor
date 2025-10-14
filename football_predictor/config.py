@@ -65,6 +65,9 @@ from .constants import (
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", 10))
 """Default timeout (seconds) for outbound API calls."""
 
+API_TIMEOUT_CONTEXT = int(os.getenv("API_TIMEOUT_CONTEXT", 8))
+"""Hard timeout (seconds) for match context aggregation calls."""
+
 API_MAX_RETRIES = int(os.getenv("API_MAX_RETRIES", 3))
 """Maximum retry attempts for outbound API calls."""
 

@@ -3,8 +3,10 @@ import os
 import json
 from datetime import datetime
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
-from .config import setup_logger
+from .config import setup_logger, API_TIMEOUT_CONTEXT
 from .app_utils import make_ok, make_error, legacy_endpoint
 
 # Import our custom modules
@@ -529,14 +531,53 @@ def get_match_context(match_id):
             # Use Understat as primary source for standings with dynamic season
             current_season = get_current_season()
             logger.info("📊 Fetching standings from Understat", extra={"season": current_season})
-            standings = fetch_understat_standings(league_code, current_season)
-            source = "Understat" if standings else None
 
-            # Fetch Elo ratings for both teams
-            logger.info("🎯 Fetching Elo ratings from ClubElo")
-            home_elo = get_team_elo(home_team) if home_team else None
-            away_elo = get_team_elo(away_team) if away_team else None
-            
+            start_time = time.monotonic()
+            standings = None
+            home_elo = None
+            away_elo = None
+            source = None
+            missing_sources = []
+            timeout_missing = []
+
+            def fetch_elos():
+                logger.info("🎯 Fetching Elo ratings from ClubElo")
+                return (
+                    get_team_elo(home_team) if home_team else None,
+                    get_team_elo(away_team) if away_team else None,
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = {
+                    "understat": executor.submit(fetch_understat_standings, league_code, current_season),
+                    "elo": executor.submit(fetch_elos),
+                }
+                done, not_done = wait(futures.values(), timeout=API_TIMEOUT_CONTEXT)
+
+                for key, future in futures.items():
+                    if future in done:
+                        try:
+                            result = future.result()
+                            if key == "understat":
+                                standings = result
+                                source = "Understat" if standings else None
+                            else:
+                                home_elo, away_elo = result
+                        except Exception:
+                            logger.exception("Error fetching %s data for %s", key, match_id)
+                            missing_sources.append(key)
+                    else:
+                        future.cancel()
+                        missing_sources.append(key)
+                        timeout_missing.append(key)
+
+            timed_out = bool(timeout_missing)
+            if timed_out:
+                elapsed = time.monotonic() - start_time
+                logger.warning("[ContextFetcher] Timeout after %.2fs – served partial data.", elapsed)
+            elif missing_sources:
+                logger.warning("[ContextFetcher] Partial data due to errors: %s", missing_sources)
+
             # Calculate Elo-based probabilities
             elo_probs = calculate_elo_probabilities(home_elo, away_elo) if home_elo and away_elo else None
             
@@ -618,6 +659,20 @@ def get_match_context(match_id):
                         "away_win": elo_probs['away_win']
                     }
                 )
+
+            if timed_out:
+                context.update(
+                    {
+                        "partial": True,
+                        "missing": sorted(set(timeout_missing)),
+                        "source": "partial_timeout",
+                        "warning": "context timeout",
+                    }
+                )
+                if source:
+                    context["standings_source"] = source
+            else:
+                context["source"] = source
 
             return make_ok(context)
 
