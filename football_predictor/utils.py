@@ -4,6 +4,13 @@ Shared helper functions used across multiple modules
 """
 
 from datetime import datetime
+from typing import Any, Callable, Iterable, Optional
+
+import requests
+import time
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 from .config import (
     SEASON_START_MONTH,
     SEASON_MID_MONTH,
@@ -291,5 +298,134 @@ def get_team_abbreviation(team_name):
     if words:
         first_word = words[0].upper()
         return first_word[:3]
-    
+
     return team_name[:3].upper()
+
+
+_DEFAULT_ALLOWED_METHODS: frozenset[str] = frozenset(
+    ["HEAD", "GET", "OPTIONS", "POST", "PUT", "DELETE", "PATCH"]
+)
+_DEFAULT_STATUS_FORCELIST: tuple[int, ...] = (429, 500, 502, 503, 504)
+
+
+def create_retry_session(
+    max_retries: int,
+    backoff_factor: float,
+    status_forcelist: Iterable[int] | None = None,
+) -> requests.Session:
+    """Create a configured :class:`requests.Session` with retry adapters."""
+
+    retry_adapter = HTTPAdapter(
+        max_retries=Retry(
+            total=0,
+            connect=0,
+            read=0,
+            backoff_factor=backoff_factor,
+            status_forcelist=status_forcelist or _DEFAULT_STATUS_FORCELIST,
+            allowed_methods=_DEFAULT_ALLOWED_METHODS,
+            raise_on_status=False,
+        )
+    )
+
+    session = requests.Session()
+    session.mount("https://", retry_adapter)
+    session.mount("http://", retry_adapter)
+    return session
+
+
+def _sanitize_value(value: Any, sanitizer: Optional[Callable[[str], str]] = None) -> str:
+    text = "" if value is None else str(value)
+    if sanitizer is None:
+        return text
+    try:
+        return sanitizer(text)
+    except Exception:
+        return text
+
+
+def request_with_retries(
+    session: requests.Session,
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    max_retries: int,
+    backoff_factor: float,
+    status_forcelist: Iterable[int] | None,
+    logger,
+    context: str,
+    sanitize: Optional[Callable[[str], str]] = None,
+    **kwargs: Any,
+) -> requests.Response:
+    """Perform an HTTP request with retry and logging support."""
+
+    retry_state = Retry(
+        total=max_retries,
+        connect=max_retries,
+        read=max_retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=tuple(status_forcelist or _DEFAULT_STATUS_FORCELIST),
+        allowed_methods=_DEFAULT_ALLOWED_METHODS,
+        raise_on_status=False,
+    )
+
+    attempts = 0
+    attempted_retries = 0
+    last_exception: Optional[requests.exceptions.RequestException] = None
+
+    while attempts < max_retries:
+        attempts += 1
+        response: Optional[requests.Response] = None
+
+        try:
+            response = session.request(method, url, timeout=timeout, **kwargs)
+            if response.status_code in retry_state.status_forcelist:
+                raise requests.exceptions.HTTPError(
+                    f"{response.status_code} Server Error: {response.reason}",
+                    response=response,
+                )
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as exc:
+            last_exception = exc
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            should_retry = attempts < max_retries and (
+                isinstance(exc, (requests.exceptions.Timeout, requests.exceptions.ConnectionError))
+                or status_code in retry_state.status_forcelist
+            )
+
+            if not should_retry:
+                break
+
+            attempted_retries += 1
+            retry_state = retry_state.increment(
+                method=method,
+                url=url,
+                response=getattr(exc, "response", None) or response,
+                error=exc,
+            )
+            backoff = retry_state.get_backoff_time()
+
+            logger.warning(
+                "Retrying %s (%d/%d): %s - %s",
+                context,
+                attempts,
+                max_retries,
+                _sanitize_value(url, sanitize),
+                _sanitize_value(exc, sanitize),
+            )
+
+            if backoff > 0:
+                time.sleep(backoff)
+
+    if last_exception is not None:
+        if attempted_retries > 0 or attempts >= max_retries:
+            logger.error(
+                "Failed %s after %d attempts: %s",
+                context,
+                max_retries,
+                _sanitize_value(last_exception, sanitize),
+            )
+        raise last_exception
+
+    raise RuntimeError("request_with_retries exited without attempting a request")

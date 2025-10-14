@@ -62,6 +62,13 @@ from .constants import (
 )
 
 
+API_TIMEOUT = int(os.getenv("API_TIMEOUT", 10))
+"""Default timeout (seconds) for outbound API calls."""
+
+API_MAX_RETRIES = int(os.getenv("API_MAX_RETRIES", 3))
+"""Maximum retry attempts for outbound API calls."""
+
+
 def setup_logger(name: str) -> logging.Logger:
     """Create or retrieve a configured logger for the application."""
 
