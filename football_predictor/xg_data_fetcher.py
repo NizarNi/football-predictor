@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
+from .app_utils import AdaptiveTimeoutController
 from .utils import create_retry_session, get_xg_season
 from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
 from .errors import APIError
@@ -28,6 +29,7 @@ from .constants import (
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 logger = setup_logger(__name__)
+adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT, max_timeout=30)
 
 STATUS_FORCELIST = (429, 500, 502, 503, 504)
 BACKOFF_FACTOR = 0.5
@@ -47,6 +49,8 @@ CAREER_XG_CACHE = {}
 def _configure_fbref_client(fbref_client):
     """Attach the retry session to a soccerdata FBref client when possible."""
 
+    timeout = adaptive_timeout.get_timeout()
+
     for attr in ("session", "_session"):
         if hasattr(fbref_client, attr):
             current = getattr(fbref_client, attr)
@@ -55,7 +59,7 @@ def _configure_fbref_client(fbref_client):
 
     if hasattr(fbref_client, "timeout"):
         try:
-            setattr(fbref_client, "timeout", API_TIMEOUT)
+            setattr(fbref_client, "timeout", timeout)
         except Exception:
             pass
 
@@ -65,13 +69,33 @@ def _configure_fbref_client(fbref_client):
 def _safe_soccerdata_call(func, context: str, *args, **kwargs):
     """Execute a soccerdata call and wrap network errors."""
 
+    timeout = adaptive_timeout.get_timeout()
+    bound_client = getattr(func, "__self__", None)
+    if bound_client is not None and hasattr(bound_client, "timeout"):
+        try:
+            setattr(bound_client, "timeout", timeout)
+        except Exception:
+            pass
+
     try:
-        return func(*args, **kwargs)
+        result = func(*args, **kwargs)
+        adaptive_timeout.record_success()
+        return result
     except requests.exceptions.Timeout as exc:
+        adaptive_timeout.record_failure()
+        logger.warning("[Resilience] API timeout or network issue: %s", exc)
         logger.error("❌ %s timed out", context)
         raise APIError("FBRefAPI", "TIMEOUT", "The FBRef API did not respond in time.") from exc
-    except requests.exceptions.RequestException as exc:
+    except requests.exceptions.ConnectionError as exc:
+        adaptive_timeout.record_failure()
         error_msg = str(exc)
+        logger.warning("[Resilience] API timeout or network issue: %s", exc)
+        logger.error("❌ %s: %s", context, error_msg)
+        raise APIError("FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
+    except requests.exceptions.RequestException as exc:
+        adaptive_timeout.record_failure()
+        error_msg = str(exc)
+        logger.warning("[Resilience] API request failure detected: %s", exc)
         logger.error("❌ %s: %s", context, error_msg)
         raise APIError("FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
     except ValueError as exc:

@@ -1,11 +1,12 @@
 import asyncio
 import aiohttp
 from understat import Understat
-from typing import List, Dict, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 import threading
 import statistics
 
+from .app_utils import AdaptiveTimeoutController
 from .utils import get_current_season
 from .config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT, setup_logger
 from .errors import APIError
@@ -25,19 +26,26 @@ _standings_cache = {}
 _cache_lock = threading.Lock()
 
 logger = setup_logger(__name__)
+adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT_UNDERSTAT, max_timeout=30)
 
 def sync_understat_call(async_func, context: str = "Understat API call"):
     """Wrapper to run async Understat functions synchronously with timeout"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    timeout = adaptive_timeout.get_timeout()
+
     try:
-        return loop.run_until_complete(
-            asyncio.wait_for(async_func(), timeout=API_TIMEOUT_UNDERSTAT)
+        result = loop.run_until_complete(
+            asyncio.wait_for(async_func(), timeout=timeout)
         )
+        adaptive_timeout.record_success()
+        return result
     except asyncio.TimeoutError as exc:
+        adaptive_timeout.record_failure()
+        logger.warning("[Resilience] API timeout or network issue: %s", exc)
         logger.error(
-            "⏱️ Understat request timed out after %s seconds (%s)",
-            API_TIMEOUT_UNDERSTAT,
+            "⏱️ Understat request timed out after %.1f seconds (%s)",
+            timeout,
             context,
         )
         raise APIError(
@@ -47,7 +55,19 @@ def sync_understat_call(async_func, context: str = "Understat API call"):
         ) from exc
     except APIError:
         raise
+    except aiohttp.ClientError as exc:
+        adaptive_timeout.record_failure()
+        logger.warning("[Resilience] API request failure detected: %s", exc)
+        logger.error("❌ Understat error during %s: %s", context, exc)
+        raise APIError(
+            "UnderstatAPI",
+            "NETWORK_ERROR",
+            "A network error occurred.",
+            str(exc),
+        ) from exc
     except Exception as exc:
+        adaptive_timeout.record_failure()
+        logger.warning("[Resilience] API request failure detected: %s", exc)
         logger.error("❌ Understat error during %s: %s", context, exc)
         raise APIError(
             "UnderstatAPI",
@@ -156,8 +176,17 @@ async def _fetch_league_standings(league_code: str, season: Optional[int] = None
         logger.warning("⚠️ Understat: League %s not supported", league_code)
         return []
 
+    timeout = adaptive_timeout.get_timeout()
+    session_kwargs: Dict[str, Any] = {}
+
+    if hasattr(aiohttp, "ClientTimeout"):
+        try:
+            session_kwargs["timeout"] = aiohttp.ClientTimeout(total=timeout)
+        except Exception:
+            session_kwargs = {}
+
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(**session_kwargs) as session:
             understat = Understat(session)
 
             # Get team stats
