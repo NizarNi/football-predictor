@@ -3,11 +3,12 @@ import aiohttp
 from understat import Understat
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-from functools import lru_cache
 import threading
 import statistics
+
 from .utils import get_current_season
-from .config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT
+from .config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT, setup_logger
+from .errors import APIError
 
 # Map league codes to Understat league names
 LEAGUE_MAP = {
@@ -23,15 +24,37 @@ LEAGUE_MAP = {
 _standings_cache = {}
 _cache_lock = threading.Lock()
 
-def sync_understat_call(async_func):
+logger = setup_logger(__name__)
+
+def sync_understat_call(async_func, context: str = "Understat API call"):
     """Wrapper to run async Understat functions synchronously with timeout"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(asyncio.wait_for(async_func(), timeout=API_TIMEOUT_UNDERSTAT))
-    except asyncio.TimeoutError:
-        print(f"⏱️  Understat request timed out after {API_TIMEOUT_UNDERSTAT} seconds")
-        return [] if 'standings' in async_func.__name__ else None
+        return loop.run_until_complete(
+            asyncio.wait_for(async_func(), timeout=API_TIMEOUT_UNDERSTAT)
+        )
+    except asyncio.TimeoutError as exc:
+        logger.error(
+            "⏱️ Understat request timed out after %s seconds (%s)",
+            API_TIMEOUT_UNDERSTAT,
+            context,
+        )
+        raise APIError(
+            "UnderstatAPI",
+            "TIMEOUT",
+            "The Understat API did not respond in time.",
+        ) from exc
+    except APIError:
+        raise
+    except Exception as exc:
+        logger.error("❌ Understat error during %s: %s", context, exc)
+        raise APIError(
+            "UnderstatAPI",
+            "NETWORK_ERROR",
+            "A network error occurred.",
+            str(exc),
+        ) from exc
     finally:
         loop.close()
 
@@ -128,21 +151,21 @@ async def _fetch_league_standings(league_code: str, season: Optional[int] = None
         season = get_current_season()
     
     understat_league = LEAGUE_MAP.get(league_code)
-    
+
     if not understat_league:
-        print(f"⚠️  League {league_code} not supported by Understat")
+        logger.warning("⚠️ Understat: League %s not supported", league_code)
         return []
-    
+
     try:
         async with aiohttp.ClientSession() as session:
             understat = Understat(session)
-            
+
             # Get team stats
             teams = await understat.get_teams(understat_league, season)
-            
+
             # Get league results to extract standings
             results = await understat.get_league_results(understat_league, season)
-            
+
             # Build standings table
             standings = {}
             for match in results:
@@ -318,12 +341,41 @@ async def _fetch_league_standings(league_code: str, season: Optional[int] = None
                 season_avg_xg = xg_per_game
                 team['recent_trend'] = _calculate_recent_trend(history, season_avg_xg)
             
-            print(f"✅ Understat: Retrieved {len(standings_list)} teams for {league_code}")
+            logger.info(
+                "✅ Understat: Retrieved %d teams for %s",
+                len(standings_list),
+                league_code,
+            )
             return standings_list
-            
-    except Exception as e:
-        print(f"❌ Understat error for {league_code}: {str(e)}")
-        return []
+
+    except aiohttp.ClientError as exc:
+        error_msg = str(exc)
+        logger.error("❌ Understat network error for %s: %s", league_code, error_msg)
+        raise APIError(
+            "UnderstatAPI",
+            "NETWORK_ERROR",
+            "A network error occurred.",
+            error_msg,
+        ) from exc
+    except ValueError as exc:
+        error_msg = str(exc)
+        logger.error("❌ Understat parse error for %s: %s", league_code, error_msg)
+        raise APIError(
+            "UnderstatAPI",
+            "PARSE_ERROR",
+            "Failed to parse API response.",
+            error_msg,
+        ) from exc
+    except APIError:
+        raise
+    except Exception as exc:
+        logger.exception("❌ Unexpected Understat error for %s", league_code)
+        raise APIError(
+            "UnderstatAPI",
+            "UNKNOWN_ERROR",
+            "An unexpected error occurred while contacting Understat.",
+            str(exc),
+        ) from exc
 
 async def _fetch_match_probabilities(home_team: str, away_team: str, league_code: str, season: Optional[int] = None) -> Optional[Dict]:
     """Async function to fetch match win probabilities from Understat"""
@@ -331,24 +383,25 @@ async def _fetch_match_probabilities(home_team: str, away_team: str, league_code
         season = get_current_season()
     
     understat_league = LEAGUE_MAP.get(league_code)
-    
+
     if not understat_league:
+        logger.warning("⚠️ Understat: League %s not supported for probabilities", league_code)
         return None
-    
+
     try:
         async with aiohttp.ClientSession() as session:
             understat = Understat(session)
             results = await understat.get_league_results(understat_league, season)
-            
+
             # Find the specific match
             for match in results:
                 home = match.get('h', {}).get('title', '')
                 away = match.get('a', {}).get('title', '')
-                
+
                 # Fuzzy match team names
                 if (home_team.lower() in home.lower() or home.lower() in home_team.lower()) and \
                    (away_team.lower() in away.lower() or away.lower() in away_team.lower()):
-                    
+
                     forecast = match.get('forecast', {})
                     return {
                         'home_win': forecast.get('w', 0),
@@ -357,11 +410,36 @@ async def _fetch_match_probabilities(home_team: str, away_team: str, league_code
                         'home_xg': match.get('xG', {}).get('h', 0),
                         'away_xg': match.get('xG', {}).get('a', 0)
                     }
-            
+
             return None
-    except Exception as e:
-        print(f"❌ Error fetching Understat probabilities: {str(e)}")
-        return None
+    except aiohttp.ClientError as exc:
+        error_msg = str(exc)
+        logger.error("❌ Understat network error fetching probabilities: %s", error_msg)
+        raise APIError(
+            "UnderstatAPI",
+            "NETWORK_ERROR",
+            "A network error occurred.",
+            error_msg,
+        ) from exc
+    except ValueError as exc:
+        error_msg = str(exc)
+        logger.error("❌ Understat parse error fetching probabilities: %s", error_msg)
+        raise APIError(
+            "UnderstatAPI",
+            "PARSE_ERROR",
+            "Failed to parse API response.",
+            error_msg,
+        ) from exc
+    except APIError:
+        raise
+    except Exception as exc:
+        logger.exception("❌ Unexpected Understat error fetching probabilities")
+        raise APIError(
+            "UnderstatAPI",
+            "UNKNOWN_ERROR",
+            "An unexpected error occurred while contacting Understat.",
+            str(exc),
+        ) from exc
 
 def fetch_understat_standings(league_code: str, season: Optional[int] = None) -> List[Dict]:
     """Sync wrapper for fetching league standings from Understat with caching"""
@@ -375,11 +453,19 @@ def fetch_understat_standings(league_code: str, season: Optional[int] = None) ->
         if cache_key in _standings_cache:
             cached_data, timestamp = _standings_cache[cache_key]
             if datetime.now() - timestamp < timedelta(minutes=UNDERSTAT_CACHE_DURATION_MINUTES):
-                print(f"✅ Using cached Understat data for {league_code} (age: {(datetime.now() - timestamp).seconds}s)")
+                age = datetime.now() - timestamp
+                logger.info(
+                    "✅ Using cached Understat data for %s (age: %ss)",
+                    league_code,
+                    age.seconds,
+                )
                 return cached_data
-    
+
     # Fetch fresh data
-    standings = sync_understat_call(lambda: _fetch_league_standings(league_code, season))
+    standings = sync_understat_call(
+        lambda: _fetch_league_standings(league_code, season),
+        context=f"Understat standings for {league_code}",
+    )
     
     # Update cache
     if standings:
@@ -393,4 +479,7 @@ def fetch_understat_match_probabilities(home_team: str, away_team: str, league_c
     if season is None:
         season = get_current_season()
     
-    return sync_understat_call(lambda: _fetch_match_probabilities(home_team, away_team, league_code, season))
+    return sync_understat_call(
+        lambda: _fetch_match_probabilities(home_team, away_team, league_code, season),
+        context=f"Understat probabilities for {home_team} vs {away_team}",
+    )

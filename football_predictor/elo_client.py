@@ -10,6 +10,7 @@ from io import StringIO
 from typing import Optional, Dict, Any
 import os
 from .config import setup_logger
+from .errors import APIError
 from .constants import (
     API_TIMEOUT_ELO,
     DRAW_PROBABILITY_BASE,
@@ -57,51 +58,63 @@ def fetch_team_elo_ratings():
             )
             return _elo_cache["data"]
 
+    logger.info("🔍 Fetching latest Elo ratings from ClubElo.com...")
+
+    # ClubElo API requires date parameter (YYYY-MM-DD)
+    today = datetime.now().strftime("%Y-%m-%d")
+    api_url = f"http://api.clubelo.com/{today}"
+
     try:
-        logger.info("🔍 Fetching latest Elo ratings from ClubElo.com...")
-        
-        # ClubElo API requires date parameter (YYYY-MM-DD)
-        today = datetime.now().strftime("%Y-%m-%d")
-        api_url = f"http://api.clubelo.com/{today}"
-        
-        # Fetch global Elo ratings from ClubElo API
         response = requests.get(api_url, timeout=API_TIMEOUT_ELO)
         response.raise_for_status()
-        
-        # Parse CSV data
-        team_elo_ratings = {}
+    except requests.Timeout:
+        logger.error("❌ ClubElo request timed out after %s seconds", API_TIMEOUT_ELO)
+        if _elo_cache["data"]:
+            logger.warning("⚠️ Using expired cache due to fetch error")
+            return _elo_cache["data"]
+        raise APIError("EloAPI", "TIMEOUT", "The Elo API did not respond in time.")
+    except requests.RequestException as exc:
+        error_msg = str(exc)
+        logger.error("❌ Error fetching Elo ratings: %s", error_msg)
+        if _elo_cache["data"]:
+            logger.warning("⚠️ Using expired cache due to fetch error")
+            return _elo_cache["data"]
+        raise APIError("EloAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
+
+    team_elo_ratings: Dict[str, float] = {}
+
+    try:
         reader = csv.DictReader(StringIO(response.text))
-        
+
         # ClubElo CSV format: Club,Country,Level,Elo,From,To
         # We want the latest Elo for each team
         for row in reader:
             team_name = row.get('Club')
             elo_rating = row.get('Elo')
-            
+
             if team_name and elo_rating:
                 try:
                     # Always update - the API returns latest first
                     team_elo_ratings[team_name] = float(elo_rating)
                 except ValueError:
                     pass
-        
-        if team_elo_ratings:
-            # Update cache
-            _elo_cache["data"] = team_elo_ratings
-            _elo_cache["timestamp"] = datetime.now()
-            logger.info("✅ Successfully fetched Elo ratings for %d teams", len(team_elo_ratings))
-            return team_elo_ratings
-        else:
-            logger.warning("⚠️ No Elo ratings found in ClubElo data")
-            return None
-
-    except Exception as e:
-        logger.exception("❌ Error fetching Elo ratings")
-        # Return cached data if available, even if expired
+    except ValueError as exc:
+        error_msg = str(exc)
+        logger.error("❌ Failed to parse ClubElo response: %s", error_msg)
         if _elo_cache["data"]:
-            logger.warning("⚠️ Using expired cache due to fetch error")
+            logger.warning("⚠️ Using expired cache due to parse error")
             return _elo_cache["data"]
-        return None
+        raise APIError("EloAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg) from exc
+
+    if team_elo_ratings:
+        # Update cache
+        _elo_cache["data"] = team_elo_ratings
+        _elo_cache["timestamp"] = datetime.now()
+        logger.info("✅ Successfully fetched Elo ratings for %d teams", len(team_elo_ratings))
+        return team_elo_ratings
+
+    logger.warning("⚠️ No Elo ratings found in ClubElo data")
+    return None
 
 
 def get_team_elo(team_name):

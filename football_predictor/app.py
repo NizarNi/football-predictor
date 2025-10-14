@@ -11,10 +11,11 @@ from .app_utils import make_ok, make_error, legacy_endpoint
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # football-data.org API removed - using Understat as primary source for standings
-from .odds_api_client import get_upcoming_matches_with_odds, OddsAPIError, LEAGUE_CODE_MAPPING
+from .odds_api_client import get_upcoming_matches_with_odds, LEAGUE_CODE_MAPPING
 from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import get_match_xg_prediction
 from .utils import get_current_season, normalize_team_name, fuzzy_team_match
+from .errors import APIError
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -119,11 +120,11 @@ def upcoming():
                     "total_matches": len(odds_matches),
                     "source": "The Odds API"
                 })
-        except OddsAPIError as e:
+        except APIError as e:
             logger.warning("⚠️  The Odds API unavailable: %s", e)
             return make_error(
-                error="The Odds API is temporarily unavailable. Please try again later.",
-                message="The Odds API is temporarily unavailable.",
+                error=e,
+                message="Failed to fetch upcoming matches",
                 status_code=503
             )
         except Exception as e:
