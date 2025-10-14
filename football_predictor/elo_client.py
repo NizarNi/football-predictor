@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from io import StringIO
 from typing import Optional, Dict, Any
 import os
+from .app_utils import AdaptiveTimeoutController
 from .config import setup_logger
 from .errors import APIError
 from .constants import (
@@ -37,6 +38,7 @@ _elo_cache: Dict[str, Optional[Any]] = {
 
 
 logger = setup_logger(__name__)
+adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT_ELO, max_timeout=30)
 
 
 def fetch_team_elo_ratings():
@@ -64,17 +66,32 @@ def fetch_team_elo_ratings():
     today = datetime.now().strftime("%Y-%m-%d")
     api_url = f"http://api.clubelo.com/{today}"
 
+    timeout = adaptive_timeout.get_timeout()
     try:
-        response = requests.get(api_url, timeout=API_TIMEOUT_ELO)
+        response = requests.get(api_url, timeout=timeout)
         response.raise_for_status()
-    except requests.Timeout:
-        logger.error("❌ ClubElo request timed out after %s seconds", API_TIMEOUT_ELO)
+        adaptive_timeout.record_success()
+    except requests.Timeout as exc:
+        adaptive_timeout.record_failure()
+        logger.warning("[Resilience] API timeout or network issue: %s", exc)
+        logger.error("❌ ClubElo request timed out after %.1f seconds", timeout)
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")
             return _elo_cache["data"]
-        raise APIError("EloAPI", "TIMEOUT", "The Elo API did not respond in time.")
-    except requests.RequestException as exc:
+        raise APIError("EloAPI", "TIMEOUT", "The Elo API did not respond in time.") from exc
+    except requests.ConnectionError as exc:
+        adaptive_timeout.record_failure()
         error_msg = str(exc)
+        logger.warning("[Resilience] API timeout or network issue: %s", exc)
+        logger.error("❌ Error fetching Elo ratings: %s", error_msg)
+        if _elo_cache["data"]:
+            logger.warning("⚠️ Using expired cache due to fetch error")
+            return _elo_cache["data"]
+        raise APIError("EloAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
+    except requests.RequestException as exc:
+        adaptive_timeout.record_failure()
+        error_msg = str(exc)
+        logger.warning("[Resilience] API request failure detected: %s", exc)
         logger.error("❌ Error fetching Elo ratings: %s", error_msg)
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")

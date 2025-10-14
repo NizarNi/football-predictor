@@ -5,6 +5,7 @@ from typing import Optional
 
 import requests
 
+from .app_utils import AdaptiveTimeoutController
 from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
 from .constants import BASE_URL, LEAGUE_CODE_MAPPING
 from .utils import create_retry_session, request_with_retries
@@ -24,6 +25,7 @@ invalid_keys = set()  # Track invalid keys to skip them
 current_key_index = 0
 
 logger = setup_logger(__name__)
+adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT, max_timeout=30)
 
 STATUS_FORCELIST = (429, 500, 502, 503, 504)
 BACKOFF_FACTOR = 0.5
@@ -63,13 +65,14 @@ def get_available_sports():
     api_key = get_next_api_key()
     url = f"{BASE_URL}/sports/"
 
+    timeout = adaptive_timeout.get_timeout()
     try:
         response = request_with_retries(
             _session,
             "GET",
             url,
             params={"apiKey": api_key},
-            timeout=API_TIMEOUT,
+            timeout=timeout,
             max_retries=API_MAX_RETRIES,
             backoff_factor=BACKOFF_FACTOR,
             status_forcelist=STATUS_FORCELIST,
@@ -77,16 +80,28 @@ def get_available_sports():
             context="Odds API call",
             sanitize=sanitize_error_message,
         )
-    except requests.Timeout:
+        adaptive_timeout.record_success()
+    except requests.Timeout as exc:
+        adaptive_timeout.record_failure()
+        logger.warning("[Resilience] API timeout or network issue: %s", exc)
         logger.error("Failed to fetch available sports: request timed out")
-        raise APIError("OddsAPI", "TIMEOUT", "The Odds API did not respond in time.")
+        raise APIError("OddsAPI", "TIMEOUT", "The Odds API did not respond in time.") from exc
+    except requests.ConnectionError as exc:
+        adaptive_timeout.record_failure()
+        logger.warning("[Resilience] API timeout or network issue: %s", exc)
+        error_msg = sanitize_error_message(str(exc))
+        logger.error("Failed to fetch available sports: %s", error_msg)
+        raise APIError("OddsAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
     except requests.RequestException as e:
+        adaptive_timeout.record_failure()
+        logger.warning("[Resilience] API request failure detected: %s", e)
         error_msg = sanitize_error_message(str(e))
         logger.error("Failed to fetch available sports: %s", error_msg)
         raise APIError("OddsAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from e
 
     try:
-        return response.json()
+        data = response.json()
+        return data
     except ValueError as e:
         error_msg = sanitize_error_message(str(e))
         logger.error("Failed to parse available sports response: %s", error_msg)
@@ -116,13 +131,14 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
             "oddsFormat": odds_format
         }
 
+        timeout = adaptive_timeout.get_timeout()
         try:
             response = request_with_retries(
                 _session,
                 "GET",
                 url,
                 params=params,
-                timeout=API_TIMEOUT,
+                timeout=timeout,
                 max_retries=API_MAX_RETRIES,
                 backoff_factor=BACKOFF_FACTOR,
                 status_forcelist=STATUS_FORCELIST,
@@ -130,6 +146,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                 context=f"Odds API call for {sport_key}",
                 sanitize=sanitize_error_message,
             )
+            adaptive_timeout.record_success()
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 # Invalid/expired key - mark it and try next
@@ -148,6 +165,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                 )
                 continue
             else:
+                adaptive_timeout.record_failure()
                 error_msg = sanitize_error_message(str(e))
                 logger.error("Failed odds fetch for %s: %s", sport_key, error_msg)
                 raise APIError(
@@ -156,7 +174,9 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                     f"Error fetching odds for {sport_key}.",
                     error_msg,
                 ) from e
-        except requests.Timeout:
+        except requests.Timeout as exc:
+            adaptive_timeout.record_failure()
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
             logger.warning(
                 "Timeout retrieving odds for %s with key %s", sport_key, api_key
             )
@@ -166,7 +186,26 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                 "The Odds API did not respond in time.",
             )
             continue
+        except requests.ConnectionError as exc:
+            adaptive_timeout.record_failure()
+            sanitized_error = sanitize_error_message(str(exc))
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
+            logger.warning(
+                "Retryable error with key %s for %s: %s",
+                api_key,
+                sport_key,
+                sanitized_error,
+            )
+            last_error = APIError(
+                "OddsAPI",
+                "NETWORK_ERROR",
+                "A network error occurred.",
+                sanitized_error,
+            )
+            continue
         except requests.RequestException as e:
+            adaptive_timeout.record_failure()
+            logger.warning("[Resilience] API request failure detected: %s", e)
             sanitized_error = sanitize_error_message(str(e))
             logger.warning(
                 "Retryable error with key %s for %s: %s",
@@ -295,13 +334,14 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
             "oddsFormat": "decimal"
         }
         
+        timeout = adaptive_timeout.get_timeout()
         try:
             response = request_with_retries(
                 _session,
                 "GET",
                 url,
                 params=params,
-                timeout=API_TIMEOUT,
+                timeout=timeout,
                 max_retries=API_MAX_RETRIES,
                 backoff_factor=BACKOFF_FACTOR,
                 status_forcelist=STATUS_FORCELIST,
@@ -309,6 +349,7 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                 context=f"Event odds call for {sport_key}",
                 sanitize=sanitize_error_message,
             )
+            adaptive_timeout.record_success()
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 invalid_keys.add(api_key)
@@ -327,6 +368,7 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                 continue
 
             error_msg = sanitize_error_message(str(e))
+            adaptive_timeout.record_failure()
             logger.error("Failed event odds fetch for %s: %s", sport_key, error_msg)
             raise APIError(
                 "OddsAPI",
@@ -334,7 +376,9 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                 "Error fetching event odds.",
                 error_msg,
             ) from e
-        except requests.Timeout:
+        except requests.Timeout as exc:
+            adaptive_timeout.record_failure()
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
             logger.warning(
                 "Timeout retrieving event odds for %s with key %s",
                 sport_key,
@@ -346,7 +390,26 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                 "The Odds API did not respond in time.",
             )
             continue
+        except requests.ConnectionError as exc:
+            adaptive_timeout.record_failure()
+            sanitized_error = sanitize_error_message(str(exc))
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
+            logger.warning(
+                "Retryable error retrieving event odds for %s with key %s: %s",
+                sport_key,
+                api_key,
+                sanitized_error,
+            )
+            last_error = APIError(
+                "OddsAPI",
+                "NETWORK_ERROR",
+                "A network error occurred.",
+                sanitized_error,
+            )
+            continue
         except requests.RequestException as e:
+            adaptive_timeout.record_failure()
+            logger.warning("[Resilience] API request failure detected: %s", e)
             sanitized_error = sanitize_error_message(str(e))
             logger.warning(
                 "Retryable error retrieving event odds for %s with key %s: %s",
