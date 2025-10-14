@@ -1,13 +1,15 @@
-from flask import Flask, render_template, request
-import os
 import json
-from datetime import datetime
+import logging
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
+from datetime import datetime
 
-from .config import setup_logger, API_TIMEOUT_CONTEXT
-from .app_utils import make_ok, make_error, legacy_endpoint
+from flask import Flask, render_template, request
+
+from .app_utils import legacy_endpoint, make_error, make_ok
+from .config import API_TIMEOUT_CONTEXT, setup_logger
 
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -563,9 +565,11 @@ def get_match_context(match_id):
                                 source = "Understat" if standings else None
                             else:
                                 home_elo, away_elo = result
-                        except Exception:
+                        except Exception as exc:
                             logger.exception("Error fetching %s data for %s", key, match_id)
                             missing_sources.append(key)
+                            if isinstance(exc, TimeoutError):
+                                timeout_missing.append(key)
                     else:
                         future.cancel()
                         missing_sources.append(key)
@@ -574,7 +578,9 @@ def get_match_context(match_id):
             timed_out = bool(timeout_missing)
             if timed_out:
                 elapsed = time.monotonic() - start_time
-                logger.warning("[ContextFetcher] Timeout after %.2fs – served partial data.", elapsed)
+                log_message = "[ContextFetcher] Timeout after %.2fs – served partial data." % elapsed
+                logger.warning(log_message)
+                logging.warning(log_message)
             elif missing_sources:
                 logger.warning("[ContextFetcher] Partial data due to errors: %s", missing_sources)
 
@@ -664,7 +670,7 @@ def get_match_context(match_id):
                 context.update(
                     {
                         "partial": True,
-                        "missing": sorted(set(timeout_missing)),
+                        "missing": sorted(set(missing_sources + timeout_missing)),
                         "source": "partial_timeout",
                         "warning": "context timeout",
                     }

@@ -2,8 +2,6 @@
 xG Data Fetcher Module
 Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 """
-import soccerdata as sd
-import pandas as pd
 from datetime import datetime, timedelta
 import json
 import os
@@ -11,6 +9,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
+
+try:
+    import pandas as pd
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
+    pd = None
+
+try:
+    import soccerdata as sd
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
+    sd = None
 
 from .app_utils import AdaptiveTimeoutController
 from .utils import create_retry_session, get_xg_season
@@ -24,6 +32,28 @@ from .constants import (
     TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING,
     XG_CACHE_DURATION_HOURS,
 )
+
+
+def _require_soccerdata() -> None:
+    """Ensure the optional soccerdata dependency is available."""
+
+    if sd is None:
+        raise APIError(
+            "FBRefAPI",
+            "MISSING_DEPENDENCY",
+            "The optional 'soccerdata' package is not installed.",
+        )
+
+
+def _require_pandas() -> None:
+    """Ensure the optional pandas dependency is available."""
+
+    if pd is None:
+        raise APIError(
+            "FBRefAPI",
+            "MISSING_DEPENDENCY",
+            "The optional 'pandas' package is not installed.",
+        )
 
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -218,6 +248,8 @@ def fetch_career_xg_stats(team_name, league_code):
     # Try seasons from start to current
     for season in range(start_season, current_season + 1):
         try:
+            _require_soccerdata()
+            _require_pandas()
             fbref = _configure_fbref_client(
                 sd.FBref(leagues=league_name, seasons=season)
             )
@@ -373,6 +405,8 @@ def fetch_league_xg_stats(league_code, season=None):
         logger.info("📊 Fetching xG stats for %s (season %s)...", league_name, season_display)
         
         # Fetch team stats from FBref
+        _require_soccerdata()
+        _require_pandas()
         fbref = _configure_fbref_client(sd.FBref(leagues=league_name, seasons=season))
 
         # Get team offensive and defensive stats
@@ -816,6 +850,8 @@ def fetch_team_match_logs(team_name, league_code, season=None):
     try:
         # Fetch schedule data
         logger.info("📊 Fetching match logs for %s in %s (season %s)...", team_name, league_name, season)
+        _require_soccerdata()
+        _require_pandas()
         fbref = _configure_fbref_client(sd.FBref(league_name, season))
         schedule = _safe_soccerdata_call(
             fbref.read_schedule,

@@ -138,6 +138,10 @@ def _is_legacy_request() -> bool:
     if not path:
         return False
 
+    # Modernized match-context endpoint should always use wrapped responses.
+    if path.startswith("/match/") and path.endswith("/context"):
+        return False
+
     endpoint = None
     try:
         endpoint = request.endpoint  # type: ignore[attr-defined]
