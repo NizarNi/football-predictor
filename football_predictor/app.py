@@ -723,7 +723,7 @@ def get_match_context(match_id):
                 "narrative": "Partial or unavailable data",
                 "home_logo": get_team_logo(home_team, league_code),
                 "away_logo": get_team_logo(away_team, league_code),
-            }
+            }           
             return make_ok({"context": context})
 
     except Exception as e:

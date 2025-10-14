@@ -1,10 +1,11 @@
 import pytest
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from football_predictor.app import app
 from football_predictor.utils import TEAM_LOGO_OVERRIDES
 from football_predictor.config import API_TIMEOUT_CONTEXT
+
 
 @pytest.fixture
 def client():
@@ -23,9 +24,10 @@ def test_context_accepts_missing_team_params(client):
     assert resp.status_code == 200
     payload = resp.get_json()
     assert payload["status"] == "ok"
-    assert "context" in payload["data"]
-    assert "home_team" in payload["data"]["context"]
-    assert payload["data"]["context"].get("home_logo") == TEAM_LOGO_OVERRIDES["default"]
+
+    # Legacy shape: context fields are at the top level (no nested 'context')
+    assert "home_team" in payload["data"]
+    assert payload["data"].get("home_logo") == TEAM_LOGO_OVERRIDES["default"]
 
 
 def test_context_returns_full_data_on_time(client):
@@ -41,11 +43,12 @@ def test_context_returns_full_data_on_time(client):
 
         assert resp.status_code == 200
         assert data["status"] == "ok"
-        assert "context" in data["data"]
-        assert "partial" not in data["data"]["context"]
+        assert "home_team" in data["data"]
+        assert "away_team" in data["data"]
+        assert "partial" not in data["data"]
         assert "xGA" in json.dumps(data)
-        assert data["data"]["context"].get("home_logo")
-        assert data["data"]["context"].get("away_logo")
+        assert data["data"].get("home_logo")
+        assert data["data"].get("away_logo")
 
 
 def test_context_returns_partial_when_one_source_times_out(client):
@@ -66,7 +69,7 @@ def test_context_returns_partial_when_one_source_times_out(client):
 
         assert resp.status_code == 200
         assert data["status"] == "ok"
-        context = data["data"]["context"]
+        context = data["data"]
         assert context.get("partial") is True
         assert "understat" in context.get("missing", [])
         assert "warning" in context
@@ -84,7 +87,7 @@ def test_context_returns_partial_when_both_fail(client):
 
         assert resp.status_code == 200
         assert data["status"] == "ok"
-        context = data["data"]["context"]
+        context = data["data"]
         assert context.get("partial") is True
         assert set(context.get("missing", [])) == {"understat", "elo"}
         assert context.get("source") == "partial_timeout"
@@ -113,4 +116,3 @@ def test_context_logs_timeout_message(client, caplog):
 
         assert any("[ContextFetcher]" in msg for msg in caplog.messages)
         assert any("Timeout" in msg for msg in caplog.messages)
-
