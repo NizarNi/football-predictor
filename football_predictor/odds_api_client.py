@@ -2,8 +2,8 @@ import requests
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from config import setup_logger
-from constants import API_TIMEOUT_ODDS, BASE_URL, LEAGUE_CODE_MAPPING
+from .config import setup_logger
+from .constants import API_TIMEOUT_ODDS, BASE_URL, LEAGUE_CODE_MAPPING
 
 API_KEYS = [
     os.environ.get("ODDS_API_KEY_1"),

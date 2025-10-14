@@ -4,17 +4,17 @@ import json
 from datetime import datetime
 import sys
 
-from config import setup_logger
-from app_utils import make_ok, make_error
+from .config import setup_logger
+from .app_utils import make_ok, make_error, legacy_endpoint
 
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # football-data.org API removed - using Understat as primary source for standings
-from odds_api_client import get_upcoming_matches_with_odds, OddsAPIError, LEAGUE_CODE_MAPPING
-from odds_calculator import calculate_predictions_from_odds
-from xg_data_fetcher import get_match_xg_prediction
-from utils import get_current_season, normalize_team_name, fuzzy_team_match
+from .odds_api_client import get_upcoming_matches_with_odds, OddsAPIError, LEAGUE_CODE_MAPPING
+from .odds_calculator import calculate_predictions_from_odds
+from .xg_data_fetcher import get_match_xg_prediction
+from .utils import get_current_season, normalize_team_name, fuzzy_team_match
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -43,7 +43,16 @@ def demo():
     except:
         return "Demo page not available", 404
 
+
+@app.route("/status", methods=["GET"])
+def status():
+    """Health-check endpoint reporting response format mode."""
+    from .config import USE_LEGACY_RESPONSES
+
+    return make_ok({"legacy_mode": USE_LEGACY_RESPONSES})
+
 @app.route("/upcoming", methods=["GET"])
+@legacy_endpoint
 def upcoming():
     """Get upcoming matches with predictions using The Odds API (primary) and football-data.org (fallback)"""
     league_code = request.args.get("league", None)
@@ -72,7 +81,7 @@ def upcoming():
             
             if odds_matches:
                 # Import Elo client for predictions
-                from elo_client import get_team_elo, calculate_elo_probabilities
+                from .elo_client import get_team_elo, calculate_elo_probabilities
                 
                 # Calculate predictions from odds for each match
                 for match in odds_matches:
@@ -138,6 +147,7 @@ def upcoming():
 
 
 @app.route("/search", methods=["POST"])
+@legacy_endpoint
 def search():
     """Search for matches by team name"""
     team_name = request.form.get("team_name", "").strip()
@@ -288,8 +298,8 @@ def get_match_totals(event_id):
                 status_code=400
             )
 
-        from odds_api_client import get_event_odds
-        from odds_calculator import calculate_totals_from_odds
+        from .odds_api_client import get_event_odds
+        from .odds_calculator import calculate_totals_from_odds
 
         odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="totals")
 
@@ -332,8 +342,8 @@ def get_match_btts(event_id):
                 status_code=400
             )
 
-        from odds_api_client import get_event_odds
-        from odds_calculator import calculate_btts_from_odds, calculate_btts_probability_from_xg
+        from .odds_api_client import get_event_odds
+        from .odds_calculator import calculate_btts_from_odds, calculate_btts_probability_from_xg
 
         # Fetch BTTS odds from The Odds API
         odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="btts")
@@ -357,7 +367,7 @@ def get_match_btts(event_id):
                 xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
                 
                 # Get defensive xGA from Understat context (TRUE defensive metric, not goalkeeper PSxGA)
-                from understat_client import fetch_understat_standings
+                from .understat_client import fetch_understat_standings
                 current_season = get_current_season()
                 standings = fetch_understat_standings(league_code, current_season)
                 
@@ -456,6 +466,7 @@ def get_match_xg(event_id):
         )
 
 @app.route("/career_xg", methods=["GET"])
+@legacy_endpoint
 def get_career_xg():
     """Get career xG statistics (2010-2025) for a team"""
     try:
@@ -470,7 +481,7 @@ def get_career_xg():
                 status_code=400
             )
 
-        from xg_data_fetcher import fetch_career_xg_stats
+        from .xg_data_fetcher import fetch_career_xg_stats
 
         career_stats = fetch_career_xg_stats(team, league)
 
@@ -510,8 +521,8 @@ def get_match_context(match_id):
                 status_code=400
             )
 
-        from understat_client import fetch_understat_standings
-        from elo_client import get_team_elo, calculate_elo_probabilities
+        from .understat_client import fetch_understat_standings
+        from .elo_client import get_team_elo, calculate_elo_probabilities
 
         try:
             # Use Understat as primary source for standings with dynamic season

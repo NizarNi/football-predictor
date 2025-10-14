@@ -9,9 +9,9 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from utils import get_xg_season
-from config import setup_logger
-from constants import (
+from .utils import get_xg_season
+from .config import setup_logger
+from .constants import (
     CACHE_DIR,
     CAREER_XG_CACHE_TTL,
     LEAGUE_MAPPING,

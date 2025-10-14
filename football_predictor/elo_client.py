@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 from io import StringIO
 from typing import Optional, Dict, Any
 import os
-from config import setup_logger
-from constants import (
+from .config import setup_logger
+from .constants import (
     API_TIMEOUT_ELO,
     DRAW_PROBABILITY_BASE,
     DRAW_PROBABILITY_FACTOR,
