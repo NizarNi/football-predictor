@@ -9,13 +9,19 @@ from datetime import datetime, timedelta
 from io import StringIO
 from typing import Optional, Dict, Any
 import os
-from config import (
-    setup_logger,
-    ELO_CACHE_DURATION_HOURS,
+from config import setup_logger
+from constants import (
     API_TIMEOUT_ELO,
+    DRAW_PROBABILITY_BASE,
+    DRAW_PROBABILITY_FACTOR,
+    ELO_CACHE_DURATION_HOURS,
+    ELO_CLOSENESS_FACTOR,
+    ELO_DIVISOR,
+    HIGH_VALUE_BET_THRESHOLD,
     HYBRID_ELO_WEIGHT,
     HYBRID_MARKET_WEIGHT,
-    TEAM_NAME_MAP_ELO as TEAM_NAME_MAP
+    TEAM_NAME_MAP_ELO as TEAM_NAME_MAP,
+    VALUE_BET_THRESHOLD,
 )
 
 # ClubElo.com API - Original source for Elo ratings
@@ -174,14 +180,14 @@ def calculate_elo_probabilities(home_elo, away_elo):
     
     # Standard Elo win probability formula
     elo_diff = away_elo - home_elo
-    home_win_prob = 1 / (1 + 10 ** (elo_diff / 400))
+    home_win_prob = 1 / (1 + 10 ** (elo_diff / ELO_DIVISOR))
     away_win_prob = 1 - home_win_prob
-    
+
     # Estimate draw probability (typically 25-30% in football)
     # Adjust based on Elo difference - closer teams = higher draw probability
-    base_draw_prob = 0.27  # Base draw probability
-    elo_closeness_factor = max(0, 1 - abs(elo_diff) / 400)  # 0 to 1, higher when teams are close
-    draw_prob = base_draw_prob + (0.08 * elo_closeness_factor)  # Range: 0.27 to 0.35
+    base_draw_prob = DRAW_PROBABILITY_BASE
+    elo_closeness_factor = max(0, 1 - abs(elo_diff) / ELO_CLOSENESS_FACTOR)  # 0 to 1, higher when teams are close
+    draw_prob = base_draw_prob + (DRAW_PROBABILITY_FACTOR * elo_closeness_factor)  # Range: 0.27 to 0.35
     
     # Normalize probabilities to sum to 1
     total_prob = home_win_prob + away_win_prob + draw_prob
@@ -235,7 +241,7 @@ def calculate_hybrid_probabilities(elo_probs, market_probs):
     }
 
 
-def detect_value_bets(elo_probs, market_probs, threshold=0.10):
+def detect_value_bets(elo_probs, market_probs, threshold=VALUE_BET_THRESHOLD):
     """
     Detect value betting opportunities where Elo and market probabilities diverge significantly.
     
@@ -270,7 +276,7 @@ def detect_value_bets(elo_probs, market_probs, threshold=0.10):
                 "market_prob": market_prob * 100,
                 "difference": diff * 100,
                 "direction": "overvalued" if diff > 0 else "undervalued",
-                "confidence": "high" if abs(diff) >= 0.15 else "moderate"
+                "confidence": "high" if abs(diff) >= HIGH_VALUE_BET_THRESHOLD else "moderate"
             })
     
     return value_bets

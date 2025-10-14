@@ -10,37 +10,26 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import get_xg_season
-from config import setup_logger, XG_CACHE_DURATION_HOURS, TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING
-
-# Cache settings
-CACHE_DIR = "processed_data/xg_cache"
+from config import setup_logger
+from constants import (
+    CACHE_DIR,
+    CAREER_XG_CACHE_TTL,
+    LEAGUE_MAPPING,
+    MATCH_LOGS_CACHE_TTL,
+    TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING,
+    XG_CACHE_DURATION_HOURS,
+)
 
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+logger = setup_logger(__name__)
+
 # In-memory cache for match logs (team+league+season -> {data, timestamp})
 MATCH_LOGS_CACHE = {}
-MATCH_LOGS_CACHE_TTL = 300  # 5 minutes in seconds
 
 # Career xG cache (team+league -> {data, timestamp})
 CAREER_XG_CACHE = {}
-CAREER_XG_CACHE_TTL = 604800  # 7 days in seconds for historical data
-
-logger = setup_logger(__name__)
-
-# League mappings for soccerdata
-# League code mapping (Our codes → FBref league names)
-# Note: FBref only supports the Big 5 European leagues
-# Champions League and Europa League are NOT supported by FBref
-LEAGUE_MAPPING = {
-    "PL": "ENG-Premier League",
-    "PD": "ESP-La Liga",
-    "BL1": "GER-Bundesliga",
-    "SA": "ITA-Serie A",
-    "FL1": "FRA-Ligue 1",
-    # "CL": Not supported by FBref
-    # "EL": Not supported by FBref
-}
 
 
 def normalize_team_name_for_fbref(team_name):
