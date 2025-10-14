@@ -22,7 +22,8 @@ def test_context_accepts_missing_team_params(client):
     assert resp.status_code == 200
     payload = resp.get_json()
     assert payload["status"] == "ok"
-    assert "home_team" in payload["data"]
+    assert "context" in payload["data"]
+    assert "home_team" in payload["data"]["context"]
 
 
 def test_context_returns_full_data_on_time(client):
@@ -38,7 +39,8 @@ def test_context_returns_full_data_on_time(client):
 
         assert resp.status_code == 200
         assert data["status"] == "ok"
-        assert "partial" not in data["data"]
+        assert "context" in data["data"]
+        assert "partial" not in data["data"]["context"]
         assert "xGA" in json.dumps(data)
 
 
@@ -60,9 +62,10 @@ def test_context_returns_partial_when_one_source_times_out(client):
 
         assert resp.status_code == 200
         assert data["status"] == "ok"
-        assert data["data"].get("partial") is True
-        assert "understat" in data["data"].get("missing", [])
-        assert "warning" in data["data"]
+        context = data["data"]["context"]
+        assert context.get("partial") is True
+        assert "understat" in context.get("missing", [])
+        assert "warning" in context
 
 
 def test_context_returns_partial_when_both_fail(client):
@@ -75,10 +78,21 @@ def test_context_returns_partial_when_both_fail(client):
 
         assert resp.status_code == 200
         assert data["status"] == "ok"
-        assert data["data"].get("partial") is True
-        assert set(data["data"].get("missing", [])) == {"understat", "elo"}
-        assert data["data"].get("source") == "partial_timeout"
-        assert "warning" in data["data"]
+        context = data["data"]["context"]
+        assert context.get("partial") is True
+        assert set(context.get("missing", [])) == {"understat", "elo"}
+        assert context.get("source") == "partial_timeout"
+        assert "warning" in context
+
+
+def test_context_endpoint_never_crashes(client):
+    """Endpoint should always return JSON with a status field."""
+    resp = client.get("/match/xyz/context?league=EPL")
+
+    assert resp.status_code in (200, 500)
+    payload = resp.get_json()
+    assert isinstance(payload, dict)
+    assert "status" in payload
 
 
 def test_context_logs_timeout_message(client, caplog):
