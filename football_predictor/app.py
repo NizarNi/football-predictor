@@ -678,7 +678,7 @@ def get_match_context(match_id):
                 "✅ Context response finalized",
                 extra={"partial": timed_out, "missing": missing_sources},
             )
-            return make_ok({"context": context})
+            return make_ok(context)
 
         except Exception as e:
             logger.exception("Error fetching context for %s", match_id)
