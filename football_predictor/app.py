@@ -20,6 +20,7 @@ from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import get_match_xg_prediction
 from .utils import get_current_season, normalize_team_name, fuzzy_team_match
 from .errors import APIError
+from .validators import validate_league, validate_team, validate_next_days
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -60,8 +61,15 @@ def status():
 @legacy_endpoint
 def upcoming():
     """Get upcoming matches with predictions using The Odds API (primary) and football-data.org (fallback)"""
-    league_code = request.args.get("league", None)
-    next_n_days = request.args.get("next_n_days", 30, type=int)
+    try:
+        league_code = validate_league(request.args.get("league"))
+        next_n_days = validate_next_days(request.args.get("next_n_days"))
+    except ValueError as e:
+        return make_error(
+            error=str(e),
+            message="Invalid request parameters",
+            status_code=400,
+        )
 
     try:
         logger.info("Handling /upcoming request", extra={
@@ -72,12 +80,6 @@ def upcoming():
         logger.info("🔍 Fetching matches with odds from The Odds API...")
         try:
             if league_code:
-                if league_code not in LEAGUE_CODE_MAPPING:
-                    return make_error(
-                        error=f"League code \"{league_code}\" not supported",
-                        message="Invalid league code",
-                        status_code=404
-                    )
                 leagues_to_fetch = [league_code]
             else:
                 leagues_to_fetch = list(LEAGUE_CODE_MAPPING.keys())
@@ -155,13 +157,17 @@ def upcoming():
 @legacy_endpoint
 def search():
     """Search for matches by team name"""
-    team_name = request.form.get("team_name", "").strip()
-
-    if not team_name:
+    try:
+        team_name = validate_team(
+            request.form.get("team_name"),
+            required=True,
+            field_name="team_name",
+        )
+    except ValueError as e:
         return make_error(
-            error="Please provide a team name",
-            message="Invalid team name",
-            status_code=400
+            error=str(e),
+            message="Invalid request parameters",
+            status_code=400,
         )
 
     try:
@@ -515,14 +521,14 @@ def get_match_context(match_id):
     """Get match context including standings, form, and Elo ratings"""
     try:
         logger.info("Handling /match context request", extra={"match_id": match_id})
-        league_code = request.args.get("league")
-        home_team = request.args.get("home_team")
-        away_team = request.args.get("away_team")
-
-        if not league_code:
+        try:
+            league_code = validate_league(request.args.get("league"), required=True)
+            home_team = validate_team(request.args.get("home_team"), field_name="home_team")
+            away_team = validate_team(request.args.get("away_team"), field_name="away_team")
+        except ValueError as e:
             return make_error(
-                error="league parameter required",
-                message="Missing league parameter",
+                error=str(e),
+                message="Invalid request parameters",
                 status_code=400
             )
 
