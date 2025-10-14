@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 import sys
 
+from config import setup_logger
+
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -15,6 +17,8 @@ from utils import get_current_season, normalize_team_name, fuzzy_team_match
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+logger = setup_logger(__name__)
 
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
@@ -46,7 +50,7 @@ def upcoming():
     
     try:
         # Try The Odds API first (provides both matches and odds-based predictions)
-        print(f"🔍 Fetching matches with odds from The Odds API...")
+        logger.info("🔍 Fetching matches with odds from The Odds API...")
         try:
             if league_code:
                 if league_code not in LEAGUE_CODE_MAPPING:
@@ -91,21 +95,21 @@ def upcoming():
                         "arbitrage": predictions["arbitrage"]
                     }
                 
-                print(f"✅ Found {len(odds_matches)} matches from The Odds API")
+                logger.info("✅ Found %d matches from The Odds API", len(odds_matches))
                 return jsonify({
                     "matches": odds_matches,
                     "total_matches": len(odds_matches),
                     "source": "The Odds API"
                 })
         except OddsAPIError as e:
-            print(f"⚠️  The Odds API unavailable: {e}")
+            logger.warning("⚠️  The Odds API unavailable: %s", e)
             return jsonify({"error": "The Odds API is temporarily unavailable. Please try again later."}), 503
         except Exception as e:
-            print(f"⚠️  The Odds API error: {e}")
+            logger.exception("⚠️  The Odds API error")
             return jsonify({"error": "Unable to fetch matches. Please try again later."}), 500
-        
+
     except Exception as e:
-        print(f"❌ Critical error: {e}")
+        logger.exception("❌ Critical error")
         return jsonify({"error": "Service temporarily unavailable. Please try again later."}), 500
 
 
@@ -121,7 +125,7 @@ def search():
         return jsonify({"error": "Please provide a team name"}), 400
     
     try:
-        print(f"🔍 Searching for team: {team_name}")
+        logger.info("🔍 Searching for team: %s", team_name)
         
         # Use The Odds API to fetch matches from all leagues
         try:
@@ -132,7 +136,7 @@ def search():
             
             if not odds_matches:
                 # No matches from Odds API - return empty result
-                print(f"ℹ️ No matches available from The Odds API")
+                logger.info("ℹ️ No matches available from The Odds API")
                 return jsonify({"error": f"No matches found for team '{team_name}' - try again later"}), 404
             
             # Filter matches by team name
@@ -170,18 +174,18 @@ def search():
             # Sort by date
             filtered_matches = sorted(filtered_matches, key=lambda x: x["timestamp"])
             
-            print(f"✅ Found {len(filtered_matches)} matches for '{team_name}' from The Odds API")
+            logger.info("✅ Found %d matches for '%s' from The Odds API", len(filtered_matches), team_name)
             return jsonify({
                 "matches": filtered_matches,
                 "source": "The Odds API"
             })
-                
+
         except Exception as odds_e:
-            print(f"⚠️ The Odds API error during search: {odds_e}")
+            logger.warning("⚠️ The Odds API error during search: %s", odds_e)
             return jsonify({"error": "Search service temporarily unavailable"}), 503
-        
+
     except Exception as e:
-        print(f"Error in search: {e}")
+        logger.exception("Error in search")
         return jsonify({"error": "Search failed. Please try again later."}), 500
 
 @app.route("/match/<match_id>", methods=["GET"])
@@ -216,7 +220,7 @@ def predict_match(match_id):
         return jsonify(response)
         
     except Exception as e:
-        print(f"Error predicting match {match_id}: {e}")
+        logger.exception("Error predicting match %s", match_id)
         return jsonify({"error": "Unable to load predictions. Please try again later."}), 500
 
 @app.route("/match/<event_id>/totals", methods=["GET"])
@@ -243,7 +247,7 @@ def get_match_totals(event_id):
         })
         
     except Exception as e:
-        print(f"Error fetching totals for {event_id}: {e}")
+        logger.exception("Error fetching totals for %s", event_id)
         return jsonify({"error": "Unable to load over/under data. Please try again later."}), 500
 
 @app.route("/match/<event_id>/btts", methods=["GET"])
@@ -312,7 +316,7 @@ def get_match_btts(event_id):
                         away_xga_per_game
                     )
             except Exception as e:
-                print(f"⚠️  Could not calculate xG-based BTTS: {e}")
+                logger.warning("⚠️  Could not calculate xG-based BTTS: %s", e)
                 btts_xg = None
         
         return jsonify({
@@ -324,7 +328,7 @@ def get_match_btts(event_id):
         })
         
     except Exception as e:
-        print(f"Error fetching BTTS for {event_id}: {e}")
+        logger.exception("Error fetching BTTS for %s", event_id)
         return jsonify({"error": "Unable to load BTTS data. Please try again later."}), 500
 
 @app.route("/match/<event_id>/xg", methods=["GET"])
@@ -357,7 +361,7 @@ def get_match_xg(event_id):
         })
         
     except Exception as e:
-        print(f"Error fetching xG for {event_id}: {e}")
+        logger.exception("Error fetching xG for %s", event_id)
         return jsonify({
             "xg": None,
             "error": "Unable to load xG data. Please try again later.",
@@ -391,7 +395,7 @@ def get_career_xg():
         })
         
     except Exception as e:
-        print(f"Error fetching career xG: {e}")
+        logger.exception("Error fetching career xG")
         return jsonify({
             "career_xg": None,
             "error": "Unable to load career xG data",
