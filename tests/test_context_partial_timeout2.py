@@ -14,8 +14,8 @@ def client():
 
 def test_context_returns_full_data_on_time(client):
     """✅ Should return full response when both APIs finish before timeout."""
-    with patch("football_predictor.app.fetch_understat_standings") as mock_understat, \
-         patch("football_predictor.app.get_team_elo") as mock_elo:
+    with patch("football_predictor.understat_client.fetch_understat_standings") as mock_understat, \
+         patch("football_predictor.elo_client.get_team_elo") as mock_elo:
 
         mock_understat.return_value = [{"name": "Chelsea", "xGA": 25.0, "played": 10}]
         mock_elo.return_value = 1600
@@ -31,8 +31,8 @@ def test_context_returns_full_data_on_time(client):
 
 def test_context_returns_partial_when_one_source_times_out(client):
     """⚙️ Should return partial=True when one future exceeds timeout."""
-    with patch("football_predictor.app.fetch_understat_standings") as mock_understat, \
-         patch("football_predictor.app.get_team_elo") as mock_elo:
+    with patch("football_predictor.understat_client.fetch_understat_standings") as mock_understat, \
+         patch("football_predictor.elo_client.get_team_elo") as mock_elo:
 
         def slow_understat(*args, **kwargs):
             import time
@@ -54,8 +54,8 @@ def test_context_returns_partial_when_one_source_times_out(client):
 
 def test_context_returns_partial_when_both_fail(client):
     """🚨 Should gracefully return partial with both sources missing."""
-    with patch("football_predictor.app.fetch_understat_standings", side_effect=TimeoutError("Simulated timeout")), \
-         patch("football_predictor.app.get_team_elo", side_effect=TimeoutError("Simulated timeout")):
+    with patch("football_predictor.understat_client.fetch_understat_standings", side_effect=TimeoutError("Simulated timeout")), \
+         patch("football_predictor.elo_client.get_team_elo", side_effect=TimeoutError("Simulated timeout")):
 
         resp = client.get("/match/test/context?league=EPL&home_team=Chelsea&away_team=Arsenal")
         data = resp.get_json()
@@ -70,8 +70,8 @@ def test_context_returns_partial_when_both_fail(client):
 
 def test_context_logs_timeout_message(client, caplog):
     """🧾 Log must contain [ContextFetcher] Timeout when fallback triggered."""
-    with patch("football_predictor.app.fetch_understat_standings", side_effect=TimeoutError("Simulated timeout")), \
-         patch("football_predictor.app.get_team_elo", return_value=1600):
+    with patch("football_predictor.understat_client.fetch_understat_standings", side_effect=TimeoutError("Simulated timeout")), \
+         patch("football_predictor.elo_client.get_team_elo", return_value=1600):
 
         caplog.set_level("INFO")
         client.get("/match/test/context?league=EPL&home_team=Chelsea&away_team=Arsenal")
