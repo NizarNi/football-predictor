@@ -1,10 +1,25 @@
 import asyncio
-import aiohttp
-from understat import Understat
-from typing import Any, Dict, List, Optional
-from datetime import datetime, timedelta
-import threading
 import statistics
+import threading
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+try:
+    import aiohttp
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
+    aiohttp = None
+    _AIOHTTP_AVAILABLE = False
+    class _AiohttpStub:
+        ClientError = RuntimeError
+
+    aiohttp = _AiohttpStub()  # type: ignore[assignment]
+else:
+    _AIOHTTP_AVAILABLE = True
+
+try:
+    from understat import Understat
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in tests
+    Understat = None
 
 from .app_utils import AdaptiveTimeoutController
 from .utils import get_current_season
@@ -27,6 +42,28 @@ _cache_lock = threading.Lock()
 
 logger = setup_logger(__name__)
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT_UNDERSTAT, max_timeout=30)
+
+
+def _require_understat() -> None:
+    """Ensure the optional Understat dependency is available."""
+
+    if Understat is None:
+        raise APIError(
+            "UnderstatAPI",
+            "MISSING_DEPENDENCY",
+            "The optional 'understat' package is not installed.",
+        )
+
+
+def _require_aiohttp() -> None:
+    """Ensure the optional aiohttp dependency is available."""
+
+    if not _AIOHTTP_AVAILABLE:
+        raise APIError(
+            "UnderstatAPI",
+            "MISSING_DEPENDENCY",
+            "The optional 'aiohttp' package is not installed.",
+        )
 
 def sync_understat_call(async_func, context: str = "Understat API call"):
     """Wrapper to run async Understat functions synchronously with timeout"""
@@ -169,12 +206,15 @@ async def _fetch_league_standings(league_code: str, season: Optional[int] = None
     """Async function to fetch league standings from Understat"""
     if season is None:
         season = get_current_season()
-    
+
     understat_league = LEAGUE_MAP.get(league_code)
 
     if not understat_league:
         logger.warning("⚠️ Understat: League %s not supported", league_code)
         return []
+
+    _require_understat()
+    _require_aiohttp()
 
     timeout = adaptive_timeout.get_timeout()
     session_kwargs: Dict[str, Any] = {}
@@ -416,6 +456,9 @@ async def _fetch_match_probabilities(home_team: str, away_team: str, league_code
     if not understat_league:
         logger.warning("⚠️ Understat: League %s not supported for probabilities", league_code)
         return None
+
+    _require_understat()
+    _require_aiohttp()
 
     try:
         async with aiohttp.ClientSession() as session:
