@@ -2,7 +2,7 @@ import requests
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from config import API_TIMEOUT_ODDS
+from config import setup_logger, API_TIMEOUT_ODDS
 
 API_KEYS = [
     os.environ.get("ODDS_API_KEY_1"),
@@ -18,6 +18,8 @@ invalid_keys = set()  # Track invalid keys to skip them
 
 BASE_URL = "https://api.the-odds-api.com/v4"
 current_key_index = 0
+
+logger = setup_logger(__name__)
 
 def sanitize_error_message(message):
     """
@@ -96,7 +98,11 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
             
             quota_remaining = response.headers.get('x-requests-remaining', 'unknown')
             quota_used = response.headers.get('x-requests-used', 'unknown')
-            print(f"📊 Odds API quota: {quota_remaining} remaining, {quota_used} used")
+            logger.info(
+                "📊 Odds API quota: %s remaining, %s used",
+                quota_remaining,
+                quota_used,
+            )
             
             return data
         except requests.exceptions.HTTPError as e:
@@ -105,7 +111,11 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                 invalid_keys.add(api_key)
                 key_position = attempt + 1
                 total_keys = len(valid_keys)
-                print(f"❌ API key #{key_position}/{total_keys} validation failed - trying alternate key...")
+                logger.warning(
+                    "❌ API key #%d/%d validation failed - trying alternate key...",
+                    key_position,
+                    total_keys,
+                )
                 last_error = e
                 continue
             else:
@@ -128,11 +138,11 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
     for league_code in league_codes:
         sport_key = LEAGUE_CODE_MAPPING.get(league_code)
         if not sport_key:
-            print(f"⚠️  League code {league_code} not mapped to Odds API sport key")
+            logger.warning("⚠️  League code %s not mapped to Odds API sport key", league_code)
             continue
-        
+
         try:
-            print(f"🔍 Fetching odds for {league_code} ({sport_key})...")
+            logger.info("🔍 Fetching odds for %s (%s)...", league_code, sport_key)
             odds_data = get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h")
             
             cutoff_time = datetime.now(timezone.utc) + timedelta(days=next_n_days)
@@ -157,15 +167,16 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
                 
                 all_matches.append(match)
             
-            print(f"✅ Found {len([m for m in all_matches if m['sport_key'] == sport_key])} matches for {league_code}")
-            
+            league_matches = len([m for m in all_matches if m['sport_key'] == sport_key])
+            logger.info("✅ Found %d matches for %s", league_matches, league_code)
+
         except OddsAPIError as e:
             error_msg = sanitize_error_message(str(e))
-            print(f"⚠️  Error fetching {league_code}: {error_msg}")
+            logger.warning("⚠️  Error fetching %s: %s", league_code, error_msg)
             continue
         except Exception as e:
             error_msg = sanitize_error_message(str(e))
-            print(f"⚠️  Unexpected error for {league_code}: {error_msg}")
+            logger.error("⚠️  Unexpected error for %s: %s", league_code, error_msg)
             continue
     
     if not all_matches:
@@ -204,7 +215,11 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                 invalid_keys.add(api_key)
                 key_position = attempt + 1
                 total_keys = len(valid_keys)
-                print(f"❌ API key #{key_position}/{total_keys} validation failed for event odds - trying alternate key...")
+                logger.warning(
+                    "❌ API key #%d/%d validation failed for event odds - trying alternate key...",
+                    key_position,
+                    total_keys,
+                )
                 last_error = e
                 continue
             else:
