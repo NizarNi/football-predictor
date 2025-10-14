@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from .odds_api_client import get_upcoming_matches_with_odds, LEAGUE_CODE_MAPPING
 from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import get_match_xg_prediction
-from .utils import get_current_season, normalize_team_name, fuzzy_team_match
+from .utils import get_current_season, get_team_logo, normalize_team_name, fuzzy_team_match
 from .errors import APIError
 from .validators import validate_league, validate_team, validate_next_days
 
@@ -97,10 +97,14 @@ def upcoming():
                     # Format match data
                     match["datetime"] = match["commence_time"]
                     match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                    
-                    # Add Elo predictions
+
                     home_team = match.get("home_team")
                     away_team = match.get("away_team")
+                    league_for_logo = match.get("league_code") or league_code
+                    match["home_logo"] = get_team_logo(home_team, league_for_logo)
+                    match["away_logo"] = get_team_logo(away_team, league_for_logo)
+
+                    # Add Elo predictions
                     if home_team and away_team:
                         home_elo = get_team_elo(home_team)
                         away_elo = get_team_elo(away_team)
@@ -208,11 +212,17 @@ def search():
             # Calculate predictions from odds for each match
             for match in filtered_matches:
                 predictions = calculate_predictions_from_odds(match)
-                
+
                 # Format match data
                 match["datetime"] = match["commence_time"]
                 match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                
+
+                home_team = match.get("home_team")
+                away_team = match.get("away_team")
+                league_for_logo = match.get("league_code") or match.get("league") or league_code
+                match["home_logo"] = get_team_logo(home_team, league_for_logo)
+                match["away_logo"] = get_team_logo(away_team, league_for_logo)
+
                 # Add predictions in the expected format
                 match["predictions"] = {
                     "1x2": {
@@ -670,6 +680,13 @@ def get_match_context(match_id):
                 "season_display": season_display
             }
 
+            context["home_logo"] = get_team_logo(home_team, league_code)
+            context["away_logo"] = get_team_logo(away_team, league_code)
+            if context["home_team"] is not None:
+                context["home_team"]["logo"] = context["home_logo"]
+            if context["away_team"] is not None:
+                context["away_team"]["logo"] = context["away_logo"]
+
             if elo_probs:
                 logger.info(
                     "✅ Elo predictions computed",
@@ -698,22 +715,26 @@ def get_match_context(match_id):
                 "✅ Context response finalized",
                 extra={"partial": timed_out, "missing": missing_sources},
             )
-            return make_ok(context)
+            return make_ok({"context": context})
 
         except Exception as e:
             logger.exception("Error fetching context for %s", match_id)
-            return make_error(
-                error="Context generation failed",
-                message=str(e),
-                status_code=500
-            )
-    
+            context = {
+                "narrative": "Partial or unavailable data",
+                "home_logo": get_team_logo(home_team, league_code),
+                "away_logo": get_team_logo(away_team, league_code),
+            }
+            return make_ok({"context": context})
+
     except Exception as e:
-        logger.exception("Error in match context for %s", match_id)
+        logger.exception(
+            "❌ Fatal error in match context",
+            extra={"match_id": match_id},
+        )
         return make_error(
-            error="Unable to load match context. Please try again later.",
-            message="Failed to fetch match context",
-            status_code=500
+            error="Internal server error while generating match context",
+            message=str(e),
+            status_code=500,
         )
 
 def generate_match_narrative(home_data, away_data):

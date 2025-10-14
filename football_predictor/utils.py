@@ -3,6 +3,7 @@ Utility functions for Football Prediction Platform
 Shared helper functions used across multiple modules
 """
 
+import logging
 from datetime import datetime
 from typing import Any, Callable, Iterable, Optional
 
@@ -10,6 +11,7 @@ import requests
 import time
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from urllib.parse import quote
 
 from .config import (
     SEASON_START_MONTH,
@@ -18,6 +20,44 @@ from .config import (
     MIN_WORD_LENGTH_FILTER,
     MIN_COMMON_WORDS_MATCH
 )
+
+
+logger = logging.getLogger(__name__)
+
+LOGO_BASE_URL = "https://raw.githubusercontent.com/luukhopman/football-logos/master/logos"
+
+LEAGUE_LOGO_DIRECTORIES = {
+    "PL": "Premier League",
+    "PD": "La Liga",
+    "BL1": "Bundesliga",
+    "SA": "Serie A",
+    "FL1": "Ligue 1",
+    "CL": "UEFA Champions League",
+    "EL": "UEFA Europa League",
+}
+
+
+def _logo_override_key(name: str) -> str:
+    return name.strip().lower()
+
+
+TEAM_LOGO_OVERRIDES = {
+    _logo_override_key("Sunderland"): "Sunderland AFC",
+    _logo_override_key("Leeds"): "Leeds United",
+    _logo_override_key("Spurs"): "Tottenham Hotspur",
+    _logo_override_key("Man United"): "Manchester United",
+    _logo_override_key("Man Utd"): "Manchester United",
+    _logo_override_key("Man City"): "Manchester City",
+    _logo_override_key("Newcastle"): "Newcastle United",
+    _logo_override_key("Wolves"): "Wolverhampton Wanderers",
+    _logo_override_key("Bayern Munich"): "Bayern Munich",
+    _logo_override_key("Paris SG"): "Paris Saint-Germain",
+    _logo_override_key("PSG"): "Paris Saint-Germain",
+    _logo_override_key("default"): "/static/images/default_badge.png",
+}
+
+
+_LOGO_URL_CACHE: dict[str, bool] = {}
 
 
 def get_current_season():
@@ -300,6 +340,85 @@ def get_team_abbreviation(team_name):
         return first_word[:3]
 
     return team_name[:3].upper()
+
+
+def _resolve_logo_directory(league: Optional[str]) -> Optional[str]:
+    if not league:
+        return None
+
+    code = league.strip()
+    if not code:
+        return None
+
+    directory = LEAGUE_LOGO_DIRECTORIES.get(code.upper())
+    if directory:
+        return directory
+
+    return code
+
+
+def _logo_url_exists(url: str) -> bool:
+    if url in _LOGO_URL_CACHE:
+        return _LOGO_URL_CACHE[url]
+
+    try:
+        response = requests.head(url, allow_redirects=True, timeout=0.5)
+        exists = response.status_code != 404
+    except requests.RequestException as exc:
+        logger.debug("Logo availability check failed for %s: %s", url, exc)
+        exists = True
+
+    _LOGO_URL_CACHE[url] = exists
+    return exists
+
+
+def get_team_logo(team_name: Optional[str], league: Optional[str]) -> str:
+    """Return a normalized logo URL for the given team and league."""
+
+    default_logo = TEAM_LOGO_OVERRIDES[_logo_override_key("default")]
+
+    if not team_name:
+        logger.warning("Missing team name for logo lookup (league=%s)", league)
+        return default_logo
+
+    league_directory = _resolve_logo_directory(league)
+    if not league_directory:
+        logger.warning("Missing league for team '%s' when resolving logo", team_name)
+        return default_logo
+
+    lookup_keys = {
+        _logo_override_key(team_name),
+        _logo_override_key(normalize_team_name(team_name)),
+    }
+
+    filename: Optional[str] = None
+    for key in lookup_keys:
+        if key in TEAM_LOGO_OVERRIDES and key != _logo_override_key("default"):
+            filename = TEAM_LOGO_OVERRIDES[key]
+            break
+
+    if filename is None:
+        filename = team_name.strip()
+
+    if not filename:
+        logger.warning(
+            "Resolved empty filename while looking up logo for team '%s' (league=%s)",
+            team_name,
+            league,
+        )
+        return default_logo
+
+    encoded_league = quote(league_directory, safe="")
+    encoded_filename = quote(filename, safe="")
+    logo_url = f"{LOGO_BASE_URL}/{encoded_league}/{encoded_filename}.png"
+
+    if not _logo_url_exists(logo_url):
+        logger.warning(
+            "Logo missing at %s for team '%s' in league '%s'", logo_url, team_name, league
+        )
+        return default_logo
+
+    return logo_url
 
 
 _DEFAULT_ALLOWED_METHODS: frozenset[str] = frozenset(
