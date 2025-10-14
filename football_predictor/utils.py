@@ -4,7 +4,7 @@ Shared helper functions used across multiple modules
 """
 
 from datetime import datetime
-from config import (
+from .config import (
     SEASON_START_MONTH,
     SEASON_MID_MONTH,
     SEASON_END_MONTH,

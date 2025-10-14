@@ -3,11 +3,13 @@ Configuration constants for Football Prediction Platform
 Centralizes all magic numbers and configuration values for maintainability
 """
 
+USE_LEGACY_RESPONSES = True  # Toggle for global response format
+
 import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-from constants import (
+from .constants import (
     AMERICAN_ODDS_DIVISOR,
     API_TIMEOUT_ELO,
     API_TIMEOUT_FOOTBALL_DATA,

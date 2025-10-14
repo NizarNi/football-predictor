@@ -1,5 +1,9 @@
-from flask import jsonify, request
+from functools import wraps
 from typing import Any, Dict, Optional
+
+from flask import jsonify, request, current_app
+
+from . import config
 
 # Routes that must continue returning legacy (unwrapped) JSON so the
 # front-end can consume the responses without modifications.
@@ -13,8 +17,23 @@ _LEGACY_EXACT_PATHS = {
 _LEGACY_PREFIXES = ("/match/",)
 
 
+def legacy_endpoint(func):
+    """Decorator to explicitly mark a route as legacy-only."""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    setattr(func, "_legacy_endpoint", True)
+    setattr(wrapper, "_legacy_endpoint", True)
+    return wrapper
+
+
 def _is_legacy_request() -> bool:
     """Determine if the current request should return legacy JSON."""
+    if not getattr(config, "USE_LEGACY_RESPONSES", True):
+        return False
+
     try:
         path = request.path  # type: ignore[attr-defined]
     except RuntimeError:
@@ -24,6 +43,24 @@ def _is_legacy_request() -> bool:
 
     if not path:
         return False
+
+    endpoint = None
+    try:
+        endpoint = request.endpoint  # type: ignore[attr-defined]
+    except RuntimeError:
+        endpoint = None
+
+    view_func = None
+    if endpoint:
+        try:
+            app = current_app._get_current_object()  # type: ignore[attr-defined]
+        except RuntimeError:
+            app = None
+        if app is not None:
+            view_func = app.view_functions.get(endpoint)
+
+    if view_func and getattr(view_func, "_legacy_endpoint", False):
+        return True
 
     if path in _LEGACY_EXACT_PATHS:
         return True

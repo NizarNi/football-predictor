@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 import threading
 import statistics
-from utils import get_current_season
-from config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT
+from .utils import get_current_season
+from .config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT
 
 # Map league codes to Understat league names
 LEAGUE_MAP = {
