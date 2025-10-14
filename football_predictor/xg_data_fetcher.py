@@ -9,8 +9,11 @@ import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from .utils import get_xg_season
-from .config import setup_logger
+
+import requests
+
+from .utils import create_retry_session, get_xg_season
+from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
 from .constants import (
     CACHE_DIR,
     CAREER_XG_CACHE_TTL,
@@ -25,11 +28,54 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 logger = setup_logger(__name__)
 
+STATUS_FORCELIST = (429, 500, 502, 503, 504)
+BACKOFF_FACTOR = 0.5
+
+_xg_session = create_retry_session(
+    max_retries=API_MAX_RETRIES,
+    backoff_factor=BACKOFF_FACTOR,
+    status_forcelist=STATUS_FORCELIST,
+)
+
+
+class XGDataError(Exception):
+    """Custom error for xG data retrieval issues."""
+
+
 # In-memory cache for match logs (team+league+season -> {data, timestamp})
 MATCH_LOGS_CACHE = {}
 
 # Career xG cache (team+league -> {data, timestamp})
 CAREER_XG_CACHE = {}
+
+
+def _configure_fbref_client(fbref_client):
+    """Attach the retry session to a soccerdata FBref client when possible."""
+
+    for attr in ("session", "_session"):
+        if hasattr(fbref_client, attr):
+            current = getattr(fbref_client, attr)
+            if isinstance(current, requests.Session):
+                setattr(fbref_client, attr, _xg_session)
+
+    if hasattr(fbref_client, "timeout"):
+        try:
+            setattr(fbref_client, "timeout", API_TIMEOUT)
+        except Exception:
+            pass
+
+    return fbref_client
+
+
+def _safe_soccerdata_call(func, context: str, *args, **kwargs):
+    """Execute a soccerdata call and wrap network errors."""
+
+    try:
+        return func(*args, **kwargs)
+    except requests.exceptions.RequestException as exc:
+        error_msg = str(exc)
+        logger.error("❌ %s: %s", context, error_msg)
+        raise XGDataError(f"{context}: {error_msg}") from exc
 
 
 def normalize_team_name_for_fbref(team_name):
@@ -146,9 +192,15 @@ def fetch_career_xg_stats(team_name, league_code):
     # Try seasons from start to current
     for season in range(start_season, current_season + 1):
         try:
-            fbref = sd.FBref(leagues=league_name, seasons=season)
-            stats_df = fbref.read_team_season_stats(stat_type='standard')
-            
+            fbref = _configure_fbref_client(
+                sd.FBref(leagues=league_name, seasons=season)
+            )
+            stats_df = _safe_soccerdata_call(
+                fbref.read_team_season_stats,
+                f"FBref season stats ({league_code} {season})",
+                stat_type='standard',
+            )
+
             # Find team in stats
             team_stats = None
             for idx, row in stats_df.iterrows():
@@ -200,6 +252,12 @@ def fetch_career_xg_stats(team_name, league_code):
                         'xga_per_game': round(xga / games, 2)
                     })
                     
+        except XGDataError:
+            raise
+        except requests.exceptions.RequestException as exc:
+            error_msg = str(exc)
+            logger.error("❌ FBref session error for %s: %s", league_code, error_msg)
+            raise XGDataError(f"Unable to fetch FBref data: {error_msg}") from exc
         except Exception as e:
             # Team might not have been in this league this season
             continue
@@ -284,12 +342,24 @@ def fetch_league_xg_stats(league_code, season=None):
         logger.info("📊 Fetching xG stats for %s (season %s)...", league_name, season_display)
         
         # Fetch team stats from FBref
-        fbref = sd.FBref(leagues=league_name, seasons=season)
-        
+        fbref = _configure_fbref_client(sd.FBref(leagues=league_name, seasons=season))
+
         # Get team offensive and defensive stats
-        shooting_stats = fbref.read_team_season_stats(stat_type='shooting')  # xG For
-        standard_stats = fbref.read_team_season_stats(stat_type='standard')  # Matches played
-        keeper_adv_stats = fbref.read_team_season_stats(stat_type='keeper_adv')  # Goals Against, PSxG (xGA)
+        shooting_stats = _safe_soccerdata_call(
+            fbref.read_team_season_stats,
+            f"FBref shooting stats ({league_code} {season})",
+            stat_type='shooting',
+        )  # xG For
+        standard_stats = _safe_soccerdata_call(
+            fbref.read_team_season_stats,
+            f"FBref standard stats ({league_code} {season})",
+            stat_type='standard',
+        )  # Matches played
+        keeper_adv_stats = _safe_soccerdata_call(
+            fbref.read_team_season_stats,
+            f"FBref keeper advanced stats ({league_code} {season})",
+            stat_type='keeper_adv',
+        )  # Goals Against, PSxG (xGA)
         
         # Process stats into a usable format
         xg_data = {}
@@ -395,6 +465,12 @@ def fetch_league_xg_stats(league_code, season=None):
         logger.info("✅ Fetched xG stats for %d teams in %s", len(xg_data), league_name)
         return xg_data
 
+    except XGDataError:
+        raise
+    except requests.exceptions.RequestException as exc:
+        error_msg = str(exc)
+        logger.error("❌ FBref request failed for %s: %s", league_code, error_msg)
+        raise XGDataError(f"Unable to fetch xG stats: {error_msg}") from exc
     except Exception as e:
         logger.exception("❌ Error fetching xG stats for %s", league_code)
         return {}
@@ -704,8 +780,11 @@ def fetch_team_match_logs(team_name, league_code, season=None):
     try:
         # Fetch schedule data
         logger.info("📊 Fetching match logs for %s in %s (season %s)...", team_name, league_name, season)
-        fbref = sd.FBref(league_name, season)
-        schedule = fbref.read_schedule()
+        fbref = _configure_fbref_client(sd.FBref(league_name, season))
+        schedule = _safe_soccerdata_call(
+            fbref.read_schedule,
+            f"FBref schedule ({league_code} {season})",
+        )
         
         # Normalize team name for matching
         normalized_name = normalize_team_name_for_fbref(team_name)
@@ -819,6 +898,12 @@ def fetch_team_match_logs(team_name, league_code, season=None):
         
         return matches
         
+    except XGDataError:
+        raise
+    except requests.exceptions.RequestException as exc:
+        error_msg = str(exc)
+        logger.error("❌ FBref schedule request failed for %s: %s", team_name, error_msg)
+        raise XGDataError(f"Unable to fetch match logs: {error_msg}") from exc
     except Exception as e:
         logger.exception("❌ Error fetching match logs for %s", team_name)
         return []

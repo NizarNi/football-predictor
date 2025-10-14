@@ -1,9 +1,11 @@
-import requests
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from .config import setup_logger
-from .constants import API_TIMEOUT_ODDS, BASE_URL, LEAGUE_CODE_MAPPING
+import requests
+
+from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
+from .constants import BASE_URL, LEAGUE_CODE_MAPPING
+from .utils import create_retry_session, request_with_retries
 
 API_KEYS = [
     os.environ.get("ODDS_API_KEY_1"),
@@ -19,6 +21,15 @@ invalid_keys = set()  # Track invalid keys to skip them
 current_key_index = 0
 
 logger = setup_logger(__name__)
+
+STATUS_FORCELIST = (429, 500, 502, 503, 504)
+BACKOFF_FACTOR = 0.5
+
+_session = create_retry_session(
+    max_retries=API_MAX_RETRIES,
+    backoff_factor=BACKOFF_FACTOR,
+    status_forcelist=STATUS_FORCELIST,
+)
 
 def sanitize_error_message(message):
     """
@@ -53,11 +64,23 @@ def get_available_sports():
     url = f"{BASE_URL}/sports/"
     
     try:
-        response = requests.get(url, params={"apiKey": api_key}, timeout=API_TIMEOUT_ODDS)
-        response.raise_for_status()
+        response = request_with_retries(
+            _session,
+            "GET",
+            url,
+            params={"apiKey": api_key},
+            timeout=API_TIMEOUT,
+            max_retries=API_MAX_RETRIES,
+            backoff_factor=BACKOFF_FACTOR,
+            status_forcelist=STATUS_FORCELIST,
+            logger=logger,
+            context="Odds API call",
+            sanitize=sanitize_error_message,
+        )
         return response.json()
     except requests.exceptions.RequestException as e:
         error_msg = sanitize_error_message(str(e))
+        logger.error("Failed to fetch available sports: %s", error_msg)
         raise OddsAPIError(f"Error fetching sports: {error_msg}")
 
 def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format="decimal"):
@@ -81,10 +104,21 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
         }
         
         try:
-            response = requests.get(url, params=params, timeout=API_TIMEOUT_ODDS)
-            response.raise_for_status()
+            response = request_with_retries(
+                _session,
+                "GET",
+                url,
+                params=params,
+                timeout=API_TIMEOUT,
+                max_retries=API_MAX_RETRIES,
+                backoff_factor=BACKOFF_FACTOR,
+                status_forcelist=STATUS_FORCELIST,
+                logger=logger,
+                context=f"Odds API call for {sport_key}",
+                sanitize=sanitize_error_message,
+            )
             data = response.json()
-            
+
             quota_remaining = response.headers.get('x-requests-remaining', 'unknown')
             quota_used = response.headers.get('x-requests-used', 'unknown')
             logger.info(
@@ -95,7 +129,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
             
             return data
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 401:
+            if e.response is not None and e.response.status_code == 401:
                 # Invalid/expired key - mark it and try next
                 invalid_keys.add(api_key)
                 key_position = attempt + 1
@@ -109,9 +143,16 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                 continue
             else:
                 error_msg = sanitize_error_message(str(e))
+                logger.error("Failed odds fetch for %s: %s", sport_key, error_msg)
                 raise OddsAPIError(f"Error fetching odds for {sport_key}: {error_msg}")
         except requests.exceptions.RequestException as e:
             last_error = e
+            logger.warning(
+                "Retryable error with key %s for %s: %s",
+                api_key,
+                sport_key,
+                sanitize_error_message(str(e)),
+            )
             continue
     
     # If we get here, all keys failed
@@ -195,11 +236,22 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
         }
         
         try:
-            response = requests.get(url, params=params, timeout=API_TIMEOUT_ODDS)
-            response.raise_for_status()
+            response = request_with_retries(
+                _session,
+                "GET",
+                url,
+                params=params,
+                timeout=API_TIMEOUT,
+                max_retries=API_MAX_RETRIES,
+                backoff_factor=BACKOFF_FACTOR,
+                status_forcelist=STATUS_FORCELIST,
+                logger=logger,
+                context=f"Event odds call for {sport_key}",
+                sanitize=sanitize_error_message,
+            )
             return response.json()
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 401:
+            if e.response is not None and e.response.status_code == 401:
                 # Invalid/expired key - mark it and try next
                 invalid_keys.add(api_key)
                 key_position = attempt + 1
@@ -213,9 +265,16 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                 continue
             else:
                 error_msg = sanitize_error_message(str(e))
+                logger.error("Failed event odds fetch for %s: %s", sport_key, error_msg)
                 raise OddsAPIError(f"Error fetching event odds: {error_msg}")
         except requests.exceptions.RequestException as e:
             last_error = e
+            logger.warning(
+                "Retryable error retrieving event odds for %s with key %s: %s",
+                sport_key,
+                api_key,
+                sanitize_error_message(str(e)),
+            )
             continue
     
     # If we get here, all keys failed
