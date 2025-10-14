@@ -28,6 +28,7 @@ class TestResponseFormats(unittest.TestCase):
             "home_team": "Team A",
             "away_team": "Team B",
             "id": "match-1",
+            "league_code": "PL",
         }
         predictions = {
             "prediction": "HOME_WIN",
@@ -76,6 +77,8 @@ class TestResponseFormats(unittest.TestCase):
         self.assertIsInstance(payload, dict)
         self.assertIn("matches", payload)
         self.assertNotIn("status", payload)
+        self.assertIn("home_logo", payload["matches"][0])
+        self.assertIn("away_logo", payload["matches"][0])
 
     def test_search_legacy_mode_unwrapped(self):
         config.USE_LEGACY_RESPONSES = True
@@ -86,6 +89,8 @@ class TestResponseFormats(unittest.TestCase):
         payload = response.get_json()
         self.assertIn("matches", payload)
         self.assertNotIn("status", payload)
+        self.assertIn("home_logo", payload["matches"][0])
+        self.assertIn("away_logo", payload["matches"][0])
 
     def test_upcoming_new_mode_wrapped(self):
         config.USE_LEGACY_RESPONSES = False
@@ -97,6 +102,8 @@ class TestResponseFormats(unittest.TestCase):
         self.assertEqual(payload.get("status"), "ok")
         self.assertIn("data", payload)
         self.assertIn("matches", payload["data"])
+        self.assertIn("home_logo", payload["data"]["matches"][0])
+        self.assertIn("away_logo", payload["data"]["matches"][0])
 
     def test_search_new_mode_wrapped(self):
         config.USE_LEGACY_RESPONSES = False
@@ -108,6 +115,8 @@ class TestResponseFormats(unittest.TestCase):
         self.assertEqual(payload.get("status"), "ok")
         self.assertIn("data", payload)
         self.assertIn("matches", payload["data"])
+        self.assertIn("home_logo", payload["data"]["matches"][0])
+        self.assertIn("away_logo", payload["data"]["matches"][0])
 
     def test_status_endpoint_reports_mode(self):
         config.USE_LEGACY_RESPONSES = True
