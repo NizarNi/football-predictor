@@ -76,6 +76,9 @@ class TestResponseFormats(unittest.TestCase):
         self.assertIsInstance(payload, dict)
         self.assertIn("matches", payload)
         self.assertNotIn("status", payload)
+        match = payload["matches"][0]
+        self.assertEqual(match["home_logo_url"], "/static/team_logos/generic_shield.svg")
+        self.assertEqual(match["away_logo_url"], "/static/team_logos/generic_shield.svg")
 
     def test_search_legacy_mode_unwrapped(self):
         config.USE_LEGACY_RESPONSES = True
@@ -86,6 +89,9 @@ class TestResponseFormats(unittest.TestCase):
         payload = response.get_json()
         self.assertIn("matches", payload)
         self.assertNotIn("status", payload)
+        match = payload["matches"][0]
+        self.assertEqual(match["home_logo_url"], "/static/team_logos/generic_shield.svg")
+        self.assertEqual(match["away_logo_url"], "/static/team_logos/generic_shield.svg")
 
     def test_upcoming_new_mode_wrapped(self):
         config.USE_LEGACY_RESPONSES = False
@@ -97,6 +103,9 @@ class TestResponseFormats(unittest.TestCase):
         self.assertEqual(payload.get("status"), "ok")
         self.assertIn("data", payload)
         self.assertIn("matches", payload["data"])
+        match = payload["data"]["matches"][0]
+        self.assertEqual(match["home_logo_url"], "/static/team_logos/generic_shield.svg")
+        self.assertEqual(match["away_logo_url"], "/static/team_logos/generic_shield.svg")
 
     def test_search_new_mode_wrapped(self):
         config.USE_LEGACY_RESPONSES = False
@@ -108,6 +117,9 @@ class TestResponseFormats(unittest.TestCase):
         self.assertEqual(payload.get("status"), "ok")
         self.assertIn("data", payload)
         self.assertIn("matches", payload["data"])
+        match = payload["data"]["matches"][0]
+        self.assertEqual(match["home_logo_url"], "/static/team_logos/generic_shield.svg")
+        self.assertEqual(match["away_logo_url"], "/static/team_logos/generic_shield.svg")
 
     def test_status_endpoint_reports_mode(self):
         config.USE_LEGACY_RESPONSES = True
