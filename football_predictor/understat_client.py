@@ -1,16 +1,26 @@
 import asyncio
-import aiohttp
-from understat import Understat
-from typing import Any, Dict, List, Optional, Callable, Awaitable, TypeVar
+from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import threading
 import statistics
 from urllib.parse import urlsplit, urlunsplit
 
+import requests
+
 from .app_utils import AdaptiveTimeoutController
-from .utils import get_current_season
 from .config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT, setup_logger
 from .errors import APIError
+from .net_retry import request_with_retries
+from .utils import get_current_season
+
+try:  # pragma: no cover - compatibility shim for tests expecting aiohttp attribute
+    import aiohttp  # type: ignore
+except ImportError:  # pragma: no cover
+    class _AiohttpStub:
+        class ClientSession:  # type: ignore
+            pass
+
+    aiohttp = _AiohttpStub()  # type: ignore
 
 # Map league codes to Understat league names
 LEAGUE_MAP = {
@@ -33,7 +43,7 @@ _RETRY_STATUS_FORCELIST = (429, 500, 502, 503, 504)
 _RETRY_ATTEMPTS = 3
 _RETRY_BACKOFF_FACTOR = 0.6
 
-_T = TypeVar("_T")
+_UNDERSTAT_API_BASE = "https://understat.com/api"
 
 
 def _scrub_url(url: Any) -> str:
@@ -46,101 +56,70 @@ def _scrub_url(url: Any) -> str:
         return str(url)
 
 
-async def _execute_with_retries(
-    operation: Callable[[], Awaitable[_T]],
+def _make_understat_request(
+    path: str,
     *,
+    params: Optional[Dict[str, Any]] = None,
     context: str,
-) -> _T:
-    last_error: Optional[aiohttp.ClientError] = None
-
-    for attempt in range(1, _RETRY_ATTEMPTS + 1):
-        try:
-            return await operation()
-        except aiohttp.ClientError as exc:
-            status = getattr(exc, "status", None)
-            last_error = exc
-            logger.debug(
-                "Understat attempt %d/%d failed for %s with status=%s",
-                attempt,
-                _RETRY_ATTEMPTS,
-                context,
-                status,
-            )
-
-            if status in _RETRY_STATUS_FORCELIST and attempt < _RETRY_ATTEMPTS:
-                backoff = _RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1))
-                if backoff > 0:
-                    logger.debug(
-                        "Sleeping %.2fs before retrying %s",
-                        backoff,
-                        context,
-                    )
-                    await asyncio.sleep(backoff)
-                continue
-            break
-
-    if last_error is not None:
-        status = getattr(last_error, "status", None)
-        request_info = getattr(last_error, "request_info", None)
-        real_url = getattr(request_info, "real_url", None)
-        logger.warning(
-            "Understat request failed after retries: source=understat status=%s url=%s",
-            status,
-            _scrub_url(real_url) if real_url else context,
-        )
-        raise last_error
-
-    raise RuntimeError("_execute_with_retries exited without executing operation")
-
-def sync_understat_call(async_func, context: str = "Understat API call"):
-    """Wrapper to run async Understat functions synchronously with timeout"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    timeout = adaptive_timeout.get_timeout()
+) -> Dict[str, Any] | List[Any]:
+    target_url = f"{_UNDERSTAT_API_BASE}{path}"
 
     try:
-        result = loop.run_until_complete(
-            asyncio.wait_for(async_func(), timeout=timeout)
+        resp = request_with_retries(
+            method="GET",
+            url=target_url,
+            timeout=adaptive_timeout.get_timeout(),
+            retries=_RETRY_ATTEMPTS,
+            backoff_factor=_RETRY_BACKOFF_FACTOR,
+            status_forcelist=_RETRY_STATUS_FORCELIST,
+            logger=logger,
+            context=context,
+            params=params,
         )
+        resp.raise_for_status()
         adaptive_timeout.record_success()
-        return result
-    except asyncio.TimeoutError as exc:
+    except requests.Timeout as exc:
         adaptive_timeout.record_failure()
-        logger.warning("[Resilience] API timeout or network issue: %s", exc)
-        logger.error(
-            "⏱️ Understat request timed out after %.1f seconds (%s)",
-            timeout,
-            context,
-        )
         raise APIError(
             "UnderstatAPI",
             "TIMEOUT",
             "The Understat API did not respond in time.",
         ) from exc
-    except APIError:
-        raise
-    except aiohttp.ClientError as exc:
+    except requests.HTTPError as exc:
         adaptive_timeout.record_failure()
-        logger.warning("[Resilience] API request failure detected: %s", exc)
-        logger.error("❌ Understat error during %s: %s", context, exc)
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 429:
+            raise APIError(
+                "UnderstatAPI",
+                "429",
+                "The Understat API rate limited the request.",
+                "rate_limited",
+            ) from exc
         raise APIError(
             "UnderstatAPI",
             "NETWORK_ERROR",
             "A network error occurred.",
             str(exc),
         ) from exc
-    except Exception as exc:
+    except requests.RequestException as exc:
         adaptive_timeout.record_failure()
-        logger.warning("[Resilience] API request failure detected: %s", exc)
-        logger.error("❌ Understat error during %s: %s", context, exc)
         raise APIError(
             "UnderstatAPI",
             "NETWORK_ERROR",
             "A network error occurred.",
             str(exc),
         ) from exc
-    finally:
-        loop.close()
+
+    try:
+        return resp.json()
+    except ValueError as exc:
+        adaptive_timeout.record_failure()
+        raise APIError(
+            "UnderstatAPI",
+            "PARSE_ERROR",
+            "Failed to parse API response.",
+            str(exc),
+        ) from exc
 
 def _calculate_percentile(value: float, all_values: List[float], lower_is_better: bool = False) -> float:
     """Calculate percentile rank for a value (0-100, where 100 is best)"""
@@ -229,245 +208,44 @@ def _calculate_recent_trend(team_history: List[Dict], season_avg_xg: float) -> s
     else:
         return "neutral"
 
-async def _fetch_league_standings(league_code: str, season: Optional[int] = None) -> List[Dict]:
-    """Async function to fetch league standings from Understat"""
+def _extract_dict_list(payload: Any, *, candidate_keys: Tuple[str, ...]) -> List[Dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key in candidate_keys:
+            if key in payload:
+                extracted = _extract_dict_list(payload[key], candidate_keys=candidate_keys)
+                if extracted:
+                    return extracted
+        if payload and all(isinstance(value, dict) for value in payload.values()):
+            return [value for value in payload.values() if isinstance(value, dict)]
+    return []
+
+
+def _fetch_league_standings(league_code: str, season: Optional[int] = None) -> List[Dict]:
+    """Fetch league standings from Understat using the retry-enabled HTTP helper."""
     if season is None:
         season = get_current_season()
-    
+
     understat_league = LEAGUE_MAP.get(league_code)
 
     if not understat_league:
         logger.warning("⚠️ Understat: League %s not supported", league_code)
         return []
 
-    timeout = adaptive_timeout.get_timeout()
-    session_kwargs: Dict[str, Any] = {}
-
-    if hasattr(aiohttp, "ClientTimeout"):
-        try:
-            session_kwargs["timeout"] = aiohttp.ClientTimeout(total=timeout)
-        except Exception:
-            session_kwargs = {}
-
-    async def _perform_request() -> List[Dict]:
-        async with aiohttp.ClientSession(**session_kwargs) as session:
-            understat = Understat(session)
-
-            teams = await understat.get_teams(understat_league, season)
-            results = await understat.get_league_results(understat_league, season)
-
-            standings: Dict[str, Dict[str, Any]] = {}
-            for match in results:
-                if not match.get('isResult'):
-                    continue
-
-                home_team = match.get('h', {}).get('title')
-                away_team = match.get('a', {}).get('title')
-                home_goals = int(match.get('goals', {}).get('h', 0))
-                away_goals = int(match.get('goals', {}).get('a', 0))
-                
-                # Initialize team stats
-                for team in [home_team, away_team]:
-                    if team and team not in standings:
-                        standings[team] = {
-                            'name': team,
-                            'played': 0,
-                            'won': 0,
-                            'draw': 0,
-                            'lost': 0,
-                            'goals_for': 0,
-                            'goals_against': 0,
-                            'goal_difference': 0,
-                            'points': 0,
-                            'form': []
-                        }
-                
-                # Update home team
-                if home_team:
-                    standings[home_team]['played'] += 1
-                    standings[home_team]['goals_for'] += home_goals
-                    standings[home_team]['goals_against'] += away_goals
-                    
-                    if home_goals > away_goals:
-                        standings[home_team]['won'] += 1
-                        standings[home_team]['points'] += 3
-                        standings[home_team]['form'].append('W')
-                    elif home_goals == away_goals:
-                        standings[home_team]['draw'] += 1
-                        standings[home_team]['points'] += 1
-                        standings[home_team]['form'].append('D')
-                    else:
-                        standings[home_team]['lost'] += 1
-                        standings[home_team]['form'].append('L')
-                
-                # Update away team
-                if away_team:
-                    standings[away_team]['played'] += 1
-                    standings[away_team]['goals_for'] += away_goals
-                    standings[away_team]['goals_against'] += home_goals
-                    
-                    if away_goals > home_goals:
-                        standings[away_team]['won'] += 1
-                        standings[away_team]['points'] += 3
-                        standings[away_team]['form'].append('W')
-                    elif away_goals == home_goals:
-                        standings[away_team]['draw'] += 1
-                        standings[away_team]['points'] += 1
-                        standings[away_team]['form'].append('D')
-                    else:
-                        standings[away_team]['lost'] += 1
-                        standings[away_team]['form'].append('L')
-            
-            # Calculate goal difference and convert to list
-            standings_list = []
-            for team_name, stats in standings.items():
-                stats['goal_difference'] = stats['goals_for'] - stats['goals_against']
-                # Keep only last 5 form results
-                stats['form'] = ''.join(stats['form'][-5:])
-                standings_list.append(stats)
-            
-            # Sort by points, then goal difference
-            standings_list.sort(key=lambda x: (x['points'], x['goal_difference']), reverse=True)
-            
-            # Add position
-            for i, team in enumerate(standings_list, 1):
-                team['position'] = i
-            
-            # Merge with xG data from teams endpoint (aggregated from matches)
-            team_xg_map = {}
-            team_history_map = {}
-            
-            for team_data in teams:
-                team_name = team_data.get('title')
-                if not team_name:
-                    continue
-                
-                # Aggregate xG data from all matches
-                total_xg = 0
-                total_xga = 0
-                total_npxg = 0
-                total_npxga = 0
-                ppda_values = []
-                oppda_values = []
-                match_count = 0
-                
-                history = team_data.get('history', [])
-                team_history_map[team_name] = history
-                
-                for match in history:
-                    total_xg += float(match.get('xG', 0))
-                    total_xga += float(match.get('xGA', 0))
-                    total_npxg += float(match.get('npxG', 0))
-                    total_npxga += float(match.get('npxGA', 0))
-                    
-                    ppda = match.get('ppda', {})
-                    if isinstance(ppda, dict):
-                        att = float(ppda.get('att', 0))
-                        def_ = float(ppda.get('def', 0))
-                        if def_ > 0:
-                            ppda_values.append(att / def_)
-                    
-                    oppda = match.get('ppda_allowed', {})
-                    if isinstance(oppda, dict):
-                        opp_att = float(oppda.get('att', 0))
-                        opp_def = float(oppda.get('def', 0))
-                        if opp_def > 0:
-                            oppda_values.append(opp_att / opp_def)
-                    
-                    match_count += 1
-                
-                if match_count > 0:
-                    team_xg_map[team_name] = {
-                        'xG': round(total_xg, 2),
-                        'xGA': round(total_xga, 2),
-                        'npxG': round(total_npxg, 2),
-                        'npxGA': round(total_npxga, 2),
-                        'ppda_coef': round(sum(ppda_values) / len(ppda_values), 2) if ppda_values else 0,
-                        'oppda_coef': round(sum(oppda_values) / len(oppda_values), 2) if oppda_values else 0,
-                        'match_count': match_count
-                    }
-            
-            # Merge xG data
-            for team in standings_list:
-                team_name = team['name']
-                if team_name in team_xg_map:
-                    team.update(team_xg_map[team_name])
-            
-            # Calculate league-wide statistics
-            league_stats = _calculate_league_stats(standings_list)
-            
-            # Collect values for percentile calculations
-            xg_values = [team.get('xG', 0) for team in standings_list if team.get('xG')]
-            xga_values = [team.get('xGA', 0) for team in standings_list if team.get('xGA')]
-            ppda_values = [team.get('ppda_coef', 0) for team in standings_list if team.get('ppda_coef')]
-            
-            # Add enhanced metrics to each team
-            for team in standings_list:
-                team_name = team['name']
-                xg = team.get('xG', 0)
-                xga = team.get('xGA', 0)
-                ppda = team.get('ppda_coef', 0)
-                match_count = team.get('match_count', team.get('played', 1))
-                
-                # Calculate per-game averages
-                xg_per_game = xg / match_count if match_count > 0 else 0
-                xga_per_game = xga / match_count if match_count > 0 else 0
-                
-                # Calculate percentiles (lower is better for xGA and PPDA)
-                team['xg_percentile'] = _calculate_percentile(xg, xg_values, lower_is_better=False)
-                team['xga_percentile'] = _calculate_percentile(xga, xga_values, lower_is_better=True)
-                team['ppda_percentile'] = _calculate_percentile(ppda, ppda_values, lower_is_better=True)
-                
-                # Calculate performance ratings
-                team['attack_rating'] = _get_attack_rating(xg_per_game)
-                team['defense_rating'] = _get_defense_rating(xga_per_game)
-                
-                # Add league context
-                team['league_stats'] = league_stats
-                
-                # Calculate recent trend
-                history = team_history_map.get(team_name, [])
-                season_avg_xg = xg_per_game
-                team['recent_trend'] = _calculate_recent_trend(history, season_avg_xg)
-            
-            logger.info(
-                "✅ Understat: Retrieved %d teams for %s",
-                len(standings_list),
-                league_code,
-            )
-            return standings_list
+    context_prefix = f"standings:{league_code}:{season}"
 
     try:
-        return await _execute_with_retries(
-            _perform_request,
-            context=f"standings:{league_code}",
+        teams_payload = _make_understat_request(
+            "/league/table",
+            params={"league": understat_league, "season": season},
+            context=f"{context_prefix}:teams",
         )
-    except aiohttp.ClientError as exc:
-        error_msg = str(exc)
-        status = getattr(exc, "status", None)
-        logger.error("❌ Understat network error for %s: %s", league_code, error_msg)
-        if status == 429:
-            raise APIError(
-                "UnderstatAPI",
-                "429",
-                "The Understat API rate limited the request.",
-                "rate_limited",
-            ) from exc
-        raise APIError(
-            "UnderstatAPI",
-            "NETWORK_ERROR",
-            "A network error occurred.",
-            error_msg,
-        ) from exc
-    except ValueError as exc:
-        error_msg = str(exc)
-        logger.error("❌ Understat parse error for %s: %s", league_code, error_msg)
-        raise APIError(
-            "UnderstatAPI",
-            "PARSE_ERROR",
-            "Failed to parse API response.",
-            error_msg,
-        ) from exc
+        results_payload = _make_understat_request(
+            "/league/results",
+            params={"league": understat_league, "season": season},
+            context=f"{context_prefix}:results",
+        )
     except APIError:
         raise
     except Exception as exc:
@@ -479,71 +257,229 @@ async def _fetch_league_standings(league_code: str, season: Optional[int] = None
             str(exc),
         ) from exc
 
-async def _fetch_match_probabilities(home_team: str, away_team: str, league_code: str, season: Optional[int] = None) -> Optional[Dict]:
-    """Async function to fetch match win probabilities from Understat"""
+    teams = _extract_dict_list(
+        teams_payload,
+        candidate_keys=(
+            "teams",
+            "teamsData",
+            "data",
+            "result",
+            "table",
+            "response",
+            "all",
+        ),
+    )
+    results = _extract_dict_list(
+        results_payload,
+        candidate_keys=(
+            "results",
+            "fixtures",
+            "matches",
+            "response",
+            "list",
+            "data",
+        ),
+    )
+
+    standings: Dict[str, Dict[str, Any]] = {}
+    for match in results:
+        if not match.get('isResult', True):
+            continue
+
+        home_info = match.get('h') or match.get('home') or {}
+        away_info = match.get('a') or match.get('away') or {}
+
+        home_team = home_info.get('title') or home_info.get('team_name') or home_info.get('name')
+        away_team = away_info.get('title') or away_info.get('team_name') or away_info.get('name')
+
+        goals = match.get('goals') or match.get('score') or {}
+        home_goals = int(goals.get('h') or goals.get('home') or home_info.get('goals', 0) or 0)
+        away_goals = int(goals.get('a') or goals.get('away') or away_info.get('goals', 0) or 0)
+
+        for team in [home_team, away_team]:
+            if team and team not in standings:
+                standings[team] = {
+                    'name': team,
+                    'played': 0,
+                    'won': 0,
+                    'draw': 0,
+                    'lost': 0,
+                    'goals_for': 0,
+                    'goals_against': 0,
+                    'goal_difference': 0,
+                    'points': 0,
+                    'form': [],
+                }
+
+        if home_team:
+            team_entry = standings[home_team]
+            team_entry['played'] += 1
+            team_entry['goals_for'] += home_goals
+            team_entry['goals_against'] += away_goals
+            if home_goals > away_goals:
+                team_entry['won'] += 1
+                team_entry['points'] += 3
+                team_entry['form'].append('W')
+            elif home_goals == away_goals:
+                team_entry['draw'] += 1
+                team_entry['points'] += 1
+                team_entry['form'].append('D')
+            else:
+                team_entry['lost'] += 1
+                team_entry['form'].append('L')
+
+        if away_team:
+            team_entry = standings[away_team]
+            team_entry['played'] += 1
+            team_entry['goals_for'] += away_goals
+            team_entry['goals_against'] += home_goals
+            if away_goals > home_goals:
+                team_entry['won'] += 1
+                team_entry['points'] += 3
+                team_entry['form'].append('W')
+            elif away_goals == home_goals:
+                team_entry['draw'] += 1
+                team_entry['points'] += 1
+                team_entry['form'].append('D')
+            else:
+                team_entry['lost'] += 1
+                team_entry['form'].append('L')
+
+    standings_list: List[Dict[str, Any]] = []
+    for team_name, stats in standings.items():
+        stats['goal_difference'] = stats['goals_for'] - stats['goals_against']
+        stats['form'] = ''.join(stats['form'][-5:])
+        standings_list.append(stats)
+
+    standings_list.sort(key=lambda x: (x['points'], x['goal_difference']), reverse=True)
+
+    for idx, team in enumerate(standings_list, 1):
+        team['position'] = idx
+
+    team_xg_map: Dict[str, Dict[str, Any]] = {}
+    team_history_map: Dict[str, List[Dict[str, Any]]] = {}
+
+    for team_data in teams:
+        team_name = (
+            team_data.get('title')
+            or team_data.get('team_title')
+            or team_data.get('team_name')
+            or team_data.get('name')
+        )
+        if not team_name:
+            continue
+
+        history = team_data.get('history')
+        if isinstance(history, dict):
+            history = list(history.values())
+        if not isinstance(history, list):
+            history = []
+        team_history_map[team_name] = history
+
+        total_xg = 0.0
+        total_xga = 0.0
+        total_npxg = 0.0
+        total_npxga = 0.0
+        ppda_values: List[float] = []
+        oppda_values: List[float] = []
+        match_count = 0
+
+        for match in history:
+            total_xg += float(match.get('xG', 0))
+            total_xga += float(match.get('xGA', 0))
+            total_npxg += float(match.get('npxG', 0))
+            total_npxga += float(match.get('npxGA', 0))
+
+            ppda = match.get('ppda', {})
+            if isinstance(ppda, dict):
+                att = float(ppda.get('att', 0))
+                def_ = float(ppda.get('def', 0))
+                if def_ > 0:
+                    ppda_values.append(att / def_)
+
+            oppda = match.get('ppda_allowed', {})
+            if isinstance(oppda, dict):
+                opp_att = float(oppda.get('att', 0))
+                opp_def = float(oppda.get('def', 0))
+                if opp_def > 0:
+                    oppda_values.append(opp_att / opp_def)
+
+            match_count += 1
+
+        if match_count > 0:
+            team_xg_map[team_name] = {
+                'xG': round(total_xg, 2),
+                'xGA': round(total_xga, 2),
+                'npxG': round(total_npxg, 2),
+                'npxGA': round(total_npxga, 2),
+                'ppda_coef': round(sum(ppda_values) / len(ppda_values), 2) if ppda_values else 0,
+                'oppda_coef': round(sum(oppda_values) / len(oppda_values), 2) if oppda_values else 0,
+                'match_count': match_count,
+            }
+
+    for team in standings_list:
+        team_name = team['name']
+        if team_name in team_xg_map:
+            team.update(team_xg_map[team_name])
+
+    league_stats = _calculate_league_stats(standings_list)
+
+    xg_values = [team.get('xG', 0) for team in standings_list if team.get('xG')]
+    xga_values = [team.get('xGA', 0) for team in standings_list if team.get('xGA')]
+    ppda_values = [team.get('ppda_coef', 0) for team in standings_list if team.get('ppda_coef')]
+
+    for team in standings_list:
+        team_name = team['name']
+        xg = team.get('xG', 0)
+        xga = team.get('xGA', 0)
+        ppda = team.get('ppda_coef', 0)
+        match_count = team.get('match_count', team.get('played', 1))
+
+        xg_per_game = xg / match_count if match_count > 0 else 0
+        xga_per_game = xga / match_count if match_count > 0 else 0
+
+        team['xg_percentile'] = _calculate_percentile(xg, xg_values, lower_is_better=False)
+        team['xga_percentile'] = _calculate_percentile(xga, xga_values, lower_is_better=True)
+        team['ppda_percentile'] = _calculate_percentile(ppda, ppda_values, lower_is_better=True)
+
+        team['attack_rating'] = _get_attack_rating(xg_per_game)
+        team['defense_rating'] = _get_defense_rating(xga_per_game)
+
+        team['league_stats'] = league_stats
+
+        history = team_history_map.get(team_name, [])
+        season_avg_xg = xg_per_game
+        team['recent_trend'] = _calculate_recent_trend(history, season_avg_xg)
+
+    logger.info(
+        "✅ Understat: Retrieved %d teams for %s",
+        len(standings_list),
+        league_code,
+    )
+    return standings_list
+
+def _fetch_match_probabilities(
+    home_team: str,
+    away_team: str,
+    league_code: str,
+    season: Optional[int] = None,
+) -> Optional[Dict]:
+    """Fetch match win probabilities from Understat using retry-enabled HTTP requests."""
     if season is None:
         season = get_current_season()
-    
+
     understat_league = LEAGUE_MAP.get(league_code)
 
     if not understat_league:
         logger.warning("⚠️ Understat: League %s not supported for probabilities", league_code)
         return None
 
-    async def _perform_request() -> Optional[Dict]:
-        async with aiohttp.ClientSession() as session:
-            understat = Understat(session)
-            results = await understat.get_league_results(understat_league, season)
-
-            for match in results:
-                home = match.get('h', {}).get('title', '')
-                away = match.get('a', {}).get('title', '')
-
-                if (home_team.lower() in home.lower() or home.lower() in home_team.lower()) and \
-                   (away_team.lower() in away.lower() or away.lower() in away_team.lower()):
-
-                    forecast = match.get('forecast', {})
-                    return {
-                        'home_win': forecast.get('w', 0),
-                        'draw': forecast.get('d', 0),
-                        'away_win': forecast.get('l', 0),
-                        'home_xg': match.get('xG', {}).get('h', 0),
-                        'away_xg': match.get('xG', {}).get('a', 0)
-                    }
-
-            return None
-
     try:
-        return await _execute_with_retries(
-            _perform_request,
-            context=f"probabilities:{league_code}",
+        results_payload = _make_understat_request(
+            "/league/results",
+            params={"league": understat_league, "season": season},
+            context=f"probabilities:{league_code}:{season}",
         )
-    except aiohttp.ClientError as exc:
-        error_msg = str(exc)
-        status = getattr(exc, "status", None)
-        logger.error("❌ Understat network error fetching probabilities: %s", error_msg)
-        if status == 429:
-            raise APIError(
-                "UnderstatAPI",
-                "429",
-                "The Understat API rate limited the request.",
-                "rate_limited",
-            ) from exc
-        raise APIError(
-            "UnderstatAPI",
-            "NETWORK_ERROR",
-            "A network error occurred.",
-            error_msg,
-        ) from exc
-    except ValueError as exc:
-        error_msg = str(exc)
-        logger.error("❌ Understat parse error fetching probabilities: %s", error_msg)
-        raise APIError(
-            "UnderstatAPI",
-            "PARSE_ERROR",
-            "Failed to parse API response.",
-            error_msg,
-        ) from exc
     except APIError:
         raise
     except Exception as exc:
@@ -554,6 +490,43 @@ async def _fetch_match_probabilities(home_team: str, away_team: str, league_code
             "An unexpected error occurred while contacting Understat.",
             str(exc),
         ) from exc
+
+    results = _extract_dict_list(
+        results_payload,
+        candidate_keys=(
+            "results",
+            "fixtures",
+            "matches",
+            "response",
+            "list",
+            "data",
+        ),
+    )
+
+    home_normalized = home_team.lower()
+    away_normalized = away_team.lower()
+
+    for match in results:
+        home_info = match.get('h') or match.get('home') or {}
+        away_info = match.get('a') or match.get('away') or {}
+
+        home_title = (home_info.get('title') or home_info.get('team_name') or home_info.get('name') or "").lower()
+        away_title = (away_info.get('title') or away_info.get('team_name') or away_info.get('name') or "").lower()
+
+        if (home_normalized in home_title or home_title in home_normalized) and (
+            away_normalized in away_title or away_title in away_normalized
+        ):
+            forecast = match.get('forecast', {})
+            xg_values = match.get('xG') or match.get('xg') or {}
+            return {
+                'home_win': forecast.get('w', 0),
+                'draw': forecast.get('d', 0),
+                'away_win': forecast.get('l', 0),
+                'home_xg': xg_values.get('h') or xg_values.get('home', 0),
+                'away_xg': xg_values.get('a') or xg_values.get('away', 0),
+            }
+
+    return None
 
 def fetch_understat_standings(league_code: str, season: Optional[int] = None) -> List[Dict]:
     """Sync wrapper for fetching league standings from Understat with caching"""
@@ -576,10 +549,7 @@ def fetch_understat_standings(league_code: str, season: Optional[int] = None) ->
                 return cached_data
 
     # Fetch fresh data
-    standings = sync_understat_call(
-        lambda: _fetch_league_standings(league_code, season),
-        context=f"Understat standings for {league_code}",
-    )
+    standings = _fetch_league_standings(league_code, season)
     
     # Update cache
     if standings:
@@ -593,7 +563,4 @@ def fetch_understat_match_probabilities(home_team: str, away_team: str, league_c
     if season is None:
         season = get_current_season()
     
-    return sync_understat_call(
-        lambda: _fetch_match_probabilities(home_team, away_team, league_code, season),
-        context=f"Understat probabilities for {home_team} vs {away_team}",
-    )
+    return _fetch_match_probabilities(home_team, away_team, league_code, season)

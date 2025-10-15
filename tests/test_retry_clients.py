@@ -1,6 +1,3 @@
-import types
-
-import aiohttp
 import pytest
 import requests
 
@@ -30,20 +27,29 @@ def make_response(status_code, body="", url="http://api.clubelo.com/test"):
     return response
 
 
-class FakeUnderstatError(aiohttp.ClientError):
-    def __init__(self, status, url="http://understat.test/resource"):
-        super().__init__(f"Status {status}")
-        self.status = status
-        self.request_info = types.SimpleNamespace(real_url=url)
+class FakeJSONResponse:
+    def __init__(self, status_code, payload=None, url="http://understat.test/api"):
+        self.status_code = status_code
+        self.reason = "OK" if status_code < 400 else "Error"
+        self._payload = payload
+        self.url = url
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(
+                f"{self.status_code} Server Error: {self.reason}",
+                response=self,
+            )
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("No JSON payload configured")
+        return self._payload
 
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
-    async def _noop_sleep(_duration):
-        return None
-
     monkeypatch.setattr("football_predictor.utils.time.sleep", lambda _duration: None)
-    monkeypatch.setattr(understat_client.asyncio, "sleep", _noop_sleep)
 
 
 def test_elo_retry_eventually_succeeds(monkeypatch):
@@ -80,96 +86,83 @@ def test_elo_retry_rate_limited(monkeypatch):
 
 
 def test_understat_retry_eventually_succeeds(monkeypatch):
-    attempts = {"count": 0}
+    history = [
+        {
+            "xG": 1.2,
+            "xGA": 0.9,
+            "npxG": 1.0,
+            "npxGA": 0.8,
+            "ppda": {"att": 10, "def": 5},
+            "ppda_allowed": {"att": 12, "def": 6},
+        }
+        for _ in range(3)
+    ]
+    teams_payload = {
+        "teams": [
+            {"title": "Team A", "history": history},
+            {"title": "Team B", "history": history},
+        ]
+    }
+    results_payload = {
+        "results": [
+            {
+                "isResult": True,
+                "h": {"title": "Team A"},
+                "a": {"title": "Team B"},
+                "goals": {"h": 2, "a": 1},
+                "forecast": {"w": 0.6, "d": 0.2, "l": 0.2},
+                "xG": {"h": 1.1, "a": 0.9},
+            },
+            {
+                "isResult": True,
+                "h": {"title": "Team B"},
+                "a": {"title": "Team A"},
+                "goals": {"h": 1, "a": 1},
+                "forecast": {"w": 0.3, "d": 0.4, "l": 0.3},
+                "xG": {"h": 0.9, "a": 1.0},
+            },
+        ]
+    }
 
-    class FakeClientSession:
-        def __init__(self, *args, **kwargs):
-            pass
+    responses = [
+        FakeJSONResponse(502),
+        FakeJSONResponse(502),
+        FakeJSONResponse(200, teams_payload),
+        FakeJSONResponse(200, results_payload),
+    ]
+    fake_session = FakeSession(responses)
 
-        async def __aenter__(self):
-            return self
+    def _fake_get_session(retries, backoff_factor, status_forcelist):
+        return fake_session
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeUnderstat:
-        def __init__(self, _session):
-            pass
-
-        async def get_teams(self, *args, **kwargs):
-            attempts["count"] += 1
-            if attempts["count"] < 3:
-                raise FakeUnderstatError(502)
-            history = [
-                {"xG": 1.2, "xGA": 0.9, "npxG": 1.0, "npxGA": 0.8, "ppda": {"att": 10, "def": 5}, "ppda_allowed": {"att": 12, "def": 6}}
-                for _ in range(3)
-            ]
-            return [
-                {"title": "Team A", "history": history},
-                {"title": "Team B", "history": history},
-            ]
-
-        async def get_league_results(self, *args, **kwargs):
-            return [
-                {
-                    "isResult": True,
-                    "h": {"title": "Team A"},
-                    "a": {"title": "Team B"},
-                    "goals": {"h": 2, "a": 1},
-                    "forecast": {"w": 0.6, "d": 0.2, "l": 0.2},
-                    "xG": {"h": 1.1, "a": 0.9},
-                },
-                {
-                    "isResult": True,
-                    "h": {"title": "Team B"},
-                    "a": {"title": "Team A"},
-                    "goals": {"h": 1, "a": 1},
-                    "forecast": {"w": 0.3, "d": 0.4, "l": 0.3},
-                    "xG": {"h": 0.9, "a": 1.0},
-                },
-            ]
-
-    monkeypatch.setattr(understat_client, "Understat", FakeUnderstat)
-    monkeypatch.setattr(understat_client.aiohttp, "ClientSession", FakeClientSession)
+    net_retry._get_session.cache_clear()
+    monkeypatch.setattr(net_retry, "_get_session", _fake_get_session)
     monkeypatch.setattr(understat_client, "_standings_cache", {})
 
     result = understat_client.fetch_understat_standings("PL", season=2023)
 
-    assert attempts["count"] == 3
-    assert result
+    assert fake_session.calls == 4
+    assert any(team["name"] == "Team A" for team in result)
 
 
 def test_understat_retry_rate_limited(monkeypatch):
-    attempts = {"count": 0}
+    responses = [
+        FakeJSONResponse(429),
+        FakeJSONResponse(429),
+        FakeJSONResponse(429),
+    ]
+    fake_session = FakeSession(responses)
 
-    class FakeClientSession:
-        def __init__(self, *args, **kwargs):
-            pass
+    def _fake_get_session(retries, backoff_factor, status_forcelist):
+        return fake_session
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeUnderstat:
-        def __init__(self, _session):
-            pass
-
-        async def get_teams(self, *args, **kwargs):
-            attempts["count"] += 1
-            raise FakeUnderstatError(429)
-
-        async def get_league_results(self, *args, **kwargs):
-            raise FakeUnderstatError(429)
-
-    monkeypatch.setattr(understat_client, "Understat", FakeUnderstat)
-    monkeypatch.setattr(understat_client.aiohttp, "ClientSession", FakeClientSession)
+    net_retry._get_session.cache_clear()
+    monkeypatch.setattr(net_retry, "_get_session", _fake_get_session)
     monkeypatch.setattr(understat_client, "_standings_cache", {})
 
     with pytest.raises(APIError) as excinfo:
         understat_client.fetch_understat_standings("PL", season=2023)
 
-    assert attempts["count"] == understat_client._RETRY_ATTEMPTS
+    assert fake_session.calls == understat_client._RETRY_ATTEMPTS
     assert excinfo.value.code == "429"
     assert excinfo.value.details == "rate_limited"
