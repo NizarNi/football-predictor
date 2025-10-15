@@ -25,6 +25,7 @@ from .constants import (
     TEAM_NAME_MAP_ELO as TEAM_NAME_MAP,
     VALUE_BET_THRESHOLD,
 )
+from .net_retry import request_with_retries
 
 # ClubElo.com API - Original source for Elo ratings
 # Format: http://api.clubelo.com/{date} where date is YYYY-MM-DD
@@ -39,6 +40,24 @@ _elo_cache: Dict[str, Optional[Any]] = {
 
 logger = setup_logger(__name__)
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT_ELO, max_timeout=30)
+
+
+_RETRY_STATUS_FORCELIST = (429, 500, 502, 503, 504)
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_FACTOR = 0.6
+
+
+class _RequestsFacadeSession:
+    def request(self, method: str, url: str, **kwargs):
+        method_upper = method.upper()
+        if method_upper == "GET":
+            return requests.get(url, **kwargs)
+        if method_upper == "POST":
+            return requests.post(url, **kwargs)
+        return requests.request(method_upper, url, **kwargs)
+
+
+_REQUEST_FACADE_SESSION = _RequestsFacadeSession()
 
 
 def fetch_team_elo_ratings():
@@ -68,7 +87,17 @@ def fetch_team_elo_ratings():
 
     timeout = adaptive_timeout.get_timeout()
     try:
-        response = requests.get(api_url, timeout=timeout)
+        response = request_with_retries(
+            method="GET",
+            url=api_url,
+            timeout=timeout,
+            retries=_RETRY_ATTEMPTS,
+            backoff_factor=_RETRY_BACKOFF_FACTOR,
+            status_forcelist=_RETRY_STATUS_FORCELIST,
+            logger=logger,
+            context="ClubElo ratings",
+            session=_REQUEST_FACADE_SESSION,
+        )
         response.raise_for_status()
         adaptive_timeout.record_success()
     except requests.Timeout as exc:
@@ -87,6 +116,26 @@ def fetch_team_elo_ratings():
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")
             return _elo_cache["data"]
+        raise APIError("EloAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
+    except requests.HTTPError as exc:
+        adaptive_timeout.record_failure()
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        logger.warning(
+            "Under retry exhaustion: source=elo status=%s url=%s",
+            status,
+            api_url,
+        )
+        if _elo_cache["data"]:
+            logger.warning("⚠️ Using expired cache due to fetch error")
+            return _elo_cache["data"]
+        if status == 429:
+            raise APIError(
+                "EloAPI",
+                "429",
+                "The Elo API rate limited the request.",
+                "rate_limited",
+            ) from exc
+        error_msg = str(exc)
         raise APIError("EloAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
     except requests.RequestException as exc:
         adaptive_timeout.record_failure()

@@ -1,10 +1,11 @@
 import asyncio
 import aiohttp
 from understat import Understat
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable, Awaitable, TypeVar
 from datetime import datetime, timedelta
 import threading
 import statistics
+from urllib.parse import urlsplit, urlunsplit
 
 from .app_utils import AdaptiveTimeoutController
 from .utils import get_current_season
@@ -27,6 +28,69 @@ _cache_lock = threading.Lock()
 
 logger = setup_logger(__name__)
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT_UNDERSTAT, max_timeout=30)
+
+_RETRY_STATUS_FORCELIST = (429, 500, 502, 503, 504)
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_FACTOR = 0.6
+
+_T = TypeVar("_T")
+
+
+def _scrub_url(url: Any) -> str:
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(str(url))
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", parts.fragment))
+    except Exception:
+        return str(url)
+
+
+async def _execute_with_retries(
+    operation: Callable[[], Awaitable[_T]],
+    *,
+    context: str,
+) -> _T:
+    last_error: Optional[aiohttp.ClientError] = None
+
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            return await operation()
+        except aiohttp.ClientError as exc:
+            status = getattr(exc, "status", None)
+            last_error = exc
+            logger.debug(
+                "Understat attempt %d/%d failed for %s with status=%s",
+                attempt,
+                _RETRY_ATTEMPTS,
+                context,
+                status,
+            )
+
+            if status in _RETRY_STATUS_FORCELIST and attempt < _RETRY_ATTEMPTS:
+                backoff = _RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1))
+                if backoff > 0:
+                    logger.debug(
+                        "Sleeping %.2fs before retrying %s",
+                        backoff,
+                        context,
+                    )
+                    await asyncio.sleep(backoff)
+                continue
+            break
+
+    if last_error is not None:
+        status = getattr(last_error, "status", None)
+        request_info = getattr(last_error, "request_info", None)
+        real_url = getattr(request_info, "real_url", None)
+        logger.warning(
+            "Understat request failed after retries: source=understat status=%s url=%s",
+            status,
+            _scrub_url(real_url) if real_url else context,
+        )
+        raise last_error
+
+    raise RuntimeError("_execute_with_retries exited without executing operation")
 
 def sync_understat_call(async_func, context: str = "Understat API call"):
     """Wrapper to run async Understat functions synchronously with timeout"""
@@ -185,22 +249,18 @@ async def _fetch_league_standings(league_code: str, season: Optional[int] = None
         except Exception:
             session_kwargs = {}
 
-    try:
+    async def _perform_request() -> List[Dict]:
         async with aiohttp.ClientSession(**session_kwargs) as session:
             understat = Understat(session)
 
-            # Get team stats
             teams = await understat.get_teams(understat_league, season)
-
-            # Get league results to extract standings
             results = await understat.get_league_results(understat_league, season)
 
-            # Build standings table
-            standings = {}
+            standings: Dict[str, Dict[str, Any]] = {}
             for match in results:
                 if not match.get('isResult'):
                     continue
-                
+
                 home_team = match.get('h', {}).get('title')
                 away_team = match.get('a', {}).get('title')
                 home_goals = int(match.get('goals', {}).get('h', 0))
@@ -377,9 +437,22 @@ async def _fetch_league_standings(league_code: str, season: Optional[int] = None
             )
             return standings_list
 
+    try:
+        return await _execute_with_retries(
+            _perform_request,
+            context=f"standings:{league_code}",
+        )
     except aiohttp.ClientError as exc:
         error_msg = str(exc)
+        status = getattr(exc, "status", None)
         logger.error("❌ Understat network error for %s: %s", league_code, error_msg)
+        if status == 429:
+            raise APIError(
+                "UnderstatAPI",
+                "429",
+                "The Understat API rate limited the request.",
+                "rate_limited",
+            ) from exc
         raise APIError(
             "UnderstatAPI",
             "NETWORK_ERROR",
@@ -417,17 +490,15 @@ async def _fetch_match_probabilities(home_team: str, away_team: str, league_code
         logger.warning("⚠️ Understat: League %s not supported for probabilities", league_code)
         return None
 
-    try:
+    async def _perform_request() -> Optional[Dict]:
         async with aiohttp.ClientSession() as session:
             understat = Understat(session)
             results = await understat.get_league_results(understat_league, season)
 
-            # Find the specific match
             for match in results:
                 home = match.get('h', {}).get('title', '')
                 away = match.get('a', {}).get('title', '')
 
-                # Fuzzy match team names
                 if (home_team.lower() in home.lower() or home.lower() in home_team.lower()) and \
                    (away_team.lower() in away.lower() or away.lower() in away_team.lower()):
 
@@ -441,9 +512,23 @@ async def _fetch_match_probabilities(home_team: str, away_team: str, league_code
                     }
 
             return None
+
+    try:
+        return await _execute_with_retries(
+            _perform_request,
+            context=f"probabilities:{league_code}",
+        )
     except aiohttp.ClientError as exc:
         error_msg = str(exc)
+        status = getattr(exc, "status", None)
         logger.error("❌ Understat network error fetching probabilities: %s", error_msg)
+        if status == 429:
+            raise APIError(
+                "UnderstatAPI",
+                "429",
+                "The Understat API rate limited the request.",
+                "rate_limited",
+            ) from exc
         raise APIError(
             "UnderstatAPI",
             "NETWORK_ERROR",
