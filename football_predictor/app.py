@@ -53,15 +53,19 @@ def to_static_url(abs_path: str) -> str:
 
 
 def build_team_logo_urls(home_team: Optional[str], away_team: Optional[str]) -> tuple[str, str]:
-    home_logo_path = resolve_logo(home_team)
-    away_logo_path = resolve_logo(away_team)
-    home_logo_url = to_static_url(home_logo_path)
-    away_logo_url = to_static_url(away_logo_path)
+    home_logo_ref = resolve_logo(home_team)
+    away_logo_ref = resolve_logo(away_team)
 
-    if home_logo_url.startswith("http"):
-        logger.warning("External home_logo_url detected (unexpected): %s", home_logo_url)
-    if away_logo_url.startswith("http"):
-        logger.warning("External away_logo_url detected (unexpected): %s", away_logo_url)
+    home_logo_url = (
+        home_logo_ref
+        if isinstance(home_logo_ref, str) and home_logo_ref.startswith("http")
+        else to_static_url(home_logo_ref)
+    )
+    away_logo_url = (
+        away_logo_ref
+        if isinstance(away_logo_ref, str) and away_logo_ref.startswith("http")
+        else to_static_url(away_logo_ref)
+    )
 
     return home_logo_url, away_logo_url
 
