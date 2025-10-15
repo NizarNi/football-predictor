@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, url_for
+from flask import Flask, render_template, request, url_for, current_app
 import os
 import json
 from datetime import datetime, timezone
@@ -11,7 +11,7 @@ from typing import Optional
 from .config import setup_logger, API_TIMEOUT_CONTEXT
 
 from .app_utils import make_ok, make_error, legacy_endpoint
-from .logo_resolver import resolve_logo_rel
+from .logo_resolver import resolve_logo
 
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -28,19 +28,42 @@ from .validators import (
     validate_team_optional,
 )
 
-app = Flask(__name__)
+PKG_DIR = os.path.dirname(__file__)
+STATIC_DIR = os.path.join(PKG_DIR, "static")
+
+app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 logger = setup_logger(__name__)
 
-# Logo helper
+# Logo helpers
 
-def _logo_url(team_name: Optional[str]) -> str:
-    rel = resolve_logo_rel(team_name)
+def to_static_url(abs_path: str) -> str:
+    """
+    Convert an absolute path under app.static_folder into a /static/... URL.
+    Falls back to generic shield if anything goes wrong.
+    """
     try:
+        static_root = current_app.static_folder
+        rel = os.path.relpath(abs_path, static_root)
+        rel = rel.replace(os.sep, "/")
         return url_for("static", filename=rel)
     except Exception:
         return url_for("static", filename="team_logos/generic_shield.svg")
+
+
+def build_team_logo_urls(home_team: Optional[str], away_team: Optional[str]) -> tuple[str, str]:
+    home_logo_path = resolve_logo(home_team)
+    away_logo_path = resolve_logo(away_team)
+    home_logo_url = to_static_url(home_logo_path)
+    away_logo_url = to_static_url(away_logo_path)
+
+    if home_logo_url.startswith("http"):
+        logger.warning("External home_logo_url detected (unexpected): %s", home_logo_url)
+    if away_logo_url.startswith("http"):
+        logger.warning("External away_logo_url detected (unexpected): %s", away_logo_url)
+
+    return home_logo_url, away_logo_url
 
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
@@ -118,8 +141,12 @@ def upcoming():
                     # Format match data
                     match["datetime"] = match["commence_time"]
                     match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                    match["home_logo_url"] = _logo_url(match.get("home_team"))
-                    match["away_logo_url"] = _logo_url(match.get("away_team"))
+                    home_logo_url, away_logo_url = build_team_logo_urls(
+                        match.get("home_team"),
+                        match.get("away_team"),
+                    )
+                    match["home_logo_url"] = home_logo_url
+                    match["away_logo_url"] = away_logo_url
 
                     # Add Elo predictions
                     home_team = match.get("home_team")
@@ -228,8 +255,12 @@ def search():
                 # Format match data
                 match["datetime"] = match["commence_time"]
                 match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                match["home_logo_url"] = _logo_url(match.get("home_team"))
-                match["away_logo_url"] = _logo_url(match.get("away_team"))
+                home_logo_url, away_logo_url = build_team_logo_urls(
+                    match.get("home_team"),
+                    match.get("away_team"),
+                )
+                match["home_logo_url"] = home_logo_url
+                match["away_logo_url"] = away_logo_url
 
                 # Add predictions in the expected format
                 match["predictions"] = {
@@ -649,13 +680,15 @@ def get_match_context(match_id):
             season_start = current_season - 1
             season_display = f"{season_start}/{str(current_season)[-2:]}"
             
+            home_logo_url, away_logo_url = build_team_logo_urls(home_team, away_team)
+
             context = {
                 "home_team": {
                     "position": home_data.get('position') if home_data else None,
                     "points": home_data.get('points') if home_data else None,
                     "form": home_data.get('form') if home_data else None,
                     "name": home_team,
-                    "logo_url": _logo_url(home_team),
+                    "logo_url": home_logo_url,
                     "ppda_coef": home_data.get('ppda_coef') if home_data else None,
                     "oppda_coef": home_data.get('oppda_coef') if home_data else None,
                     "xG": home_data.get('xG') if home_data else None,
@@ -675,7 +708,7 @@ def get_match_context(match_id):
                     "points": away_data.get('points') if away_data else None,
                     "form": away_data.get('form') if away_data else None,
                     "name": away_team,
-                    "logo_url": _logo_url(away_team),
+                    "logo_url": away_logo_url,
                     "ppda_coef": away_data.get('ppda_coef') if away_data else None,
                     "oppda_coef": away_data.get('oppda_coef') if away_data else None,
                     "xG": away_data.get('xG') if away_data else None,
@@ -694,7 +727,9 @@ def get_match_context(match_id):
                 "narrative": narrative,
                 "has_data": bool(home_data or away_data),
                 "source": source,
-                "season_display": season_display
+                "season_display": season_display,
+                "home_logo_url": home_logo_url,
+                "away_logo_url": away_logo_url,
             }
 
             if elo_probs:
