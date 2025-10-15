@@ -19,6 +19,11 @@ from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import get_match_xg_prediction
 from .utils import get_current_season, normalize_team_name, fuzzy_team_match
 from .errors import APIError
+from .validators import (
+    validate_league,
+    validate_next_n_days,
+    validate_team_optional,
+)
 
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -68,42 +73,40 @@ def health():
 @legacy_endpoint
 def upcoming():
     """Get upcoming matches with predictions using The Odds API (primary) and football-data.org (fallback)"""
-    league_code = request.args.get("league", None)
-    next_n_days = request.args.get("next_n_days", 30, type=int)
+    league, _lw = validate_league(request.args.get("league"))
+    next_n_days, _nw = validate_next_n_days(request.args.get("next_n_days"))
+    home_team, _ = validate_team_optional(request.args.get("home_team"))
+    away_team, _ = validate_team_optional(request.args.get("away_team"))
 
     try:
         logger.info("Handling /upcoming request", extra={
-            "league": league_code,
-            "next_n_days": next_n_days
+            "league": league,
+            "next_n_days": next_n_days,
+            "home_team": home_team,
+            "away_team": away_team,
         })
         # Try The Odds API first (provides both matches and odds-based predictions)
         logger.info("🔍 Fetching matches with odds from The Odds API...")
         try:
-            if league_code:
-                if league_code not in LEAGUE_CODE_MAPPING:
-                    return make_error(
-                        error=f"League code \"{league_code}\" not supported",
-                        message="Invalid league code",
-                        status_code=404
-                    )
-                leagues_to_fetch = [league_code]
+            if league:
+                leagues_to_fetch = [league]
             else:
                 leagues_to_fetch = list(LEAGUE_CODE_MAPPING.keys())
-            
+
             odds_matches = get_upcoming_matches_with_odds(league_codes=leagues_to_fetch, next_n_days=next_n_days)
-            
+
             if odds_matches:
                 # Import Elo client for predictions
                 from .elo_client import get_team_elo, calculate_elo_probabilities
-                
+
                 # Calculate predictions from odds for each match
                 for match in odds_matches:
                     predictions = calculate_predictions_from_odds(match)
-                    
+
                     # Format match data
                     match["datetime"] = match["commence_time"]
                     match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                    
+
                     # Add Elo predictions
                     home_team = match.get("home_team")
                     away_team = match.get("away_team")
@@ -112,7 +115,7 @@ def upcoming():
                         away_elo = get_team_elo(away_team)
                         if home_elo and away_elo:
                             match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
-                    
+
                     # Add predictions in the expected format
                     match["predictions"] = {
                         "1x2": {
@@ -125,7 +128,7 @@ def upcoming():
                         "best_odds": predictions["best_odds"],
                         "arbitrage": predictions["arbitrage"]
                     }
-                
+
                 logger.info("✅ Found %d matches from The Odds API", len(odds_matches))
                 return make_ok({
                     "matches": odds_matches,
@@ -154,9 +157,6 @@ def upcoming():
             message="Service temporarily unavailable",
             status_code=500
         )
-
-
-
 
 
 @app.route("/search", methods=["POST"])
@@ -523,16 +523,21 @@ def get_match_context(match_id):
     """Get match context including standings, form, and Elo ratings"""
     try:
         logger.info("Handling /match context request", extra={"match_id": match_id})
-        league_code = request.args.get("league")
-        home_team = request.args.get("home_team")
-        away_team = request.args.get("away_team")
+        raw_league = request.args.get("league")
+        league, _lw = validate_league(raw_league)
+        home_team, _ = validate_team_optional(request.args.get("home_team"))
+        away_team, _ = validate_team_optional(request.args.get("away_team"))
 
-        if not league_code:
-            return make_error(
-                error="league parameter required",
-                message="Missing league parameter",
-                status_code=400
-            )
+        if not league:
+            fallback_league = str(raw_league).strip().upper() if raw_league else ""
+            if fallback_league:
+                league = fallback_league
+            else:
+                return make_error(
+                    error="league parameter required",
+                    message="Missing league parameter",
+                    status_code=400
+                )
 
         from .understat_client import fetch_understat_standings
         from .elo_client import get_team_elo, calculate_elo_probabilities
@@ -559,7 +564,7 @@ def get_match_context(match_id):
 
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = {
-                    "understat": executor.submit(fetch_understat_standings, league_code, current_season),
+                    "understat": executor.submit(fetch_understat_standings, league, current_season),
                     "elo": executor.submit(fetch_elos),
                 }
                 done, not_done = wait(futures.values(), timeout=API_TIMEOUT_CONTEXT)
@@ -622,7 +627,7 @@ def get_match_context(match_id):
             elif home_data or away_data:
                 narrative = "Partial standings available. Full context data unavailable for this match."
             else:
-                narrative = f"Standings not available for {league_code}. This may be a cup competition or teams not found in league standings."
+                narrative = f"Standings not available for {league}. This may be a cup competition or teams not found in league standings."
             
             # Calculate season display string
             season_start = current_season - 1
