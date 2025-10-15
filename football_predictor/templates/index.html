@@ -1024,297 +1024,18 @@
             });
         }
         
-        // Fuzzy team name normalization for logo matching (league-gated to prevent cross-league collisions)
-        function fuzzyNormalizeTeamName(apiName, league) {
-            apiName = apiName.trim();
-            const lower = apiName.toLowerCase();
-            
-            // Normalize league identifier to handle variations (remove spaces for matching)
-            const leagueLower = (league || '').toLowerCase().replace(/\s+/g, '');  // Remove all spaces
-            const isPremierLeague = leagueLower.includes('premier') || leagueLower === 'epl';
-            const isLaLiga = leagueLower.includes('laliga') || leagueLower.includes('spain') || leagueLower.includes('primera') || leagueLower === 'pd';
-            const isBundesliga = leagueLower.includes('bundesliga') || leagueLower.includes('germany') || leagueLower === 'bl1';
-            const isSerieA = leagueLower.includes('seriea') || leagueLower.includes('italy') || leagueLower === 'sa';
-            const isLigue1 = leagueLower.includes('ligue1') || leagueLower.includes('ligue') || leagueLower.includes('france') || leagueLower === 'fl1';
-            
-            // League-specific patterns to avoid cross-league collisions (e.g., Inter Miami vs Inter Milan)
-            const patterns = [
-                // Bundesliga teams
-                { test: /^bayern/i, result: 'FC Bayern München', leagues: [isBundesliga] },
-                { test: /^dortmund|^bvb$/i, result: 'Borussia Dortmund', leagues: [isBundesliga] },
-                { test: /^(?:rb\s+)?leipzig$/i, result: 'RB Leipzig', leagues: [isBundesliga] },
-                { test: /^leverkusen|^bayer$/i, result: 'Bayer 04 Leverkusen', leagues: [isBundesliga] },
-                { test: /^(?:union\s+)?berlin$/i, result: '1. FC Union Berlin', leagues: [isBundesliga] },
-                { test: /^freiburg|^sc\s+freiburg$/i, result: 'SC Freiburg', leagues: [isBundesliga] },
-                { test: /^frankfurt|^eintracht$/i, result: 'Eintracht Frankfurt', leagues: [isBundesliga] },
-                { test: /^gladbach|^m.?gladbach|^borussia\s+m/i, result: 'Borussia Mönchengladbach', leagues: [isBundesliga] },
-                { test: /^wolfsburg|^vfl\s+wolfsburg$/i, result: 'VfL Wolfsburg', leagues: [isBundesliga] },
-                { test: /^stuttgart|^vfb$/i, result: 'VfB Stuttgart', leagues: [isBundesliga] },
-                { test: /^hoffenheim|^tsg$/i, result: 'TSG 1899 Hoffenheim', leagues: [isBundesliga] },
-                { test: /^mainz|^fsv\s+mainz$/i, result: '1. FSV Mainz 05', leagues: [isBundesliga] },
-                { test: /^(?:sv\s+)?(?:werder\s+)?bremen$/i, result: 'SV Werder Bremen', leagues: [isBundesliga] },
-                { test: /^augsburg|^fc\s+augsburg$/i, result: 'FC Augsburg', leagues: [isBundesliga] },
-                { test: /^bochum|^vfl\s+bochum$/i, result: 'VfL Bochum 1848', leagues: [isBundesliga] },
-                { test: /^heidenheim|^fc\s+heidenheim$/i, result: '1. FC Heidenheim 1846', leagues: [isBundesliga] },
-                { test: /^st\.?\s+pauli|^pauli$/i, result: 'FC St. Pauli', leagues: [isBundesliga] },
-                
-                // La Liga teams
-                { test: /^bar[cç]a|^barcelona/i, result: 'FC Barcelona', leagues: [isLaLiga] },
-                { test: /^real\s+madrid/i, result: 'Real Madrid CF', leagues: [isLaLiga] },
-                { test: /^atl[eé]tico\s+madrid/i, result: 'Atlético de Madrid', leagues: [isLaLiga] },
-                { test: /^sevilla$/i, result: 'Sevilla FC', leagues: [isLaLiga] },
-                { test: /^valencia$/i, result: 'Valencia CF', leagues: [isLaLiga] },
-                { test: /^(?:real\s+)?betis$/i, result: 'Real Betis', leagues: [isLaLiga] },
-                { test: /^villarreal$/i, result: 'Villarreal CF', leagues: [isLaLiga] },
-                { test: /^athletic|^bilbao$/i, result: 'Athletic Club', leagues: [isLaLiga] },
-                { test: /^(?:real\s+)?sociedad$/i, result: 'Real Sociedad', leagues: [isLaLiga] },
-                { test: /^getafe$/i, result: 'Getafe CF', leagues: [isLaLiga] },
-                { test: /^espanyol$/i, result: 'RCD Espanyol', leagues: [isLaLiga] },
-                { test: /^celta|^vigo$/i, result: 'RC Celta de Vigo', leagues: [isLaLiga] },
-                
-                // Serie A teams (Inter/Milan only for Serie A to avoid Inter Miami collision)
-                { test: /^inter(?:\s+milan)?$/i, result: 'FC Internazionale Milano', leagues: [isSerieA] },
-                { test: /^(?:ac\s+)?milan$/i, result: 'AC Milan', leagues: [isSerieA] },
-                { test: /^juve|^juventus/i, result: 'Juventus FC', leagues: [isSerieA] },
-                { test: /^roma|^as\s+roma$/i, result: 'AS Roma', leagues: [isSerieA] },
-                { test: /^napoli|^ssc\s+napoli$/i, result: 'SSC Napoli', leagues: [isSerieA] },
-                { test: /^lazio|^ss\s+lazio$/i, result: 'SS Lazio', leagues: [isSerieA] },
-                { test: /^atalanta$/i, result: 'Atalanta BC', leagues: [isSerieA] },
-                { test: /^fiorentina$/i, result: 'ACF Fiorentina', leagues: [isSerieA] },
-                { test: /^torino$/i, result: 'Torino FC', leagues: [isSerieA] },
-                { test: /^bologna$/i, result: 'Bologna FC 1909', leagues: [isSerieA] },
-                
-                // Ligue 1 teams (PSG only for Ligue 1 to avoid Paris FC collision)
-                { test: /^psg$|^paris\s+saint/i, result: 'Paris Saint-Germain', leagues: [isLigue1] },
-                { test: /^marseille|^om$/i, result: 'Olympique de Marseille', leagues: [isLigue1] },
-                { test: /^lyon|^ol$/i, result: 'Olympique Lyonnais', leagues: [isLigue1] },
-                { test: /^monaco|^as\s+monaco$/i, result: 'AS Monaco', leagues: [isLigue1] },
-                { test: /^lille|^losc$/i, result: 'LOSC Lille', leagues: [isLigue1] },
-                { test: /^nice|^ogc\s+nice$/i, result: 'OGC Nice', leagues: [isLigue1] },
-                { test: /^lens|^rc\s+lens$/i, result: 'RC Lens', leagues: [isLigue1] },
-                { test: /^rennes|^stade\s+rennais$/i, result: 'Stade Rennais FC', leagues: [isLigue1] },
-                
-                // Premier League teams
-                { test: /^arsenal$/i, result: 'Arsenal FC', leagues: [isPremierLeague] },
-                { test: /^liverpool$/i, result: 'Liverpool FC', leagues: [isPremierLeague] },
-                { test: /^chelsea$/i, result: 'Chelsea FC', leagues: [isPremierLeague] },
-                { test: /^(?:man(?:chester)?\s+)?city$/i, result: 'Manchester City', leagues: [isPremierLeague] },
-                { test: /^(?:man(?:chester)?\s+)?united$/i, result: 'Manchester United', leagues: [isPremierLeague] },
-                { test: /^tottenham|^spurs$/i, result: 'Tottenham Hotspur', leagues: [isPremierLeague] },
-                { test: /^newcastle/i, result: 'Newcastle United', leagues: [isPremierLeague] },
-                { test: /^west\s+ham/i, result: 'West Ham United', leagues: [isPremierLeague] },
-                { test: /^aston\s+villa$/i, result: 'Aston Villa', leagues: [isPremierLeague] },
-                { test: /^brighton/i, result: 'Brighton & Hove Albion', leagues: [isPremierLeague] },
-                { test: /^(?:afc\s+)?bournemouth$/i, result: 'AFC Bournemouth', leagues: [isPremierLeague] },
-                { test: /^wolves|^wolverhampton/i, result: 'Wolverhampton Wanderers', leagues: [isPremierLeague] },
-                { test: /^everton$/i, result: 'Everton FC', leagues: [isPremierLeague] },
-                { test: /^brentford$/i, result: 'Brentford FC', leagues: [isPremierLeague] },
-                { test: /^fulham$/i, result: 'Fulham FC', leagues: [isPremierLeague] },
-                { test: /^crystal\s+palace$/i, result: 'Crystal Palace', leagues: [isPremierLeague] },
-                { test: /^nottingham\s+forest$/i, result: 'Nottingham Forest', leagues: [isPremierLeague] },
-                { test: /^southampton$/i, result: 'Southampton FC', leagues: [isPremierLeague] },
-                { test: /^leicester/i, result: 'Leicester City', leagues: [isPremierLeague] },
-                { test: /^ipswich/i, result: 'Ipswich Town', leagues: [isPremierLeague] },
-                { test: /^burnley$/i, result: 'Burnley FC', leagues: [isPremierLeague] },
-            ];
-            
-            // Check pattern matches with league gating
-            for (const pattern of patterns) {
-                // Only apply pattern if ANY of the league conditions match
-                const leagueMatches = pattern.leagues.some(condition => condition === true);
-                if (leagueMatches && pattern.test.test(apiName)) {
-                    return pattern.result;
-                }
+        const GENERIC_TEAM_LOGO = '/static/team_logos/generic_shield.svg';
+
+        function getLogoUrlOrFallback(url) {
+            if (!url || typeof url !== 'string') {
+                return GENERIC_TEAM_LOGO;
             }
-            
-            // If no pattern matched, return original (safe fallback)
-            return apiName;
-        }
-        
-        // Team name to filename mapping (Odds API name → GitHub filename)
-        function normalizeTeamNameForLogo(teamName) {
-            const nameMap = {
-                // Premier League
-                'Arsenal': 'Arsenal FC',
-                'Liverpool': 'Liverpool FC',
-                'Manchester United': 'Manchester United',
-                'Manchester City': 'Manchester City',
-                'Chelsea': 'Chelsea FC',
-                'Tottenham': 'Tottenham Hotspur',
-                'Tottenham Hotspur': 'Tottenham Hotspur',
-                'Newcastle': 'Newcastle United',
-                'Newcastle United': 'Newcastle United',
-                'Aston Villa': 'Aston Villa',
-                'Brighton': 'Brighton & Hove Albion',
-                'Brighton & Hove Albion': 'Brighton & Hove Albion',
-                'West Ham': 'West Ham United',
-                'West Ham United': 'West Ham United',
-                'Everton': 'Everton FC',
-                'Brentford': 'Brentford FC',
-                'Fulham': 'Fulham FC',
-                'Crystal Palace': 'Crystal Palace',
-                'AFC Bournemouth': 'AFC Bournemouth',
-                'Bournemouth': 'AFC Bournemouth',
-                'Wolves': 'Wolverhampton Wanderers',
-                'Wolverhampton': 'Wolverhampton Wanderers',
-                'Nottingham Forest': 'Nottingham Forest',
-                'Southampton': 'Southampton FC',
-                'Leicester': 'Leicester City',
-                'Leicester City': 'Leicester City',
-                'Ipswich': 'Ipswich Town',
-                'Ipswich Town': 'Ipswich Town',
-                'Burnley': 'Burnley FC',
-                // La Liga
-                'Barcelona': 'FC Barcelona',
-                'FC Barcelona': 'FC Barcelona',
-                'Barça': 'FC Barcelona',
-                'Real Madrid': 'Real Madrid CF',
-                'Madrid': 'Real Madrid CF',
-                'Atletico Madrid': 'Atlético de Madrid',
-                'Atlético Madrid': 'Atlético de Madrid',
-                'Atleti': 'Atlético de Madrid',
-                'Sevilla': 'Sevilla FC',
-                'Valencia': 'Valencia CF',
-                'Real Betis': 'Real Betis',
-                'Betis': 'Real Betis',
-                'Villarreal': 'Villarreal CF',
-                'Athletic Bilbao': 'Athletic Club',
-                'Athletic Club': 'Athletic Club',
-                'Real Sociedad': 'Real Sociedad',
-                'Sociedad': 'Real Sociedad',
-                'Getafe': 'Getafe CF',
-                'Espanyol': 'RCD Espanyol',
-                'Celta Vigo': 'RC Celta de Vigo',
-                'Celta': 'RC Celta de Vigo',
-                // Bundesliga
-                'Bayern Munich': 'FC Bayern München',
-                'Bayern München': 'FC Bayern München',
-                'Bayern': 'FC Bayern München',
-                'Borussia Dortmund': 'Borussia Dortmund',
-                'Dortmund': 'Borussia Dortmund',
-                'RB Leipzig': 'RB Leipzig',
-                'Leipzig': 'RB Leipzig',
-                'Bayer Leverkusen': 'Bayer 04 Leverkusen',
-                'Leverkusen': 'Bayer 04 Leverkusen',
-                'Union Berlin': '1. FC Union Berlin',
-                'Freiburg': 'SC Freiburg',
-                'Eintracht Frankfurt': 'Eintracht Frankfurt',
-                'Frankfurt': 'Eintracht Frankfurt',
-                'Borussia Mönchengladbach': 'Borussia Mönchengladbach',
-                "Borussia M'Gladbach": 'Borussia Mönchengladbach',
-                'Gladbach': 'Borussia Mönchengladbach',
-                'VfL Wolfsburg': 'VfL Wolfsburg',
-                'Wolfsburg': 'VfL Wolfsburg',
-                'VfB Stuttgart': 'VfB Stuttgart',
-                'Stuttgart': 'VfB Stuttgart',
-                'TSG 1899 Hoffenheim': 'TSG 1899 Hoffenheim',
-                'TSG Hoffenheim': 'TSG 1899 Hoffenheim',
-                'Hoffenheim': 'TSG 1899 Hoffenheim',
-                '1. FSV Mainz 05': '1. FSV Mainz 05',
-                'Mainz': '1. FSV Mainz 05',
-                'SV Werder Bremen': 'SV Werder Bremen',
-                'Werder Bremen': 'SV Werder Bremen',
-                'Bremen': 'SV Werder Bremen',
-                'FC Augsburg': 'FC Augsburg',
-                'Augsburg': 'FC Augsburg',
-                'VfL Bochum 1848': 'VfL Bochum 1848',
-                'VfL Bochum': 'VfL Bochum 1848',
-                'Bochum': 'VfL Bochum 1848',
-                '1. FC Heidenheim 1846': '1. FC Heidenheim 1846',
-                'FC Heidenheim': '1. FC Heidenheim 1846',
-                'Heidenheim': '1. FC Heidenheim 1846',
-                'FC St. Pauli': 'FC St. Pauli',
-                'St. Pauli': 'FC St. Pauli',
-                // Serie A
-                'Juventus': 'Juventus FC',
-                'Juve': 'Juventus FC',
-                'Inter': 'FC Internazionale Milano',
-                'Inter Milan': 'FC Internazionale Milano',
-                'Internazionale': 'FC Internazionale Milano',
-                'AC Milan': 'AC Milan',
-                'Milan': 'AC Milan',
-                'Roma': 'AS Roma',
-                'AS Roma': 'AS Roma',
-                'Napoli': 'SSC Napoli',
-                'SSC Napoli': 'SSC Napoli',
-                'Lazio': 'SS Lazio',
-                'SS Lazio': 'SS Lazio',
-                'Atalanta': 'Atalanta BC',
-                'Atalanta BC': 'Atalanta BC',
-                'Fiorentina': 'ACF Fiorentina',
-                'ACF Fiorentina': 'ACF Fiorentina',
-                'Torino': 'Torino FC',
-                'Bologna': 'Bologna FC 1909',
-                // Ligue 1
-                'Paris Saint-Germain': 'Paris Saint-Germain',
-                'Paris Saint Germain': 'Paris Saint-Germain',
-                'PSG': 'Paris Saint-Germain',
-                'Marseille': 'Olympique de Marseille',
-                'OM': 'Olympique de Marseille',
-                'Olympique Marseille': 'Olympique de Marseille',
-                'Lyon': 'Olympique Lyonnais',
-                'OL': 'Olympique Lyonnais',
-                'Olympique Lyon': 'Olympique Lyonnais',
-                'Monaco': 'AS Monaco',
-                'AS Monaco': 'AS Monaco',
-                'Lille': 'LOSC Lille',
-                'LOSC': 'LOSC Lille',
-                'Nice': 'OGC Nice',
-                'OGC Nice': 'OGC Nice',
-                'Lens': 'RC Lens',
-                'RC Lens': 'RC Lens',
-                'Rennes': 'Stade Rennais FC',
-                'Stade Rennais': 'Stade Rennais FC'
-            };
-            
-            return nameMap[teamName] || teamName;
-        }
-        
-        // Team logo helper function
-        function getTeamLogoUrl(teamName, league) {
-            const leagueMap = {
-                'Premier League': 'England - Premier League',
-                'EPL': 'England - Premier League',
-                'English Premier League': 'England - Premier League',
-                'La Liga': 'Spain - LaLiga',
-                'Spanish La Liga': 'Spain - LaLiga',
-                'Spain La Liga': 'Spain - LaLiga',
-                'Bundesliga': 'Germany - Bundesliga',
-                'German Bundesliga': 'Germany - Bundesliga',
-                'Germany Bundesliga': 'Germany - Bundesliga',
-                'Serie A': 'Italy - Serie A',
-                'Italian Serie A': 'Italy - Serie A',
-                'Italy Serie A': 'Italy - Serie A',
-                'Ligue 1': 'France - Ligue 1',
-                'French Ligue 1': 'France - Ligue 1',
-                'France Ligue 1': 'France - Ligue 1',
-                'Ligue 1 - France': 'France - Ligue 1',
-                'UEFA Champions League': null,  // No CL folder, teams fallback to domestic league
-                'Champions League': null,
-                'UEFA Europa League': null,
-                'Europa League': null
-            };
-            
-            const leagueFolder = leagueMap[league];
-            if (!leagueFolder) {
-                // For UEFA competitions, we don't have logos available
-                return '';
+            if (url.startsWith('http')) {
+                console.warn('Unexpected external logo URL', url);
             }
-            
-            // Try pattern-based fuzzy normalization first
-            let normalizedTeamName = fuzzyNormalizeTeamName(teamName, league);
-            
-            // If fuzzy didn't change it, try the explicit mapping table
-            if (normalizedTeamName === teamName) {
-                normalizedTeamName = normalizeTeamNameForLogo(teamName);
-            }
-            
-            // Encode team name for URL (keep spaces, &, etc. as they appear in filenames)
-            const teamFileName = encodeURIComponent(normalizedTeamName + '.png');
-            
-            return `https://raw.githubusercontent.com/luukhopman/football-logos/master/logos/${encodeURIComponent(leagueFolder)}/${teamFileName}`;
+            return url;
         }
-        
+
         // Calculate WCAG contrast ratio
         function getContrastRatio(rgb1, rgb2) {
             const lum1 = 0.2126 * Math.pow(rgb1[0]/255, 2.2) + 0.7152 * Math.pow(rgb1[1]/255, 2.2) + 0.0722 * Math.pow(rgb1[2]/255, 2.2);
@@ -1852,7 +1573,7 @@
                 
                 // Home team column
                 html += `<div class="col-md-6 ${hasAwayData ? 'border-end' : ''}">`;
-                const homeLogoUrl = getTeamLogoUrl(currentMatchData.home_team, currentMatchData.league);
+                const homeLogoUrl = getLogoUrlOrFallback(contextData.home_team?.logo_url || currentMatchData?.home_logo_url);
                 const homeBrandColor = getTeamBrandColor(currentMatchData.home_team);
                 const homeColorData = homeBrandColor ? ensureColorContrast(homeBrandColor, isDarkTheme()) : { color: 'var(--primary-color)', shadow: '' };
                 html += `<h6 class="fw-bold mb-2" style="color: ${homeColorData.color}; ${homeColorData.shadow}"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
@@ -1880,7 +1601,7 @@
                 
                 // Away team column
                 html += `<div class="col-md-6">`;
-                const awayLogoUrl = getTeamLogoUrl(currentMatchData.away_team, currentMatchData.league);
+                const awayLogoUrl = getLogoUrlOrFallback(contextData.away_team?.logo_url || currentMatchData?.away_logo_url);
                 const awayBrandColor = getTeamBrandColor(currentMatchData.away_team);
                 const awayColorData = awayBrandColor ? ensureColorContrast(awayBrandColor, isDarkTheme()) : { color: '#ef4444', shadow: '' };
                 html += `<h6 class="fw-bold mb-2" style="color: ${awayColorData.color}; ${awayColorData.shadow}"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
@@ -2546,8 +2267,8 @@
                         m.commence_time === match.commence_time
                     );
                     
-                    const homeLogo = getTeamLogoUrl(match.home_team, match.league);
-                    const awayLogo = getTeamLogoUrl(match.away_team, match.league);
+                    const homeLogo = getLogoUrlOrFallback(match.home_logo_url);
+                    const awayLogo = getLogoUrlOrFallback(match.away_logo_url);
                     
                     html += `
                         <div class="card match-card mb-2${popularClass}${arbitrageClass}" data-match-index="${originalIndex}">
@@ -2599,8 +2320,8 @@
                 currentMatchData = match;
                 
                 // Update match details with logos
-                const homeLogo = getTeamLogoUrl(match.home_team, match.league);
-                const awayLogo = getTeamLogoUrl(match.away_team, match.league);
+                const homeLogo = getLogoUrlOrFallback(match.home_logo_url);
+                const awayLogo = getLogoUrlOrFallback(match.away_logo_url);
                 matchTeams.innerHTML = `
                     <div class="d-flex align-items-center justify-content-center gap-3">
                         <div class="d-flex align-items-center">
@@ -2863,7 +2584,7 @@
                     
                     // Home team column  
                     html += `<div class="col-12 col-md-6 mb-3 mb-md-0 ${hasAwayData ? 'border-md-end' : ''}">`;
-                    const homeLogoUrl = getTeamLogoUrl(currentMatchData.home_team, currentMatchData.league);
+                    const homeLogoUrl = getLogoUrlOrFallback(contextData.home_team?.logo_url || currentMatchData?.home_logo_url);
                     const homeBrandColor = getTeamBrandColor(currentMatchData.home_team);
                     const homeColorData = homeBrandColor ? ensureColorContrast(homeBrandColor, isDarkTheme()) : { color: 'var(--primary-color)', shadow: '' };
                     html += `<h6 class="fw-bold mb-2 text-truncate" style="color: ${homeColorData.color}; ${homeColorData.shadow}"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
@@ -2951,7 +2672,7 @@
                     
                     // Away team column
                     html += `<div class="col-12 col-md-6">`;
-                    const awayLogoUrl = getTeamLogoUrl(currentMatchData.away_team, currentMatchData.league);
+                    const awayLogoUrl = getLogoUrlOrFallback(contextData.away_team?.logo_url || currentMatchData?.away_logo_url);
                     const awayBrandColor = getTeamBrandColor(currentMatchData.away_team);
                     const awayColorData = awayBrandColor ? ensureColorContrast(awayBrandColor, isDarkTheme()) : { color: '#ef4444', shadow: '' };
                     html += `<h6 class="fw-bold mb-2 text-truncate" style="color: ${awayColorData.color}; ${awayColorData.shadow}"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;

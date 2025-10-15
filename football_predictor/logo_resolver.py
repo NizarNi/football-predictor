@@ -7,10 +7,9 @@ from .config import setup_logger
 
 logger = setup_logger(__name__)
 
-# Static assets directory inside the package
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-LOGO_ROOT = os.path.join(STATIC_DIR, "team_logos")
-FALLBACK_REL = os.path.join("team_logos", "generic_shield.svg")  # relative path under /static
+PKG_DIR = os.path.dirname(__file__)
+LOGO_DIR = os.path.join(PKG_DIR, "static", "team_logos")
+FALLBACK = os.path.join(LOGO_DIR, "generic_shield.svg")
 
 # Aliases: common short names/nicknames/abbreviations → canonical display names (as used in filenames)
 ALIASES = {
@@ -149,14 +148,6 @@ def _basename_no_ext(path: str) -> str:
     return os.path.splitext(os.path.basename(path))[0]
 
 
-def _rel_from_abs(abs_path: str) -> Optional[str]:
-    try:
-        rel = os.path.relpath(abs_path, STATIC_DIR)
-        return rel.replace(os.sep, "/")
-    except Exception:
-        return None
-
-
 def _iter_logo_files(root: str) -> List[str]:
     files = []
     if not os.path.isdir(root):
@@ -171,7 +162,7 @@ def _iter_logo_files(root: str) -> List[str]:
 def _build_index() -> List[Tuple[str, str, List[str]]]:
     """List of (abs_path, normalized_basename, tokens)"""
     index = []
-    for abs_path in _iter_logo_files(LOGO_ROOT):
+    for abs_path in _iter_logo_files(LOGO_DIR):
         base = _basename_no_ext(abs_path)
         norm = _normalize(base)
         tokens = norm.split(" ") if norm else []
@@ -203,27 +194,25 @@ def _try_exact_basename(norm_query: str) -> Optional[str]:
         return None
     for abs_path, cand_norm, _tok in _get_index():
         if cand_norm == norm_query:
-            rel = _rel_from_abs(abs_path)
-            if rel:
-                return rel
+            return abs_path
     return None
 
 
-def resolve_logo_rel(team: Optional[str]) -> str:
-    """Resolve a team logo path relative to the Flask static directory."""
-    if not os.path.isdir(LOGO_ROOT) or not team:
-        return FALLBACK_REL
+def resolve_logo(team: Optional[str]) -> str:
+    """Resolve a team logo absolute path under the package static directory."""
+    if not os.path.isdir(LOGO_DIR) or not team:
+        return FALLBACK
 
     norm_query = _normalize(team.strip())
-    rel = _try_exact_basename(norm_query)
-    if rel:
-        return rel
+    path = _try_exact_basename(norm_query)
+    if path:
+        return path
 
     alias = _alias_or_raw(team)
     if alias != team:
-        rel = _try_exact_basename(_normalize(alias))
-        if rel:
-            return rel
+        alias_path = _try_exact_basename(_normalize(alias))
+        if alias_path:
+            return alias_path
 
     q_tokens = norm_query.split(" ") if norm_query else []
     best_score = 0
@@ -235,9 +224,13 @@ def resolve_logo_rel(team: Optional[str]) -> str:
             best_path = abs_path
 
     if best_path and best_score > 0:
-        rel = _rel_from_abs(best_path)
-        if rel:
-            return rel
+        return best_path
 
     logger.info("Logo fallback for team=%s", team)
-    return FALLBACK_REL
+    return FALLBACK
+
+
+def reset_logo_cache() -> None:
+    """Clear the cached logo index (useful for tests)."""
+    global _LOGO_INDEX
+    _LOGO_INDEX = None
