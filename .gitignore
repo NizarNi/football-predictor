@@ -61,3 +61,4 @@ Thumbs.db
 
 # Application specific - Cache files only
 football_predictor/processed_data/xg_cache/*.json
+processed_data/xg_cache/*.json
