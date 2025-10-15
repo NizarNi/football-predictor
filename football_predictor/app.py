@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, url_for
 import os
 import json
 from datetime import datetime, timezone
@@ -6,9 +6,12 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from typing import Optional
 
 from .config import setup_logger, API_TIMEOUT_CONTEXT
+
 from .app_utils import make_ok, make_error, legacy_endpoint
+from .logo_resolver import resolve_logo_rel
 
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -29,6 +32,15 @@ app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 logger = setup_logger(__name__)
+
+# Logo helper
+
+def _logo_url(team_name: Optional[str]) -> str:
+    rel = resolve_logo_rel(team_name)
+    try:
+        return url_for("static", filename=rel)
+    except Exception:
+        return url_for("static", filename="team_logos/generic_shield.svg")
 
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
@@ -106,6 +118,8 @@ def upcoming():
                     # Format match data
                     match["datetime"] = match["commence_time"]
                     match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
+                    match["home_logo_url"] = _logo_url(match.get("home_team"))
+                    match["away_logo_url"] = _logo_url(match.get("away_team"))
 
                     # Add Elo predictions
                     home_team = match.get("home_team")
@@ -210,11 +224,13 @@ def search():
             # Calculate predictions from odds for each match
             for match in filtered_matches:
                 predictions = calculate_predictions_from_odds(match)
-                
+
                 # Format match data
                 match["datetime"] = match["commence_time"]
                 match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                
+                match["home_logo_url"] = _logo_url(match.get("home_team"))
+                match["away_logo_url"] = _logo_url(match.get("away_team"))
+
                 # Add predictions in the expected format
                 match["predictions"] = {
                     "1x2": {
@@ -639,6 +655,7 @@ def get_match_context(match_id):
                     "points": home_data.get('points') if home_data else None,
                     "form": home_data.get('form') if home_data else None,
                     "name": home_team,
+                    "logo_url": _logo_url(home_team),
                     "ppda_coef": home_data.get('ppda_coef') if home_data else None,
                     "oppda_coef": home_data.get('oppda_coef') if home_data else None,
                     "xG": home_data.get('xG') if home_data else None,
@@ -658,6 +675,7 @@ def get_match_context(match_id):
                     "points": away_data.get('points') if away_data else None,
                     "form": away_data.get('form') if away_data else None,
                     "name": away_team,
+                    "logo_url": _logo_url(away_team),
                     "ppda_coef": away_data.get('ppda_coef') if away_data else None,
                     "oppda_coef": away_data.get('oppda_coef') if away_data else None,
                     "xG": away_data.get('xG') if away_data else None,
