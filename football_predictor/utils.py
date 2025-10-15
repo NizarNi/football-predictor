@@ -6,6 +6,7 @@ Shared helper functions used across multiple modules
 from datetime import datetime
 from typing import Any, Callable, Iterable, Optional
 
+import logging
 import requests
 import time
 from requests.adapters import HTTPAdapter
@@ -355,6 +356,8 @@ def request_with_retries(
     logger,
     context: str,
     sanitize: Optional[Callable[[str], str]] = None,
+    attempt_log_level: int | None = logging.WARNING,
+    failure_log_level: int = logging.ERROR,
     **kwargs: Any,
 ) -> requests.Response:
     """Perform an HTTP request with retry and logging support."""
@@ -406,21 +409,37 @@ def request_with_retries(
             )
             backoff = retry_state.get_backoff_time()
 
-            logger.warning(
-                "Retrying %s (%d/%d): %s - %s",
-                context,
+            logger.debug(
+                "Retry attempt %d/%d for %s due to %s",
                 attempts,
                 max_retries,
-                _sanitize_value(url, sanitize),
+                context,
                 _sanitize_value(exc, sanitize),
             )
 
+            if attempt_log_level is not None:
+                logger.log(
+                    attempt_log_level,
+                    "Retrying %s (%d/%d): %s - %s",
+                    context,
+                    attempts,
+                    max_retries,
+                    _sanitize_value(url, sanitize),
+                    _sanitize_value(exc, sanitize),
+                )
+
             if backoff > 0:
+                logger.debug(
+                    "Sleeping %.2fs before retrying %s",
+                    backoff,
+                    context,
+                )
                 time.sleep(backoff)
 
     if last_exception is not None:
         if attempted_retries > 0 or attempts >= max_retries:
-            logger.error(
+            logger.log(
+                failure_log_level,
                 "Failed %s after %d attempts: %s",
                 context,
                 max_retries,
