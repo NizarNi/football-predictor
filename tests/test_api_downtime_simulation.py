@@ -1,7 +1,8 @@
 import asyncio
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, Dict, List
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -166,15 +167,108 @@ def test_xg_invalid_response_raises_apierror():
 
 
 # Understat client tests
-@patch("football_predictor.understat_client.asyncio.wait_for")
-def test_understat_timeout_raises_apierror(mock_wait_for):
+
+
+def _sample_understat_payloads():
+    teams_payload = {
+        "teams": [
+            {
+                "title": "Team A",
+                "history": [
+                    {
+                        "xG": 1.2,
+                        "xGA": 0.8,
+                        "npxG": 1.1,
+                        "npxGA": 0.6,
+                        "ppda": {"att": 100, "def": 10},
+                        "ppda_allowed": {"att": 90, "def": 9},
+                    },
+                    {
+                        "xG": 1.8,
+                        "xGA": 0.7,
+                        "npxG": 1.5,
+                        "npxGA": 0.5,
+                        "ppda": {"att": 95, "def": 9},
+                        "ppda_allowed": {"att": 85, "def": 8},
+                    },
+                ],
+            },
+            {
+                "title": "Team B",
+                "history": [
+                    {
+                        "xG": 0.9,
+                        "xGA": 1.4,
+                        "npxG": 0.7,
+                        "npxGA": 1.1,
+                        "ppda": {"att": 110, "def": 11},
+                        "ppda_allowed": {"att": 88, "def": 11},
+                    },
+                    {
+                        "xG": 1.0,
+                        "xGA": 1.3,
+                        "npxG": 0.8,
+                        "npxGA": 1.0,
+                        "ppda": {"att": 108, "def": 12},
+                        "ppda_allowed": {"att": 92, "def": 10},
+                    },
+                ],
+            },
+        ]
+    }
+
+    fixtures_payload = {
+        "fixtures": [
+            {
+                "isResult": True,
+                "h": {"title": "Team A"},
+                "a": {"title": "Team B"},
+                "goals": {"h": 2, "a": 1},
+                "forecast": {"w": 0.55, "d": 0.25, "l": 0.2},
+                "xG": {"h": 1.9, "a": 0.8},
+            },
+            {
+                "isResult": True,
+                "h": {"title": "Team B"},
+                "a": {"title": "Team A"},
+                "goals": {"h": 1, "a": 1},
+                "forecast": {"w": 0.35, "d": 0.4, "l": 0.25},
+                "xG": {"h": 1.1, "a": 1.2},
+            },
+        ]
+    }
+
+    return teams_payload, fixtures_payload
+
+
+class _FakeResponse:
+    def __init__(self, payload: Dict[str, Any], status_code: int = 200):
+        self._payload = payload
+        self.status_code = status_code
+        self.reason = "OK"
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(
+                f"{self.status_code} Error",
+                response=self,
+            )
+
+    def json(self):
+        return self._payload
+
+
+def test_understat_timeout_raises_apierror(monkeypatch):
     understat_client._standings_cache.clear()
 
-    def _raise_timeout(coro, timeout):
-        coro.close()
-        raise asyncio.TimeoutError("Understat timeout")
+    def _raise_timeout(**kwargs):
+        raise requests.Timeout("simulated timeout")
 
-    mock_wait_for.side_effect = _raise_timeout
+    monkeypatch.setattr(
+        understat_client,
+        "request_with_retries",
+        _raise_timeout,
+    )
 
     with pytest.raises(APIError) as exc:
         understat_client.fetch_understat_standings("PL")
@@ -182,24 +276,76 @@ def test_understat_timeout_raises_apierror(mock_wait_for):
     assert exc.value.code == "TIMEOUT"
 
 
-def test_understat_invalid_response_raises_apierror():
+def test_understat_invalid_response_raises_apierror(monkeypatch):
     understat_client._standings_cache.clear()
 
-    class DummySession:
-        async def __aenter__(self):
-            return self
+    class _InvalidJsonResponse(_FakeResponse):
+        def json(self):
+            raise ValueError("invalid json")
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+    payloads = _sample_understat_payloads()
+    call_state = {"idx": 0}
 
-    with patch("football_predictor.understat_client.aiohttp.ClientSession", return_value=DummySession()):
-        with patch("football_predictor.understat_client.Understat") as mock_understat:
-            understat_instance = MagicMock()
-            understat_instance.get_teams = AsyncMock(side_effect=ValueError("Invalid JSON"))
-            understat_instance.get_league_results = AsyncMock(return_value=[])
-            mock_understat.return_value = understat_instance
+    def _fake_request(**kwargs):
+        resp = _InvalidJsonResponse(payloads[call_state["idx"]])
+        call_state["idx"] = min(call_state["idx"] + 1, len(payloads) - 1)
+        return resp
 
-            with pytest.raises(APIError) as exc:
-                asyncio.run(understat_client._fetch_league_standings("PL"))
+    monkeypatch.setattr(understat_client, "request_with_retries", _fake_request)
+
+    with pytest.raises(APIError) as exc:
+        understat_client.fetch_understat_standings("PL")
 
     assert exc.value.code == "PARSE_ERROR"
+
+
+def test_understat_retries_on_server_errors(monkeypatch):
+    understat_client._standings_cache.clear()
+
+    teams_payload, fixtures_payload = _sample_understat_payloads()
+    call_history: List[str] = []
+
+    class _RetryAwareResponse(_FakeResponse):
+        def __init__(self, payload: Dict[str, Any], attempts: List[int]):
+            super().__init__(payload)
+            self.attempts = attempts
+
+    def _fake_request(context: str, **kwargs):
+        call_history.append(context)
+        assert kwargs["retries"] == 3
+        assert 502 in kwargs["status_forcelist"]
+
+        if "teams" in context:
+            resp = _RetryAwareResponse(teams_payload, [502, 502, 200])
+        else:
+            resp = _RetryAwareResponse(fixtures_payload, [502, 502, 200])
+        return resp
+
+    monkeypatch.setattr(understat_client, "request_with_retries", _fake_request)
+
+    standings = understat_client.fetch_understat_standings("PL")
+
+    assert len(standings) == 2
+    assert call_history == ["Understat teams for PL", "Understat fixtures for PL"]
+    # Ensure standings sorted by points then goal difference
+    assert standings[0]["name"] == "Team A"
+
+
+def test_understat_rate_limit_raises_apierror(monkeypatch):
+    understat_client._standings_cache.clear()
+
+    class _RateLimitResponse(_FakeResponse):
+        def __init__(self):
+            super().__init__({}, status_code=429)
+
+    def _fake_request(context: str, **kwargs):
+        response = _RateLimitResponse()
+        raise requests.HTTPError("429", response=response)
+
+    monkeypatch.setattr(understat_client, "request_with_retries", _fake_request)
+
+    with pytest.raises(APIError) as exc:
+        understat_client.fetch_understat_standings("PL")
+
+    assert exc.value.code == "429"
+    assert exc.value.details == "rate_limited"
