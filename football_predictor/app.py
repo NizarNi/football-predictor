@@ -1,10 +1,11 @@
 from flask import Flask, render_template, request
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 from .config import setup_logger, API_TIMEOUT_CONTEXT
 from .app_utils import make_ok, make_error, legacy_endpoint
@@ -53,6 +54,15 @@ def status():
     from .config import USE_LEGACY_RESPONSES
 
     return make_ok({"legacy_mode": USE_LEGACY_RESPONSES})
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return make_ok(
+        {"ok": True, "ts": datetime.now(timezone.utc).isoformat()},
+        "OK",
+        status_code=200,
+    )
 
 @app.route("/upcoming", methods=["GET"])
 @legacy_endpoint
@@ -561,13 +571,27 @@ def get_match_context(match_id):
                             if key == "understat":
                                 standings = result
                                 source = "Understat" if standings else None
-                            else:
+                            elif key == "elo":
                                 home_elo, away_elo = result
-                        except Exception:
-                            logger.exception("Error fetching %s data for %s", key, match_id)
+                            else:
+                                pass
+                        except APIError as api_err:
+                            logger.warning(
+                                "API error from %s: %s", key, getattr(api_err, "message", str(api_err))
+                            )
+                            missing_sources.append(key)
+                        except (ValueError, KeyError) as parse_err:
+                            logger.warning("Parse error from %s: %s", key, parse_err)
+                            missing_sources.append(key)
+                        except FuturesTimeoutError:
+                            logger.warning("Timeout retrieving future for %s", key)
+                            missing_sources.append(key)
+                        except Exception as unexpected:
+                            logger.exception("Unexpected error from %s", key)
                             missing_sources.append(key)
                     else:
                         future.cancel()
+                        logger.warning("Timeout retrieving future for %s", key)
                         missing_sources.append(key)
                         timeout_missing.append(key)
 
@@ -676,10 +700,27 @@ def get_match_context(match_id):
 
             return make_ok(context)
 
+        except APIError:
+            raise
+        except FuturesTimeoutError:
+            raise
         except Exception as e:
             logger.exception("Error fetching context for %s", match_id)
             return make_ok({"narrative": "Match context unavailable"})
 
+    except APIError as e:
+        logger.warning(
+            "Upstream API error in /match/context: %s",
+            getattr(e, "message", str(e)),
+        )
+        return make_error(
+            {"source": getattr(e, "source", None), "detail": str(e)},
+            "Upstream API error",
+            status_code=502,
+        )
+    except FuturesTimeoutError:
+        logger.warning("Global timeout in /match/context")
+        return make_error(None, "Context assembly timeout", status_code=504)
     except Exception as e:
         logger.exception("Error in match context for %s", match_id)
         return make_error(
