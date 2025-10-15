@@ -29,12 +29,20 @@ _LEAGUE_ALIASES = {
 }
 
 
+_NULL_LIKE_VALUES = {"null", "none", "undefined", ""}
+
+
 def _normalize(value: Optional[str]) -> Optional[str]:
-    """Strip whitespace and return ``None`` for empty strings."""
+    """Strip whitespace and normalise sentinel values to ``None``."""
+
     if value is None:
         return None
+
     normalized = value.strip()
-    return normalized or None
+    if normalized.lower() in _NULL_LIKE_VALUES:
+        return None
+
+    return normalized
 
 
 def _log_and_raise(param_name: str, message: str) -> None:
@@ -76,7 +84,12 @@ def validate_league(league: Optional[str], *, required: bool = False) -> Optiona
     league_code = normalized.upper()
     league_code = _LEAGUE_ALIASES.get(league_code, league_code)
     if league_code not in LEAGUE_CODE_MAPPING:
-        _log_and_raise("league", f"Unsupported league code '{normalized}'")
+        if required:
+            _log_and_raise("league", f"Unsupported league code '{normalized}'")
+        logger.warning(
+            "Validation failed for %s: %s", "league", f"Unsupported league code '{normalized}'"
+        )
+        return None
 
     return league_code
 
@@ -116,10 +129,11 @@ def validate_team(
 
     if not _TEAM_PATTERN.fullmatch(normalized):
         field_label = field_name.replace('_', ' ')
-        _log_and_raise(
-            field_name,
-            f"Invalid {field_label}. Only letters, spaces, and .&'()- are allowed.",
-        )
+        message = f"Invalid {field_label}. Only letters, spaces, and .&'()- are allowed."
+        if required:
+            _log_and_raise(field_name, message)
+        logger.warning("Validation failed for %s: %s", field_name, message)
+        return None
 
     return normalized
 

@@ -21,7 +21,7 @@ from .odds_api_client import get_upcoming_matches_with_odds, LEAGUE_CODE_MAPPING
 from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import get_match_xg_prediction
 from . import understat_client, elo_client
-from .utils import get_current_season, get_team_logo, normalize_team_name, fuzzy_team_match
+from .utils import get_current_season, get_team_logo, fuzzy_team_match
 from .errors import APIError
 from .validators import validate_league, validate_team, validate_next_days
 
@@ -598,6 +598,36 @@ def get_career_xg():
             status_code=200
         )
 
+def _build_team_context(
+    team_name: Optional[str],
+    team_data: Optional[dict[str, Any]],
+    elo_rating: Optional[float],
+) -> Optional[dict[str, Any]]:
+    """Normalize team-level context payload ensuring schema stability."""
+
+    payload = {
+        "position": team_data.get("position") if team_data else None,
+        "points": team_data.get("points") if team_data else None,
+        "form": team_data.get("form") if team_data else None,
+        "name": team_name,
+        "ppda_coef": team_data.get("ppda_coef") if team_data else None,
+        "oppda_coef": team_data.get("oppda_coef") if team_data else None,
+        "xG": team_data.get("xG") if team_data else None,
+        "xGA": team_data.get("xGA") if team_data else None,
+        "elo_rating": elo_rating,
+        "played": team_data.get("match_count", team_data.get("played", 0)) if team_data else 0,
+        "xg_percentile": team_data.get("xg_percentile") if team_data else None,
+        "xga_percentile": team_data.get("xga_percentile") if team_data else None,
+        "ppda_percentile": team_data.get("ppda_percentile") if team_data else None,
+        "attack_rating": team_data.get("attack_rating") if team_data else None,
+        "defense_rating": team_data.get("defense_rating") if team_data else None,
+        "league_stats": team_data.get("league_stats") if team_data else None,
+        "recent_trend": team_data.get("recent_trend") if team_data else None,
+    }
+
+    return payload
+
+
 @cache.memoize(timeout=CACHE_TIMEOUT)
 def _build_match_context_payload(
     match_id: str,
@@ -706,44 +736,8 @@ def _build_match_context_payload(
     season_display = f"{season_start}/{str(current_season)[-2:]}"
 
     context = {
-        "home_team": {
-            "position": home_data.get("position") if home_data else None,
-            "points": home_data.get("points") if home_data else None,
-            "form": home_data.get("form") if home_data else None,
-            "name": home_team,
-            "ppda_coef": home_data.get("ppda_coef") if home_data else None,
-            "oppda_coef": home_data.get("oppda_coef") if home_data else None,
-            "xG": home_data.get("xG") if home_data else None,
-            "xGA": home_data.get("xGA") if home_data else None,
-            "elo_rating": home_elo,
-            "played": home_data.get("match_count", home_data.get("played", 0)) if home_data else 0,
-            "xg_percentile": home_data.get("xg_percentile") if home_data else None,
-            "xga_percentile": home_data.get("xga_percentile") if home_data else None,
-            "ppda_percentile": home_data.get("ppda_percentile") if home_data else None,
-            "attack_rating": home_data.get("attack_rating") if home_data else None,
-            "defense_rating": home_data.get("defense_rating") if home_data else None,
-            "league_stats": home_data.get("league_stats") if home_data else None,
-            "recent_trend": home_data.get("recent_trend") if home_data else None,
-        },
-        "away_team": {
-            "position": away_data.get("position") if away_data else None,
-            "points": away_data.get("points") if away_data else None,
-            "form": away_data.get("form") if away_data else None,
-            "name": away_team,
-            "ppda_coef": away_data.get("ppda_coef") if away_data else None,
-            "oppda_coef": away_data.get("oppda_coef") if away_data else None,
-            "xG": away_data.get("xG") if away_data else None,
-            "xGA": away_data.get("xGA") if away_data else None,
-            "elo_rating": away_elo,
-            "played": away_data.get("match_count", away_data.get("played", 0)) if away_data else 0,
-            "xg_percentile": away_data.get("xg_percentile") if away_data else None,
-            "xga_percentile": away_data.get("xga_percentile") if away_data else None,
-            "ppda_percentile": away_data.get("ppda_percentile") if away_data else None,
-            "attack_rating": away_data.get("attack_rating") if away_data else None,
-            "defense_rating": away_data.get("defense_rating") if away_data else None,
-            "league_stats": away_data.get("league_stats") if away_data else None,
-            "recent_trend": away_data.get("recent_trend") if away_data else None,
-        },
+        "home_team": _build_team_context(home_team, home_data, home_elo),
+        "away_team": _build_team_context(away_team, away_data, away_elo),
         "elo_predictions": elo_probs,
         "narrative": narrative,
         "has_data": bool(home_data or away_data),
@@ -751,12 +745,14 @@ def _build_match_context_payload(
         "season_display": season_display,
     }
 
-    context["home_logo"] = get_team_logo(home_team, league_code)
-    context["away_logo"] = get_team_logo(away_team, league_code)
+    home_logo = get_team_logo(home_team, league_code)
+    away_logo = get_team_logo(away_team, league_code)
+    context["home_logo"] = home_logo
+    context["away_logo"] = away_logo
     if context["home_team"] is not None:
-        context["home_team"]["logo"] = context["home_logo"]
+        context["home_team"]["logo"] = home_logo
     if context["away_team"] is not None:
-        context["away_team"]["logo"] = context["away_logo"]
+        context["away_team"]["logo"] = away_logo
 
     if elo_probs:
         logger.info(
@@ -853,11 +849,34 @@ def get_match_context(match_id):
             )
         except Exception as e:
             logger.exception("Error fetching context for %s", match_id)
+            season_display = None
+            try:
+                current_season = get_current_season()
+                season_display = f"{current_season - 1}/{str(current_season)[-2:]}"
+            except Exception:
+                season_display = None
+
+            home_logo = get_team_logo(home_team, league_code)
+            away_logo = get_team_logo(away_team, league_code)
             context = {
-                "narrative": "Partial or unavailable data",
-                "home_logo": get_team_logo(home_team, league_code),
-                "away_logo": get_team_logo(away_team, league_code),
+                "home_team": _build_team_context(home_team, None, None),
+                "away_team": _build_team_context(away_team, None, None),
+                "elo_predictions": None,
+                "narrative": "Match context unavailable",
+                "has_data": False,
+                "source": None,
+                "season_display": season_display,
+                "home_logo": home_logo,
+                "away_logo": away_logo,
+                "partial": True,
+                "missing": ["understat", "elo"],
+                "warning": "context error",
+                "standings_source": None,
             }
+            if context["home_team"] is not None:
+                context["home_team"]["logo"] = home_logo
+            if context["away_team"] is not None:
+                context["away_team"]["logo"] = away_logo
             return make_ok(context)
 
         if was_cached:
