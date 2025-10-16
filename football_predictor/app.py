@@ -20,7 +20,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from .odds_api_client import get_upcoming_matches_with_odds, LEAGUE_CODE_MAPPING
 from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import get_match_xg_prediction
-from .utils import get_current_season, normalize_team_name, fuzzy_team_match
+from .utils import get_current_season, normalize_league_code, normalize_team_name, fuzzy_team_match
 from .errors import APIError
 from .validators import (
     validate_league,
@@ -576,6 +576,9 @@ def get_match_context(match_id):
         logger.info("Handling /match context request", extra={"match_id": match_id})
         raw_league = request.args.get("league")
         league, _lw = validate_league(raw_league)
+        normalized_league = normalize_league_code(raw_league)
+        if normalized_league:
+            league = normalized_league
         home_team, _ = validate_team_optional(request.args.get("home_team"))
         away_team, _ = validate_team_optional(request.args.get("away_team"))
 
