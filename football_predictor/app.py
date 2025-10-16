@@ -199,10 +199,15 @@ def upcoming():
 
             if odds_matches:
                 # Import Elo client for predictions
-                from .elo_client import calculate_elo_probabilities
+                from .elo_client import (
+                    calculate_elo_probabilities,
+                    get_team_elo,
+                    elo_is_unhealthy,
+                )
 
-                # Per-request Elo memo (avoid repeating slow lookups in the same response)
-                _request_elo: dict[str, Optional[float]] = {}
+                elo_budget = 3  # at most 3 network-backed Elo pairs per request
+                elo_pair_attempts = 0
+                elo_cache_local: dict[str, Optional[float]] = {}
 
                 # Calculate predictions from odds for each match
                 for match in odds_matches:
@@ -222,43 +227,65 @@ def upcoming():
                     home_team_name = match.get("home_team")
                     away_team_name = match.get("away_team")
 
-                    def _get_elo_once(team: Optional[str]) -> Optional[float]:
-                        key = _norm_team_key(team)
-                        if not key:
-                            return None
-                        if key in _request_elo:
-                            return _request_elo[key]
+                    home_elo = None
+                    away_elo = None
+                    event_id = str(match.get("event_id") or match.get("id") or "")
 
-                        cached = _elo_cache_get(team)
-                        if cached is not None:
-                            _request_elo[key] = cached
-                            return cached
-
+                    if home_team_name and away_team_name:
                         try:
-                            from .elo_client import get_team_elo
+                            if elo_is_unhealthy() or elo_pair_attempts >= elo_budget:
+                                home_elo = elo_cache_local.get(home_team_name)
+                                away_elo = elo_cache_local.get(away_team_name)
+                            else:
+                                fresh_attempt = False
 
-                            value = get_team_elo(team)
-                            _request_elo[key] = value
-                            _elo_cache_put(team, value)
-                            return value
+                                if home_team_name in elo_cache_local:
+                                    home_elo = elo_cache_local[home_team_name]
+                                else:
+                                    cached_home = _elo_cache_get(home_team_name)
+                                    if cached_home is not None:
+                                        home_elo = cached_home
+                                    else:
+                                        fresh_attempt = True
+                                        home_elo = get_team_elo(home_team_name)
+                                        if home_elo is not None:
+                                            _elo_cache_put(home_team_name, home_elo)
+                                    elo_cache_local[home_team_name] = home_elo
+
+                                if away_team_name in elo_cache_local:
+                                    away_elo = elo_cache_local[away_team_name]
+                                else:
+                                    cached_away = _elo_cache_get(away_team_name)
+                                    if cached_away is not None:
+                                        away_elo = cached_away
+                                    else:
+                                        fresh_attempt = True
+                                        away_elo = get_team_elo(away_team_name)
+                                        if away_elo is not None:
+                                            _elo_cache_put(away_team_name, away_elo)
+                                    elo_cache_local[away_team_name] = away_elo
+
+                                if fresh_attempt:
+                                    elo_pair_attempts += 1
+
+                            if home_elo is not None and away_elo is not None:
+                                if event_id:
+                                    _match_elo_cache_put(event_id, home_elo, away_elo)
+                                match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
                         except Exception as elo_err:
                             logger.warning(
-                                "Elo unavailable in /upcoming for %s: %s",
-                                team,
+                                "Elo unavailable in /upcoming for %s vs %s: %s",
+                                home_team_name,
+                                away_team_name,
                                 getattr(elo_err, "code", type(elo_err).__name__),
                             )
-                            _request_elo[key] = None
-                            return None
+                            if home_team_name and home_team_name not in elo_cache_local:
+                                elo_cache_local[home_team_name] = None
+                            if away_team_name and away_team_name not in elo_cache_local:
+                                elo_cache_local[away_team_name] = None
+                            if elo_pair_attempts < elo_budget:
+                                elo_pair_attempts += 1
 
-                    home_elo = _get_elo_once(home_team_name)
-                    away_elo = _get_elo_once(away_team_name)
-
-                    event_id = str(match.get("event_id") or match.get("id") or "")
-                    if event_id:
-                        _match_elo_cache_put(event_id, home_elo, away_elo)
-
-                    if home_elo is not None and away_elo is not None:
-                        match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
                     # ---- end T29c block ----
 
                     # Add predictions in the expected format
