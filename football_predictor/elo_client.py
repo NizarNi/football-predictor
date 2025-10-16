@@ -7,8 +7,8 @@ import requests
 import csv
 from datetime import datetime, timedelta
 from io import StringIO
+from time import monotonic
 from typing import Optional, Dict, Any
-import os
 from .app_utils import AdaptiveTimeoutController
 from .config import setup_logger
 from .errors import APIError
@@ -36,9 +36,21 @@ _elo_cache: Dict[str, Optional[Any]] = {
     "timestamp": None
 }
 
+_ELO_UNHEALTHY_UNTIL: Optional[float] = None
+_ELO_UNHEALTHY_BACKOFF_SECS = 300  # 5 minutes
+
 
 logger = setup_logger(__name__)
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT_ELO, max_timeout=30)
+
+
+def _mark_elo_unhealthy() -> None:
+    global _ELO_UNHEALTHY_UNTIL
+    _ELO_UNHEALTHY_UNTIL = monotonic() + _ELO_UNHEALTHY_BACKOFF_SECS
+
+
+def elo_is_unhealthy() -> bool:
+    return _ELO_UNHEALTHY_UNTIL is not None and monotonic() < _ELO_UNHEALTHY_UNTIL
 
 
 def fetch_team_elo_ratings():
@@ -75,6 +87,7 @@ def fetch_team_elo_ratings():
         adaptive_timeout.record_failure()
         logger.warning("[Resilience] API timeout or network issue: %s", exc)
         logger.error("❌ ClubElo request timed out after %.1f seconds", timeout)
+        _mark_elo_unhealthy()
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")
             return _elo_cache["data"]
@@ -84,6 +97,7 @@ def fetch_team_elo_ratings():
         error_msg = str(exc)
         logger.warning("[Resilience] API timeout or network issue: %s", exc)
         logger.error("❌ Error fetching Elo ratings: %s", error_msg)
+        _mark_elo_unhealthy()
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")
             return _elo_cache["data"]
@@ -93,6 +107,7 @@ def fetch_team_elo_ratings():
         error_msg = str(exc)
         logger.warning("[Resilience] API request failure detected: %s", exc)
         logger.error("❌ Error fetching Elo ratings: %s", error_msg)
+        _mark_elo_unhealthy()
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")
             return _elo_cache["data"]
@@ -134,18 +149,31 @@ def fetch_team_elo_ratings():
     return None
 
 
-def get_team_elo(team_name):
+def get_team_elo(team_name: str) -> Optional[float]:
     """
     Get the current Elo rating for a specific team.
     Uses alias mapping to handle variations in team names.
-    
+
     Args:
         team_name (str): Name of the team
-        
+
     Returns:
         float: Elo rating or None if not found
     """
-    elo_ratings = fetch_team_elo_ratings()
+    if elo_is_unhealthy():
+        logger.debug("Elo unhealthy window active; skipping fetch for %s", team_name)
+        return None
+
+    try:
+        elo_ratings = fetch_team_elo_ratings()
+    except APIError as exc:
+        if exc.code in ("TIMEOUT", "NETWORK_ERROR", "429", "HTTP_ERROR"):
+            _mark_elo_unhealthy()
+        raise
+    except requests.RequestException:
+        _mark_elo_unhealthy()
+        raise
+
     if not elo_ratings:
         return None
     

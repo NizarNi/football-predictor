@@ -126,6 +126,64 @@ def test_upcoming_route_returns_make_error_on_failure(monkeypatch):
     assert body["message"]
 
 
+def test_upcoming_skips_elo_after_timeout(monkeypatch):
+    monkeypatch.setattr("football_predictor.app._recent_elo", {})
+    monkeypatch.setattr("football_predictor.app._recent_match_elo", {})
+
+    from football_predictor import elo_client
+
+    monkeypatch.setattr(elo_client, "_ELO_UNHEALTHY_UNTIL", None, raising=False)
+
+    matches = [
+        {
+            "event_id": f"match-{idx}",
+            "id": f"legacy-{idx}",
+            "commence_time": "2024-01-01T12:00:00Z",
+            "home_team": f"Team {idx}A",
+            "away_team": f"Team {idx}B",
+            "bookmakers": [],
+        }
+        for idx in range(5)
+    ]
+
+    monkeypatch.setattr(
+        "football_predictor.app.get_upcoming_matches_with_odds",
+        lambda **_: [match.copy() for match in matches],
+    )
+
+    monkeypatch.setattr(
+        "football_predictor.app.calculate_predictions_from_odds",
+        lambda match: {
+            "prediction": "home",
+            "confidence": 75,
+            "probabilities": {"home": 0.5, "draw": 0.3, "away": 0.2},
+            "best_odds": {"home": 2.0},
+            "arbitrage": None,
+            "bookmaker_count": 1,
+        },
+    )
+
+    call_count = {"count": 0}
+
+    def failing_get_team_elo(team_name):
+        call_count["count"] += 1
+        if call_count["count"] == 1:
+            elo_client._mark_elo_unhealthy()
+            raise APIError("EloAPI", "TIMEOUT", "timeout")
+        return None
+
+    monkeypatch.setattr("football_predictor.elo_client.get_team_elo", failing_get_team_elo)
+
+    client = flask_app.test_client()
+    response = client.get("/upcoming")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["total_matches"] == len(matches)
+    assert all("elo_predictions" not in m for m in payload["matches"])
+    assert call_count["count"] == 1
+
+
 def test_xg_fetcher_wraps_request_exceptions(monkeypatch):
     monkeypatch.setattr(xg_data_fetcher, "load_from_cache", lambda *args, **kwargs: None)
     monkeypatch.setattr(xg_data_fetcher, "save_to_cache", lambda *args, **kwargs: None)
