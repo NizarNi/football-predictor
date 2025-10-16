@@ -1,0 +1,17 @@
+{
+  "Köln": {
+    "xg_for": 45.0,
+    "xg_against": 60.0,
+    "ps_xg_against": 58.0,
+    "matches_played": 34,
+    "goals_for": 44,
+    "goals_against": 62,
+    "xg_for_per_game": 1.32,
+    "xg_against_per_game": 1.76,
+    "ps_xg_against_per_game": 1.71,
+    "goals_for_per_game": 1.29,
+    "goals_against_per_game": 1.82,
+    "scoring_clinicality": 0.09,
+    "ps_xg_performance": -0.12
+  }
+}
