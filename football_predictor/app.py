@@ -45,6 +45,7 @@ logger = setup_logger(__name__)
 
 @app.before_request
 def _prime_request_memo() -> None:
+    clear_request_memo_id()
     request_id = uuid.uuid4().hex
     g._xg_request_memo_id = request_id
     set_request_memo_id(request_id)
