@@ -36,6 +36,16 @@ _session = create_retry_session(
     status_forcelist=STATUS_FORCELIST,
 )
 
+
+def get_sport_key_for_league(code: str) -> Optional[str]:
+    key = LEAGUE_CODE_MAPPING.get(code)
+    if not key:
+        logger.warning("Odds mapping missing for league_code=%s", code)
+        return None
+
+    logger.debug("odds_api: league_code=%s uses sport_key=%s", code, key)
+    return key
+
 def sanitize_error_message(message):
     """
     Remove API keys from error messages to prevent security leaks.
@@ -260,9 +270,8 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
     all_matches = []
     
     for league_code in league_codes:
-        sport_key = LEAGUE_CODE_MAPPING.get(league_code)
+        sport_key = get_sport_key_for_league(league_code)
         if not sport_key:
-            logger.warning("⚠️  League code %s not mapped to Odds API sport key", league_code)
             continue
 
         try:
@@ -305,8 +314,9 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
             continue
 
     if not all_matches:
-        raise APIError("OddsAPI", "NO_DATA", "No matches with odds found.")
-    
+        logger.info("ℹ️ No matches returned from Odds API for league_codes=%s", league_codes)
+        return []
+
     all_matches.sort(key=lambda x: x['commence_time'])
     return all_matches
 
