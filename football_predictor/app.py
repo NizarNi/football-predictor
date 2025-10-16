@@ -8,7 +8,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from time import monotonic
-from typing import Optional
+from typing import Any, Optional
 
 from .config import setup_logger, API_TIMEOUT_CONTEXT
 
@@ -64,6 +64,7 @@ _recent_elo: dict[str, tuple[float, float]] = {}
 
 _recent_match_elo_ttl_sec = 30 * 60
 _recent_match_elo: dict[str, tuple[tuple[Optional[float], Optional[float]], float]] = {}
+_ELO_HINT_MAX_AGE_SEC = 60 * 60
 
 
 def _norm_team_key(name: Optional[str]) -> Optional[str]:
@@ -162,6 +163,7 @@ def _assemble_match_context_core(
     home_team: Optional[str],
     away_team: Optional[str],
     event_id: Optional[str],
+    elo_hint: Optional[dict[str, Any]] = None,
 ) -> dict:
     from .understat_client import fetch_understat_standings
     from .elo_client import calculate_elo_probabilities
@@ -178,6 +180,68 @@ def _assemble_match_context_core(
         home_elo = _elo_cache_get(home_team)
     if away_elo is None and away_team:
         away_elo = _elo_cache_get(away_team)
+    # Prefer client-provided Elo hints when fresh enough
+    hint_used = False
+    if elo_hint:
+        hint_home = elo_hint.get("home")
+        hint_away = elo_hint.get("away")
+        raw_ts = elo_hint.get("ts")
+        hint_timestamp: Optional[datetime] = None
+        if isinstance(raw_ts, (int, float)):
+            try:
+                hint_timestamp = datetime.fromtimestamp(raw_ts, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                hint_timestamp = None
+        elif isinstance(raw_ts, str):
+            try:
+                hint_timestamp = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                if hint_timestamp.tzinfo is None:
+                    hint_timestamp = hint_timestamp.replace(tzinfo=timezone.utc)
+            except ValueError:
+                hint_timestamp = None
+
+        hint_age_seconds: Optional[float] = None
+        if hint_timestamp is not None:
+            hint_age_seconds = (datetime.now(timezone.utc) - hint_timestamp).total_seconds()
+        if hint_age_seconds is not None and hint_age_seconds < 0:
+            hint_age_seconds = 0.0
+
+        within_ttl = (
+            hint_age_seconds is None or hint_age_seconds <= _ELO_HINT_MAX_AGE_SEC
+        )
+
+        if within_ttl:
+            if home_elo is None and hint_home is not None:
+                home_elo = hint_home
+                hint_used = True
+            if away_elo is None and hint_away is not None:
+                away_elo = hint_away
+                hint_used = True
+            if hint_used:
+                age_minutes = 0
+                if hint_age_seconds is not None:
+                    age_minutes = int(round(hint_age_seconds / 60))
+                logger.info(
+                    "context_core: using elo hint (age: %sm)",
+                    age_minutes,
+                    extra={
+                        "match_id": event_id,
+                        "hint_home": bool(hint_home is not None),
+                        "hint_away": bool(hint_away is not None),
+                    },
+                )
+                if home_team and home_elo is not None:
+                    _elo_cache_put(home_team, home_elo)
+                if away_team and away_elo is not None:
+                    _elo_cache_put(away_team, away_elo)
+                if event_id:
+                    _match_elo_cache_put(event_id, home_elo, away_elo)
+        else:
+            logger.info(
+                "context_core: elo hint stale (age: %.1fh)",
+                (hint_age_seconds or 0) / 3600,
+                extra={"match_id": event_id},
+            )
     # ---- end T29c reuse ----
 
     current_season = get_current_season()
@@ -206,6 +270,16 @@ def _assemble_match_context_core(
                 "Context: Elo fetch issue: %s",
                 getattr(elo_err, "code", type(elo_err).__name__),
             )
+        hit_segments = []
+        if he is not None:
+            hit_segments.append("home")
+        if ae is not None:
+            hit_segments.append("away")
+        logger.info(
+            "context_core: cache-only Elo %s",
+            "hit" if hit_segments else "miss",
+            extra={"match_id": event_id, "segments": hit_segments},
+        )
         return (he, ae)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -497,6 +571,11 @@ def upcoming():
 
                                 if fresh_attempt:
                                     elo_pair_attempts += 1
+
+                            if home_elo is not None or away_elo is not None:
+                                match["elo_home"] = home_elo
+                                match["elo_away"] = away_elo
+                                match["elo_ts"] = datetime.now(timezone.utc).isoformat()
 
                             if home_elo is not None and away_elo is not None:
                                 if event_id:
@@ -916,15 +995,26 @@ def get_career_xg():
         )
 
 
-@app.route("/match/<event_id>/context_core", methods=["GET"])
+@app.route("/match/<event_id>/context_core", methods=["GET", "POST"])
 def get_match_context_core(event_id):
     start_time = time.monotonic()
     try:
         logger.info("Handling /match context_core request", extra={"match_id": event_id})
-        raw_league = request.args.get("league")
-        league, _lw = validate_league(raw_league)
-        home_team, _ = validate_team_optional(request.args.get("home_team"))
-        away_team, _ = validate_team_optional(request.args.get("away_team"))
+        if request.method == "POST":
+            payload = request.get_json(silent=True) or {}
+            raw_league = payload.get("league")
+            league, _lw = validate_league(raw_league)
+            home_team, _ = validate_team_optional(payload.get("home_team"))
+            away_team, _ = validate_team_optional(payload.get("away_team"))
+            elo_hint = payload.get("elo_hint") if isinstance(payload.get("elo_hint"), dict) else None
+            effective_event_id = payload.get("event_id") or request.args.get("event_id") or event_id
+        else:
+            raw_league = request.args.get("league")
+            league, _lw = validate_league(raw_league)
+            home_team, _ = validate_team_optional(request.args.get("home_team"))
+            away_team, _ = validate_team_optional(request.args.get("away_team"))
+            elo_hint = None
+            effective_event_id = request.args.get("event_id") or event_id
 
         if not league:
             fallback_league = str(raw_league).strip().upper() if raw_league else ""
@@ -937,10 +1027,14 @@ def get_match_context_core(event_id):
                     status_code=400
                 )
 
-        effective_event_id = request.args.get("event_id") or event_id
-
         try:
-            context = _assemble_match_context_core(league, home_team, away_team, effective_event_id)
+            context = _assemble_match_context_core(
+                league,
+                home_team,
+                away_team,
+                effective_event_id,
+                elo_hint=elo_hint,
+            )
         except APIError:
             raise
         except FuturesTimeoutError:
