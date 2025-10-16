@@ -86,9 +86,16 @@ def stub_league_cache(monkeypatch):
         fake_save(cache_key, data)
         return data
 
+    def fake_fetch_and_cache_now(league_code, season):
+        cache_key = xg_data_fetcher.get_cache_key(league_code, season)
+        data = fake_fetch_and_cache(league_code, season, cache_key)
+        xg_data_fetcher._set_mem_cache(league_code, season, data)
+        return data
+
     monkeypatch.setattr(xg_data_fetcher, "load_from_cache", fake_load)
     monkeypatch.setattr(xg_data_fetcher, "save_to_cache", fake_save)
-    monkeypatch.setattr(xg_data_fetcher, "_refresh_cache_in_background", lambda *args, **kwargs: None)
+    monkeypatch.setattr(xg_data_fetcher, "_refresh_league_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr(xg_data_fetcher, "_fetch_and_cache_league_stats_now", fake_fetch_and_cache_now)
     monkeypatch.setattr(xg_data_fetcher, "_fetch_and_cache_league_xg_stats", fake_fetch_and_cache)
 
     return payloads
