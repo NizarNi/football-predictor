@@ -36,6 +36,22 @@ _session = create_retry_session(
     status_forcelist=STATUS_FORCELIST,
 )
 
+
+def get_sport_key_for_league(league_code: str) -> Optional[str]:
+    """Resolve The Odds API sport key for a given league code."""
+
+    sport_key = LEAGUE_CODE_MAPPING.get(league_code)
+    if sport_key:
+        logger.debug(
+            "Resolved sport key for league_code=%s -> %s",
+            league_code,
+            sport_key,
+        )
+        return sport_key
+
+    logger.warning("Odds mapping not found for league_code=%s", league_code)
+    return None
+
 def sanitize_error_message(message):
     """
     Remove API keys from error messages to prevent security leaks.
@@ -260,9 +276,8 @@ def get_upcoming_matches_with_odds(league_codes=None, next_n_days=7):
     all_matches = []
     
     for league_code in league_codes:
-        sport_key = LEAGUE_CODE_MAPPING.get(league_code)
+        sport_key = get_sport_key_for_league(league_code)
         if not sport_key:
-            logger.warning("⚠️  League code %s not mapped to Odds API sport key", league_code)
             continue
 
         try:
