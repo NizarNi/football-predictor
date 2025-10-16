@@ -1,7 +1,9 @@
 from flask import Flask, render_template, request, url_for, current_app, g
 import os
-import json
 from datetime import datetime, timezone
+import base64
+import binascii
+import json
 import sys
 import time
 import uuid
@@ -75,6 +77,64 @@ def _norm_team_key(name: Optional[str]) -> Optional[str]:
     from .utils import normalize_team_name
 
     return normalize_team_name(name).strip().lower()
+
+
+def _parse_header_elo_hint(raw_header: Optional[str]) -> Optional[dict[str, Any]]:
+    if not raw_header:
+        return None
+    candidate = raw_header.strip()
+    if not candidate:
+        return None
+
+    decoded = candidate
+    try:
+        decoded_bytes = base64.b64decode(candidate, validate=True)
+        decoded = decoded_bytes.decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        decoded = candidate
+
+    try:
+        parsed = json.loads(decoded)
+    except json.JSONDecodeError:
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _merge_elo_hints(base: Optional[dict[str, Any]], override: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not base:
+        return override
+    if not override:
+        return base
+
+    merged = {**base}
+    for key, value in override.items():
+        if key == "teams" and isinstance(value, dict):
+            base_teams = merged.get("teams")
+            if isinstance(base_teams, dict):
+                merged["teams"] = {**base_teams, **value}
+            else:
+                merged["teams"] = {**value}
+        else:
+            merged[key] = value
+    return merged
+
+
+def _coerce_elo_value(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        try:
+            parsed = float(candidate)
+        except ValueError:
+            return None
+        return parsed
+    return None
 
 
 def _elo_cache_get(team_name: Optional[str]) -> Optional[float]:
@@ -173,6 +233,8 @@ def _assemble_match_context_core(
     # ---- T29c: try to reuse Elo from recent caches BEFORE calling ClubElo ----
     home_elo = None
     away_elo = None
+    hint_used = False
+    cache_log_emitted = False
 
     cached_pair = _match_elo_cache_get(event_id)
     if cached_pair is not None:
@@ -182,11 +244,29 @@ def _assemble_match_context_core(
         home_elo = _elo_cache_get(home_team)
     if away_elo is None and away_team:
         away_elo = _elo_cache_get(away_team)
+
+    def log_cache_result(he: Optional[float], ae: Optional[float], label: str) -> None:
+        nonlocal cache_log_emitted
+        segments: list[str] = []
+        if he is not None:
+            segments.append("home")
+        if ae is not None:
+            segments.append("away")
+        status = "hit" if segments else "miss"
+        extra = {
+            "match_id": event_id,
+            "segments": segments,
+            "label": label,
+            "hint_used": hint_used,
+        }
+        log_fn = logger.info if segments else logger.warning
+        log_fn("context_core: cache-only Elo %s", status, extra=extra)
+        cache_log_emitted = True
+
     # Prefer client-provided Elo hints when fresh enough
-    hint_used = False
     if elo_hint:
-        hint_home = elo_hint.get("home")
-        hint_away = elo_hint.get("away")
+        hint_home = _coerce_elo_value(elo_hint.get("home"))
+        hint_away = _coerce_elo_value(elo_hint.get("away"))
         raw_ts = elo_hint.get("ts")
         hint_timestamp: Optional[datetime] = None
         if isinstance(raw_ts, (int, float)):
@@ -230,6 +310,7 @@ def _assemble_match_context_core(
                         "match_id": event_id,
                         "hint_home": bool(hint_home is not None),
                         "hint_away": bool(hint_away is not None),
+                        "fingerprint": elo_hint.get("fingerprint"),
                     },
                 )
                 if home_team and home_elo is not None:
@@ -238,11 +319,25 @@ def _assemble_match_context_core(
                     _elo_cache_put(away_team, away_elo)
                 if event_id:
                     _match_elo_cache_put(event_id, home_elo, away_elo)
+            else:
+                teams_hint = elo_hint.get("teams")
+                if isinstance(teams_hint, dict):
+                    for hinted_name, hinted_value in teams_hint.items():
+                        hinted_rating = (
+                            _coerce_elo_value(hinted_value.get("rating"))
+                            if isinstance(hinted_value, dict)
+                            else _coerce_elo_value(hinted_value)
+                        )
+                        if hinted_rating is not None:
+                            _elo_cache_put(hinted_name, hinted_rating)
         else:
             logger.info(
                 "context_core: elo hint stale (age: %.1fh)",
                 (hint_age_seconds or 0) / 3600,
-                extra={"match_id": event_id},
+                extra={
+                    "match_id": event_id,
+                    "fingerprint": elo_hint.get("fingerprint"),
+                },
             )
     # ---- end T29c reuse ----
 
@@ -272,16 +367,7 @@ def _assemble_match_context_core(
                 "Context: Elo fetch issue: %s",
                 getattr(elo_err, "code", type(elo_err).__name__),
             )
-        hit_segments = []
-        if he is not None:
-            hit_segments.append("home")
-        if ae is not None:
-            hit_segments.append("away")
-        logger.info(
-            "context_core: cache-only Elo %s",
-            "hit" if hit_segments else "miss",
-            extra={"match_id": event_id, "segments": hit_segments},
-        )
+        log_cache_result(he, ae, "thread")
         return (he, ae)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -324,6 +410,9 @@ def _assemble_match_context_core(
                 missing_sources.append(key)
                 timeout_missing.append(key)
 
+    if not cache_log_emitted:
+        log_cache_result(home_elo, away_elo, "prefetch")
+
     timed_out = bool(timeout_missing)
     if timed_out:
         elapsed = time.monotonic() - start_time
@@ -333,6 +422,12 @@ def _assemble_match_context_core(
 
     if event_id:
         _match_elo_cache_put(event_id, home_elo, away_elo)
+
+    if home_elo is None and away_elo is None:
+        logger.warning(
+            "context_core: Elo unavailable after cache-only lookup",
+            extra={"match_id": event_id, "hint_used": hint_used},
+        )
 
     elo_probs = (
         calculate_elo_probabilities(home_elo, away_elo)
@@ -1011,20 +1106,22 @@ def get_match_context_core(event_id):
     start_time = time.monotonic()
     try:
         logger.info("Handling /match context_core request", extra={"match_id": event_id})
+        header_hint = _parse_header_elo_hint(request.headers.get("X-Elo-Hint"))
         if request.method == "POST":
             payload = request.get_json(silent=True) or {}
             raw_league = payload.get("league")
             league, _lw = validate_league(raw_league)
             home_team, _ = validate_team_optional(payload.get("home_team"))
             away_team, _ = validate_team_optional(payload.get("away_team"))
-            elo_hint = payload.get("elo_hint") if isinstance(payload.get("elo_hint"), dict) else None
+            body_hint = payload.get("elo_hint") if isinstance(payload.get("elo_hint"), dict) else None
+            elo_hint = _merge_elo_hints(header_hint, body_hint)
             effective_event_id = payload.get("event_id") or request.args.get("event_id") or event_id
         else:
             raw_league = request.args.get("league")
             league, _lw = validate_league(raw_league)
             home_team, _ = validate_team_optional(request.args.get("home_team"))
             away_team, _ = validate_team_optional(request.args.get("away_team"))
-            elo_hint = None
+            elo_hint = header_hint
             effective_event_id = request.args.get("event_id") or event_id
 
         if not league:
