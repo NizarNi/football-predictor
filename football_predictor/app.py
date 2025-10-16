@@ -152,14 +152,22 @@ def upcoming():
                     match["home_logo_url"] = home_logo_url
                     match["away_logo_url"] = away_logo_url
 
-                    # Add Elo predictions
-                    home_team = match.get("home_team")
-                    away_team = match.get("away_team")
-                    if home_team and away_team:
-                        home_elo = get_team_elo(home_team)
-                        away_elo = get_team_elo(away_team)
-                        if home_elo and away_elo:
-                            match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
+                    # Add Elo predictions (non-blocking)
+                    home_team_name = match.get("home_team")
+                    away_team_name = match.get("away_team")
+                    if home_team_name and away_team_name:
+                        try:
+                            home_elo = get_team_elo(home_team_name)
+                            away_elo = get_team_elo(away_team_name)
+                            if home_elo and away_elo:
+                                match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
+                        except Exception as elo_err:
+                            logger.warning(
+                                "Elo unavailable in /upcoming for %s vs %s: %s",
+                                home_team_name,
+                                away_team_name,
+                                getattr(elo_err, "code", type(elo_err).__name__),
+                            )
 
                     # Add predictions in the expected format
                     match["predictions"] = {
