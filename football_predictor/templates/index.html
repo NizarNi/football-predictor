@@ -1257,13 +1257,55 @@
         
         let currentTipIndex = 0;
         let tipRotationInterval = null;
+        let currentProgressValue = 0;
+
+        function getProgress() {
+            return currentProgressValue;
+        }
+
+        function setProgress(value) {
+            currentProgressValue = Math.max(0, Math.min(1, value));
+            const matchContext = document.getElementById('match-context');
+            if (!matchContext) return;
+            const fill = matchContext.querySelector('.progress-bar-fill');
+            if (fill) {
+                const percentage = Math.round(currentProgressValue * 100);
+                fill.style.width = `${percentage}%`;
+                fill.textContent = `${percentage}%`;
+            }
+        }
+
+        // ---- T29a: tiny progress trickle helper ----
+        function startTrickle(getter, setter, {
+            ceiling = 0.7,
+            step = 0.01,
+            minInterval = 350,
+            maxInterval = 900,
+        } = {}) {
+            let stopped = false;
+            function tick() {
+                if (stopped) return;
+                const nextValue = Math.min(getter() + step, ceiling);
+                setter(nextValue);
+                const jitter = minInterval + Math.random() * (maxInterval - minInterval);
+                setTimeout(tick, jitter);
+            }
+            setTimeout(tick, 250);
+            return {
+                stop() {
+                    stopped = true;
+                }
+            };
+        }
+        // ---- end T29a helper ----
         
         function updateProgressStatus(message, icon = 'database', step = 1, totalSteps = 5) {
             const matchContext = document.getElementById('match-context');
-            const percentage = Math.round((step / totalSteps) * 100);
-            
+            currentProgressValue = step / totalSteps;
+            const percentage = Math.round(currentProgressValue * 100);
+
             // Select appropriate icon
-            const iconClass = icon === 'database' ? 'fa-database' : 
+            const iconClass = icon === 'database' ? 'fa-database' :
                             icon === 'chart-line' ? 'fa-chart-line' :
                             icon === 'bullseye' ? 'fa-bullseye' :
                             icon === 'check-circle' ? 'fa-check-circle' :
@@ -1287,7 +1329,9 @@
                     </div>
                 </div>
             `;
-            
+
+            setProgress(currentProgressValue);
+
             // Start tip rotation if not already running
             if (!tipRotationInterval) {
                 tipRotationInterval = setInterval(() => {
@@ -1321,9 +1365,10 @@
             
             // Clear xG data from previous match to prevent stale data
             currentXgData = null;
-            
+
             // Show initial progress
             updateProgressStatus('Initiating data fetch...', 'database', 1, 5);
+            let trickleController = null;
             
             // Use league_code from match data (added in odds_api_client.py)
             const leagueCode = match.league_code || match.league;
@@ -1356,6 +1401,16 @@
             
             // Update progress: Fetching from Understat
             setTimeout(() => updateProgressStatus('Fetching standings from Understat...', 'database', 2, 5), 100);
+
+            const startContextProgress = () => {
+                if (trickleController || getProgress() >= 0.8) {
+                    return;
+                }
+                updateProgressStatus('Fetching match context insights...', 'database', 3, 5);
+                setProgress(0.6);
+                trickleController = startTrickle(getProgress, setProgress, { ceiling: 0.7 });
+            };
+            setTimeout(startContextProgress, 180);
             
             // Add timeout to prevent endless loading (increased to 40s for Understat)
             const timeoutPromise = new Promise((_, reject) => 
@@ -1363,10 +1418,10 @@
             );
             
             // Start context fetch
-            const contextFetch = fetch(`/match/${match.id}/context?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
+            const contextFetch = fetch(`/match/${match.id}/context?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}&event_id=${encodeURIComponent(match.id)}`)
                 .then(r => r.json())
                 .then(data => {
-                    updateProgressStatus('Calculating xG metrics from FBref...', 'chart-line', 3, 5);
+                    updateProgressStatus('Calculating xG metrics from FBref...', 'chart-line', 4, 5);
                     return data;
                 });
             
@@ -1385,7 +1440,8 @@
             ])
             .then(([contextData, xgData]) => {
                 updateProgressStatus('Finalizing data...', 'check-circle', 5, 5);
-                
+                setProgress(1);
+
                 if (contextData.error) {
                     clearTipRotation();
                     matchContext.innerHTML = `<p class="text-muted">${contextData.narrative || 'Context unavailable'}</p>`;
@@ -1408,9 +1464,14 @@
             })
             .catch(error => {
                 console.error('Error loading context:', error);
+                if (trickleController) {
+                    trickleController.stop();
+                    trickleController = null;
+                }
+                setProgress(1);
                 clearTipRotation();
-                const errorMsg = error.message === 'Request timeout' 
-                    ? 'Match context loading timed out after 40 seconds. Please try again.' 
+                const errorMsg = error.message === 'Request timeout'
+                    ? 'Match context loading timed out after 40 seconds. Please try again.'
                     : 'Unable to load match context';
                 matchContext.innerHTML = `
                     <div class="alert alert-warning">
@@ -1420,6 +1481,13 @@
                         </button>
                     </div>
                 `;
+            })
+            .finally(() => {
+                if (trickleController) {
+                    trickleController.stop();
+                    trickleController = null;
+                }
+                setProgress(1);
             });
         }
         
