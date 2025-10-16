@@ -26,7 +26,7 @@ from .constants import (
     LEAGUE_MAPPING,
     MATCH_LOGS_CACHE_TTL,
 )
-from .name_resolver import resolve_team_name
+from .name_resolver import get_all_aliases_for, resolve_team_name
 
 # ----------------------------------------------------------------------
 # Paths, TTLs, logger
@@ -41,6 +41,10 @@ LEGACY_CACHE_DIR = os.path.abspath(
 SOFT_TTL_SECONDS = 6 * 3600
 HARD_TTL_SECONDS = 24 * 3600
 INMEM_TTL_SECONDS = 60
+
+DOMESTIC_MAPPING_FALLBACK_MESSAGE = (
+    "FBref mapping refresh in progress for this club. Please try again shortly while we sync the aliases."
+)
 
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -179,22 +183,63 @@ def _load_team_match_logs_from_disk(
         if age_seconds > MATCH_LOGS_CACHE_TTL:
             return None
 
-        with open(cache_path, "r") as cache_file:
+        with open(cache_path, "r", encoding="utf-8") as cache_file:
             return json.load(cache_file)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "xg_data_fetcher: invalid JSON in match logs cache for %s (%s %s): %s",
+            team_name,
+            league_code,
+            season,
+            exc,
+        )
+        try:
+            os.remove(cache_path)
+        except OSError:
+            logger.warning(
+                "xg_data_fetcher: unable to delete corrupt cache file %s", cache_path
+            )
+        return None
     except Exception:
         logger.exception(
             "xg_data_fetcher: failed to load team match logs cache for %s (%s %s)",
-            team_name, league_code, season,
+            team_name,
+            league_code,
+            season,
         )
         return None
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert values that are not JSON serializable into safe representations."""
+
+    if isinstance(value, (datetime, pd.Timestamp)):
+        try:
+            if hasattr(pd, "isna") and pd.isna(value):  # type: ignore[attr-defined]
+                return None
+        except Exception:
+            if value is None:
+                return None
+        return value.isoformat()
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    if isinstance(value, dict):
+        return {key: _json_safe(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 def _save_team_match_logs_to_disk(
     league_code: str, season: int, team_name: str, payload: Any
 ) -> None:
     cache_path = _team_match_logs_cache_path(league_code, season, team_name)
     try:
-        with open(cache_path, "w") as cache_file:
-            json.dump(payload, cache_file)
+        json_payload = _json_safe(payload)
+        with open(cache_path, "w", encoding="utf-8") as cache_file:
+            json.dump(json_payload, cache_file)
     except Exception:
         logger.exception(
             "xg_data_fetcher: failed to persist team match logs cache for %s (%s %s)",
@@ -908,6 +953,10 @@ def get_team_xg_stats(team_name, league_code, season=None):
     if team_name in league_stats:
         return league_stats[team_name]
 
+    for alias in get_all_aliases_for(canonical_name):
+        if alias in league_stats:
+            return league_stats[alias]
+
     team_name_lower = team_name.lower()
     for fbref_team, stats in league_stats.items():
         if (
@@ -966,7 +1015,7 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
                 'available': False,
                 'error': f'xG data not available for {league_name} (FBref only supports domestic leagues: Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
             }
-        return {'available': False, 'error': 'xG data not available for one or both teams'}
+        return {'available': False, 'error': DOMESTIC_MAPPING_FALLBACK_MESSAGE}
 
     # Fetch rolling averages, form, and recent matches (in parallel)
     home_fbref_name = canonical_home

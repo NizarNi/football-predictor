@@ -6,7 +6,7 @@ import os
 import re
 import unicodedata
 from functools import lru_cache
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 from .config import setup_logger
 
@@ -64,6 +64,19 @@ def load_aliases() -> Dict[str, Dict[str, list[str]]]:
         ", ".join(ordered_providers),
     )
     return data
+
+
+def get_all_aliases_for(canonical: str) -> list[str]:
+    """Return every known alias for a canonical club name."""
+
+    aliases = load_aliases()
+    buckets = aliases.get(canonical, {})
+    combined: List[str] = []
+    for key in ("_", "fbref"):
+        for alias in buckets.get(key, []):
+            if alias not in combined:
+                combined.append(alias)
+    return combined
 
 
 @lru_cache(maxsize=1)
@@ -155,6 +168,7 @@ def resolve_team_name(raw: str, provider: str | None = None) -> str:
 
 __all__ = [
     "canonicalize_team",
+    "get_all_aliases_for",
     "load_aliases",
     "resolve_team_name",
     "token_set_ratio",
