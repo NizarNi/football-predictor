@@ -53,24 +53,28 @@ def elo_is_unhealthy() -> bool:
     return _ELO_UNHEALTHY_UNTIL is not None and monotonic() < _ELO_UNHEALTHY_UNTIL
 
 
-def fetch_team_elo_ratings():
-    """
-    Fetch the latest team Elo ratings from ClubElo.com API.
-    Returns a dictionary mapping team names to their current Elo ratings.
-    
-    Returns:
-        dict: {team_name: elo_rating} or None if fetch fails
-    """
-    # Check cache first
-    if _elo_cache["data"] and _elo_cache["timestamp"]:
-        cache_age = datetime.now() - _elo_cache["timestamp"]
+def load_latest_elo_snapshot(allow_network: bool = True):
+    """Load the most recent ClubElo snapshot, optionally skipping network access."""
+
+    cached_snapshot = _elo_cache["data"]
+    cached_timestamp = _elo_cache["timestamp"]
+
+    if cached_snapshot and cached_timestamp:
+        cache_age = datetime.now() - cached_timestamp
         if cache_age < timedelta(hours=ELO_CACHE_DURATION_HOURS):
             logger.info(
                 "✅ Using cached Elo ratings (age: %sh %sm)",
                 cache_age.seconds // 3600,
                 (cache_age.seconds % 3600) // 60,
             )
-            return _elo_cache["data"]
+            return cached_snapshot
+
+        if not allow_network:
+            logger.debug("Elo cache-only mode active; returning stale snapshot")
+            return cached_snapshot
+
+    if not allow_network:
+        return cached_snapshot
 
     logger.info("🔍 Fetching latest Elo ratings from ClubElo.com...")
 
@@ -88,9 +92,9 @@ def fetch_team_elo_ratings():
         logger.warning("[Resilience] API timeout or network issue: %s", exc)
         logger.error("❌ ClubElo request timed out after %.1f seconds", timeout)
         _mark_elo_unhealthy()
-        if _elo_cache["data"]:
+        if cached_snapshot:
             logger.warning("⚠️ Using expired cache due to fetch error")
-            return _elo_cache["data"]
+            return cached_snapshot
         raise APIError("EloAPI", "TIMEOUT", "The Elo API did not respond in time.") from exc
     except requests.ConnectionError as exc:
         adaptive_timeout.record_failure()
@@ -98,9 +102,9 @@ def fetch_team_elo_ratings():
         logger.warning("[Resilience] API timeout or network issue: %s", exc)
         logger.error("❌ Error fetching Elo ratings: %s", error_msg)
         _mark_elo_unhealthy()
-        if _elo_cache["data"]:
+        if cached_snapshot:
             logger.warning("⚠️ Using expired cache due to fetch error")
-            return _elo_cache["data"]
+            return cached_snapshot
         raise APIError("EloAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
     except requests.RequestException as exc:
         adaptive_timeout.record_failure()
@@ -108,9 +112,9 @@ def fetch_team_elo_ratings():
         logger.warning("[Resilience] API request failure detected: %s", exc)
         logger.error("❌ Error fetching Elo ratings: %s", error_msg)
         _mark_elo_unhealthy()
-        if _elo_cache["data"]:
+        if cached_snapshot:
             logger.warning("⚠️ Using expired cache due to fetch error")
-            return _elo_cache["data"]
+            return cached_snapshot
         raise APIError("EloAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
 
     team_elo_ratings: Dict[str, float] = {}
@@ -133,9 +137,9 @@ def fetch_team_elo_ratings():
     except ValueError as exc:
         error_msg = str(exc)
         logger.error("❌ Failed to parse ClubElo response: %s", error_msg)
-        if _elo_cache["data"]:
+        if cached_snapshot:
             logger.warning("⚠️ Using expired cache due to parse error")
-            return _elo_cache["data"]
+            return cached_snapshot
         raise APIError("EloAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg) from exc
 
     if team_elo_ratings:
@@ -149,7 +153,13 @@ def fetch_team_elo_ratings():
     return None
 
 
-def get_team_elo(team_name: str) -> Optional[float]:
+def fetch_team_elo_ratings(allow_network: bool = True):
+    """Backward-compatible wrapper around :func:`load_latest_elo_snapshot`."""
+
+    return load_latest_elo_snapshot(allow_network=allow_network)
+
+
+def get_team_elo(team_name: str, allow_network: bool = True) -> Optional[float]:
     """
     Get the current Elo rating for a specific team.
     Uses alias mapping to handle variations in team names.
@@ -160,12 +170,12 @@ def get_team_elo(team_name: str) -> Optional[float]:
     Returns:
         float: Elo rating or None if not found
     """
-    if elo_is_unhealthy():
+    if allow_network and elo_is_unhealthy():
         logger.debug("Elo unhealthy window active; skipping fetch for %s", team_name)
         return None
 
     try:
-        elo_ratings = fetch_team_elo_ratings()
+        elo_ratings = load_latest_elo_snapshot(allow_network=allow_network)
     except APIError as exc:
         if exc.code in ("TIMEOUT", "NETWORK_ERROR", "429", "HTTP_ERROR"):
             _mark_elo_unhealthy()
