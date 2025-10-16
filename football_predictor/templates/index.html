@@ -1310,22 +1310,42 @@
             schedule();
         }
 
-        function fetchJsonWithTimeout(url, timeoutMs = 40000, label = 'request') {
+        function fetchJsonWithTimeout(url, optionsOrTimeout = {}, timeoutMs = 40000, label = 'request') {
+            let options = {};
+            let actualTimeout = timeoutMs;
+            let actualLabel = label;
+
+            if (typeof optionsOrTimeout === 'number') {
+                actualTimeout = optionsOrTimeout;
+                actualLabel = timeoutMs ?? 'request';
+            } else {
+                options = optionsOrTimeout || {};
+            }
+
+            if (typeof actualTimeout !== 'number' || Number.isNaN(actualTimeout)) {
+                actualTimeout = 40000;
+            }
+
+            if (typeof actualLabel !== 'string' || !actualLabel) {
+                actualLabel = 'request';
+            }
+
             const controller = new AbortController();
             const { signal } = controller;
+            const fetchOptions = { ...options, signal };
 
             return new Promise((resolve, reject) => {
                 const timer = setTimeout(() => {
                     controller.abort();
-                    const timeoutError = new Error(`${label} timeout`);
+                    const timeoutError = new Error(`${actualLabel} timeout`);
                     timeoutError.name = 'TimeoutError';
                     reject(timeoutError);
-                }, timeoutMs);
+                }, actualTimeout);
 
-                fetch(url, { signal })
+                fetch(url, fetchOptions)
                     .then(response => {
                         if (!response.ok) {
-                            throw new Error(`${label} failed (${response.status})`);
+                            throw new Error(`${actualLabel} failed (${response.status})`);
                         }
                         return response.json();
                     })
@@ -1336,7 +1356,7 @@
                     .catch(error => {
                         clearTimeout(timer);
                         if (error.name === 'AbortError') {
-                            const timeoutError = new Error(`${label} timeout`);
+                            const timeoutError = new Error(`${actualLabel} timeout`);
                             timeoutError.name = 'TimeoutError';
                             reject(timeoutError);
                         } else {
@@ -1458,8 +1478,33 @@
             setTimeout(() => updateProgressStatus('Fetching standings from Understat...', 'database'), 100);
             setTimeout(() => updateProgressStatus('Fetching match context insights...', 'database'), 180);
 
-            const coreUrl = `/match/${match.id}/context_core?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}&event_id=${encodeURIComponent(match.id)}`;
-            const xgUrl = `/match/${match.id}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`;
+            const matchIdentifier = match.id ?? match.event_id ?? match.eventId ?? '';
+            const coreUrl = `/match/${matchIdentifier}/context_core`;
+            const xgUrl = `/match/${matchIdentifier}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`;
+
+            const corePayload = {
+                league: finalLeagueCode,
+                home_team: match.home_team || null,
+                away_team: match.away_team || null,
+                event_id: matchIdentifier || null,
+            };
+
+            const hasEloHint = (match.elo_home !== undefined && match.elo_home !== null) ||
+                               (match.elo_away !== undefined && match.elo_away !== null);
+
+            if (hasEloHint) {
+                corePayload.elo_hint = {
+                    home: match.elo_home ?? null,
+                    away: match.elo_away ?? null,
+                    ts: match.elo_ts ?? null,
+                };
+            }
+
+            const coreRequestOptions = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(corePayload)
+            };
 
             const finalize = () => {
                 stopMatchContextTrickle();
@@ -1476,7 +1521,7 @@
 
             try {
                 const coreStart = performance.now();
-                const coreData = await fetchJsonWithTimeout(coreUrl, 40000, 'context_core');
+                const coreData = await fetchJsonWithTimeout(coreUrl, coreRequestOptions, 40000, 'context_core');
                 console.debug('[context] context_core response in', (performance.now() - coreStart).toFixed(0), 'ms');
 
                 if (requestToken !== contextRequestToken) {
@@ -1518,7 +1563,7 @@
 
                 try {
                     const xgStart = performance.now();
-                    const xgData = await fetchJsonWithTimeout(xgUrl, 40000, 'context_xg');
+                    const xgData = await fetchJsonWithTimeout(xgUrl, {}, 40000, 'context_xg');
                     console.debug('[context] context_xg response in', (performance.now() - xgStart).toFixed(0), 'ms');
 
                     if (requestToken !== contextRequestToken) {
@@ -2445,9 +2490,12 @@
                     
                     const homeLogo = getLogoUrlOrFallback(match.home_logo_url);
                     const awayLogo = getLogoUrlOrFallback(match.away_logo_url);
-                    
+                    const eloHomeAttr = match.elo_home ?? '';
+                    const eloAwayAttr = match.elo_away ?? '';
+                    const eloTsAttr = match.elo_ts ?? '';
+
                     html += `
-                        <div class="card match-card mb-2${popularClass}${arbitrageClass}" data-match-index="${originalIndex}">
+                        <div class="card match-card mb-2${popularClass}${arbitrageClass}" data-match-index="${originalIndex}" data-elo-home="${eloHomeAttr}" data-elo-away="${eloAwayAttr}" data-elo-ts="${eloTsAttr}">
                             <div class="card-body p-3">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div class="flex-grow-1">
