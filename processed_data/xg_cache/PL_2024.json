@@ -1,0 +1,62 @@
+{
+  "Arsenal": {
+    "xg_for": 65.0,
+    "xg_against": 40.0,
+    "ps_xg_against": 38.0,
+    "matches_played": 38,
+    "goals_for": 75,
+    "goals_against": 36,
+    "xg_for_per_game": 1.71,
+    "xg_against_per_game": 1.05,
+    "ps_xg_against_per_game": 1.0,
+    "goals_for_per_game": 1.97,
+    "goals_against_per_game": 0.95,
+    "scoring_clinicality": 0.26,
+    "ps_xg_performance": -0.11
+  },
+  "Chelsea": {
+    "xg_for": 60.0,
+    "xg_against": 45.0,
+    "ps_xg_against": 43.0,
+    "matches_played": 38,
+    "goals_for": 68,
+    "goals_against": 44,
+    "xg_for_per_game": 1.58,
+    "xg_against_per_game": 1.18,
+    "ps_xg_against_per_game": 1.13,
+    "goals_for_per_game": 1.79,
+    "goals_against_per_game": 1.16,
+    "scoring_clinicality": 0.21,
+    "ps_xg_performance": -0.05
+  },
+  "Wolverhampton Wanderers": {
+    "xg_for": 50.0,
+    "xg_against": 55.0,
+    "ps_xg_against": 56.0,
+    "matches_played": 38,
+    "goals_for": 48,
+    "goals_against": 58,
+    "xg_for_per_game": 1.32,
+    "xg_against_per_game": 1.45,
+    "ps_xg_against_per_game": 1.47,
+    "goals_for_per_game": 1.26,
+    "goals_against_per_game": 1.53,
+    "scoring_clinicality": -0.05,
+    "ps_xg_performance": -0.05
+  },
+  "Nottingham Forest": {
+    "xg_for": 44.0,
+    "xg_against": 62.0,
+    "ps_xg_against": 60.0,
+    "matches_played": 38,
+    "goals_for": 42,
+    "goals_against": 63,
+    "xg_for_per_game": 1.16,
+    "xg_against_per_game": 1.63,
+    "ps_xg_against_per_game": 1.58,
+    "goals_for_per_game": 1.11,
+    "goals_against_per_game": 1.66,
+    "scoring_clinicality": -0.05,
+    "ps_xg_performance": 0.08
+  }
+}

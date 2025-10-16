@@ -1,0 +1,17 @@
+{
+  "Paris Saint-Germain": {
+    "xg_for": 75.0,
+    "xg_against": 30.0,
+    "ps_xg_against": 28.0,
+    "matches_played": 34,
+    "goals_for": 79,
+    "goals_against": 27,
+    "xg_for_per_game": 2.21,
+    "xg_against_per_game": 0.88,
+    "ps_xg_against_per_game": 0.82,
+    "goals_for_per_game": 2.32,
+    "goals_against_per_game": 0.79,
+    "scoring_clinicality": 0.26,
+    "ps_xg_performance": 0.06
+  }
+}

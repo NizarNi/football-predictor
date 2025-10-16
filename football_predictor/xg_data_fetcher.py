@@ -5,7 +5,8 @@ Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
+from dataclasses import dataclass
 
 import json
 import os
@@ -51,7 +52,7 @@ SUPPORTED_DOMESTIC = ["PL", "PD", "SA", "BL1", "FL1"]
 
 def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) -> Optional[str]:
     for code in SUPPORTED_DOMESTIC:
-        table = fetch_league_xg_stats(code)
+        table = fetch_league_xg_stats(code, cache_only=True)
         if not table:
             continue
 
@@ -77,6 +78,59 @@ logger.info("xg_data_fetcher: using cache dir at %s", CACHE_DIR)
 if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
     logger.warning("xg_data_fetcher: ignoring legacy cache dir at %s", LEGACY_CACHE_DIR)
 
+# Background worker pool (league + logs refresh)
+_executor = ThreadPoolExecutor(max_workers=4)
+
+# ----------------------------------------------------------------------
+# Debounce registry (T35e): bounded backoff per (league, team) and per league
+# ----------------------------------------------------------------------
+@dataclass
+class DebounceState:
+    last_try_s: float = 0.0
+    backoff_s: float = 0.0   # increases on failure, resets on success
+    attempts: int = 0
+
+
+_DEBOUNCE: Dict[Tuple[str, Optional[str]], DebounceState] = {}
+
+
+def _should_debounce(key: Tuple[str, Optional[str]], floor: float, ceil: float) -> bool:
+    st = _DEBOUNCE.get(key)
+    if not st:
+        return False
+    now = time.monotonic()
+    wait = max(floor, min(ceil, st.backoff_s or floor))
+    return (now - st.last_try_s) < wait
+
+
+def _mark_attempt(key: Tuple[str, Optional[str]], ok: bool, floor: float, ceil: float) -> None:
+    st = _DEBOUNCE.get(key) or DebounceState()
+    st.last_try_s = time.monotonic()
+    if ok:
+        st.backoff_s = 0.0
+        st.attempts = 0
+    else:
+        # bounded exponential backoff
+        base = st.backoff_s * 2 if st.backoff_s else floor
+        st.backoff_s = min(ceil, base)
+        st.attempts += 1
+    _DEBOUNCE[key] = st
+
+# ----------------------------------------------------------------------
+# Debounce state (T35d): per (league, team) cooldown + single stacktrace window
+# ----------------------------------------------------------------------
+_refresh_attempt_lock = threading.Lock()
+_last_refresh_attempt: Dict[Tuple[str, str], float] = {}
+REFRESH_COOLDOWN_S = 120
+
+
+def _clear_refresh_attempt(league_code: str, canonical_team: str) -> None:
+    with _refresh_attempt_lock:
+        _last_refresh_attempt.pop((league_code, canonical_team), None)
+
+_stacktrace_guard_lock = threading.Lock()
+_last_stacktrace_log: Dict[Tuple[str, str], float] = {}
+
 # Background refresh guard
 _background_refreshes = set()
 
@@ -90,6 +144,10 @@ adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT, max_timeo
 _request_memo_id: ContextVar[Optional[str]] = ContextVar("xg_request_memo_id", default=None)
 _request_memo_store: Dict[str, Dict[Tuple[str, str, int], Any]] = {}
 _request_memo_lock = threading.Lock()
+
+_league_alias_summary: ContextVar[Optional[List[Tuple[str, str]]]] = ContextVar(
+    "xg_league_alias_summary", default=None
+)
 
 def set_request_memo_id(request_id: Optional[str]) -> None:
     """Register the active request memo identifier for match log reuse."""
@@ -276,7 +334,15 @@ def _save_team_match_logs_to_disk(
 def _resolve_fbref_team_name(raw_name: str, context: str) -> str:
     canonical = resolve_team_name(raw_name, provider="fbref")
     if raw_name and canonical != raw_name:
-        logger.info("🔁 %s: resolved '%s' → '%s' for FBref", context, raw_name, canonical)
+        if context == "league_xg_fetch":
+            logger.debug(
+                "league_xg_fetch: resolved '%s' → '%s' for FBref", raw_name, canonical
+            )
+            bucket = _league_alias_summary.get()
+            if bucket is not None:
+                bucket.append((raw_name, canonical))
+        else:
+            logger.info("🔁 %s: resolved '%s' → '%s' for FBref", context, raw_name, canonical)
     return canonical
 
 def _configure_fbref_client(fbref_client):
@@ -299,43 +365,167 @@ def _configure_fbref_client(fbref_client):
 
 def _safe_soccerdata_call(func, context: str, *args, **kwargs):
     """Execute a soccerdata call and wrap network errors with adaptive timeout updates."""
-    timeout = adaptive_timeout.get_timeout()
-    bound_client = getattr(func, "__self__", None)
-    if bound_client is not None and hasattr(bound_client, "timeout"):
-        try:
-            setattr(bound_client, "timeout", timeout)
-        except Exception:
-            pass
+    for attempt in range(3):
+        timeout = adaptive_timeout.get_timeout()
+        bound_client = getattr(func, "__self__", None)
+        if bound_client is not None and hasattr(bound_client, "timeout"):
+            try:
+                setattr(bound_client, "timeout", timeout)
+            except Exception:
+                pass
 
-    try:
-        result = func(*args, **kwargs)
-        adaptive_timeout.record_success()
-        return result
-    except requests.exceptions.Timeout as exc:
-        adaptive_timeout.record_failure()
-        logger.warning("[Resilience] API timeout or network issue: %s", exc)
-        logger.error("❌ %s timed out", context)
-        raise APIError("FBRefAPI", "TIMEOUT", "The FBRef API did not respond in time.") from exc
-    except requests.exceptions.ConnectionError as exc:
-        adaptive_timeout.record_failure()
-        error_msg = str(exc)
-        logger.warning("[Resilience] API timeout or network issue: %s", exc)
-        logger.error("❌ %s: %s", context, error_msg)
-        raise APIError("FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
-    except requests.exceptions.RequestException as exc:
-        adaptive_timeout.record_failure()
-        error_msg = str(exc)
-        logger.warning("[Resilience] API request failure detected: %s", exc)
-        logger.error("❌ %s: %s", context, error_msg)
-        raise APIError("FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
-    except ValueError as exc:
-        error_msg = str(exc)
-        logger.error("❌ %s parse error: %s", context, error_msg)
-        raise APIError("FBRefAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg) from exc
+        try:
+            result = func(*args, **kwargs)
+            adaptive_timeout.record_success()
+            return result
+        except requests.exceptions.Timeout as exc:
+            adaptive_timeout.record_failure()
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
+            logger.error("❌ %s timed out", context)
+            if attempt == 2:
+                raise APIError("FBRefAPI", "TIMEOUT", "The FBRef API did not respond in time.") from exc
+        except requests.exceptions.ConnectionError as exc:
+            adaptive_timeout.record_failure()
+            error_msg = str(exc)
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
+            logger.error("❌ %s: %s", context, error_msg)
+            if attempt == 2:
+                raise APIError(
+                    "FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg
+                ) from exc
+        except requests.exceptions.RequestException as exc:
+            adaptive_timeout.record_failure()
+            error_msg = str(exc)
+            logger.warning("[Resilience] API request failure detected: %s", exc)
+            logger.error("❌ %s: %s", context, error_msg)
+            if attempt == 2:
+                raise APIError(
+                    "FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg
+                ) from exc
+        except ValueError as exc:
+            error_msg = str(exc)
+            logger.error("❌ %s parse error: %s", context, error_msg)
+            raise APIError(
+                "FBRefAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg
+            ) from exc
+
+        if attempt < 2:
+            backoff = 0.8 * (2 ** attempt)
+            time.sleep(backoff)
 
 # ----------------------------------------------------------------------
 # League xG cache (league-wide) with stale-while-revalidate
 # ----------------------------------------------------------------------
+
+_LEAGUE_MEM_CACHE: Dict[Tuple[str, int], Tuple[float, Dict[str, Any]]] = {}
+_LEAGUE_MEM_CACHE_LOCK = threading.Lock()
+
+
+def _get_from_mem_cache(league_code: str, season: int) -> Tuple[Optional[Dict[str, Any]], Optional[float]]:
+    key = (league_code, season)
+    with _LEAGUE_MEM_CACHE_LOCK:
+        entry = _LEAGUE_MEM_CACHE.get(key)
+    if not entry:
+        return None, None
+    stored_at, data = entry
+    age = time.time() - stored_at
+    return data, age
+
+
+def _set_mem_cache(league_code: str, season: int, data: Dict[str, Any]) -> None:
+    key = (league_code, season)
+    with _LEAGUE_MEM_CACHE_LOCK:
+        _LEAGUE_MEM_CACHE[key] = (time.time(), data)
+    with _refresh_attempt_lock:
+        stale_keys = [k for k in _last_refresh_attempt if k[0] == league_code]
+        for entry in stale_keys:
+            _last_refresh_attempt.pop(entry, None)
+    with _stacktrace_guard_lock:
+        stale_logs = [k for k in _last_stacktrace_log if k[0] == league_code]
+        for entry in stale_logs:
+            _last_stacktrace_log.pop(entry, None)
+    # Also reset adaptive debounce window for this league
+    try:
+        deb_key = (league_code, None)
+        if deb_key in _DEBOUNCE:
+            _DEBOUNCE.pop(deb_key, None)
+    except Exception:
+        pass
+
+
+def _is_stale(age_seconds: Optional[float]) -> bool:
+    if age_seconds is None:
+        return False
+    return age_seconds >= SOFT_TTL_SECONDS
+
+
+def _is_hard_expired(age_seconds: Optional[float]) -> bool:
+    if age_seconds is None:
+        return False
+    return age_seconds >= HARD_TTL_SECONDS
+
+
+def _refresh_league_async(league_code: str, season: int) -> None:
+    # T35e: per-league backoff window (60s → 10m)
+    deb_key = (league_code, None)
+    if _should_debounce(deb_key, floor=60.0, ceil=600.0):
+        logger.info("⏳ league-refresh debounced for %s", league_code)
+        return
+
+    refresh_key = (league_code, season)
+    if refresh_key in _background_refreshes:
+        return
+
+    _background_refreshes.add(refresh_key)
+
+    def _task():
+        try:
+            _fetch_and_cache_league_stats_now(league_code, season)
+            _mark_attempt(deb_key, ok=True, floor=60.0, ceil=600.0)
+            logger.info("✅ league-refresh ok for %s", league_code)
+        except Exception as exc:  # best-effort
+            _mark_attempt(deb_key, ok=False, floor=60.0, ceil=600.0)
+            logger.warning(
+                "xg_data_fetcher: background refresh failed for %s (%s): %s",
+                league_code,
+                season,
+                exc,
+            )
+        finally:
+            _background_refreshes.discard(refresh_key)
+
+    _executor.submit(_task)
+
+
+def _refresh_logs_async(
+    league_code: str, canonical_team: str, season: Optional[int] = None
+) -> None:
+    # T35d fixed cooldown (120s) — keep as a first guard
+    now = time.monotonic()
+    key_cool = (league_code, canonical_team)
+    with _refresh_attempt_lock:
+        last = _last_refresh_attempt.get(key_cool, 0.0)
+        if now - last < REFRESH_COOLDOWN_S:
+            return
+        _last_refresh_attempt[key_cool] = now
+
+    # T35e adaptive backoff (90s → 15m)
+    deb_key = (league_code, canonical_team)
+    if _should_debounce(deb_key, floor=90.0, ceil=900.0):
+        logger.info("⏳ logs-refresh debounced for %s/%s", league_code, canonical_team)
+        return
+
+    def _logs_task():
+        try:
+            _ensure_team_logs_fresh(league_code, canonical_team, season)
+            _mark_attempt(deb_key, ok=True, floor=90.0, ceil=900.0)
+            logger.info("✅ logs-refresh ok for %s/%s", league_code, canonical_team)
+        except Exception as exc:
+            _mark_attempt(deb_key, ok=False, floor=90.0, ceil=900.0)
+            # _ensure_team_logs_fresh already swallows/logs details per T35d
+            logger.warning("⚠️ logs-refresh failed for %s/%s: %s", league_code, canonical_team, exc)
+
+    _executor.submit(_logs_task)
 
 def get_cache_key(league_code, season):
     """Generate cache key for xG data"""
@@ -532,27 +722,13 @@ def fetch_career_xg_stats(team_name, league_code):
 # League xG fetch (season aggregates)
 # ----------------------------------------------------------------------
 
-def _refresh_cache_in_background(league_code, season, cache_key):
-    refresh_key = (league_code, season)
-    if refresh_key in _background_refreshes:
-        return
 
-    _background_refreshes.add(refresh_key)
-
-    def _worker():
-        try:
-            _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
-        except Exception as exc:  # best-effort
-            logger.warning("xg_data_fetcher: background refresh failed for %s (%s): %s",
-                           league_code, season, exc)
-        finally:
-            _background_refreshes.discard(refresh_key)
-
-    threading.Thread(
-        target=_worker,
-        name=f"xg-refresh-{league_code}-{season}",
-        daemon=True,
-    ).start()
+def _fetch_and_cache_league_stats_now(league_code: str, season: int) -> Dict[str, Any]:
+    cache_key = get_cache_key(league_code, season)
+    data = _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
+    if data:
+        _set_mem_cache(league_code, season, data)
+    return data
 
 def _fetch_and_cache_league_xg_stats(league_code, season, cache_key):
     league_name = LEAGUE_MAPPING[league_code]
@@ -584,120 +760,173 @@ def _fetch_and_cache_league_xg_stats(league_code, season, cache_key):
 
     xg_data = {}
 
-    for idx, row in shooting_stats.iterrows():
-        raw_team_name = idx[2] if isinstance(idx, tuple) and len(idx) >= 3 else str(idx)
-        team_name = _resolve_fbref_team_name(raw_team_name, "league_xg_fetch")
+    alias_token = _league_alias_summary.set([])
+    try:
+        for idx, row in shooting_stats.iterrows():
+            raw_team_name = idx[2] if isinstance(idx, tuple) and len(idx) >= 3 else str(idx)
+            team_name = _resolve_fbref_team_name(raw_team_name, "league_xg_fetch")
 
-        try:
-            xg_for = float(row[('Expected', 'xG')])
-        except (KeyError, ValueError, TypeError):
-            xg_for = 0
+            try:
+                xg_for = float(row[('Expected', 'xG')])
+            except (KeyError, ValueError, TypeError):
+                xg_for = 0
 
-        try:
-            goals_for = int(row[('Standard', 'Gls')])
-        except (KeyError, ValueError, TypeError):
-            goals_for = 0
+            try:
+                goals_for = int(row[('Standard', 'Gls')])
+            except (KeyError, ValueError, TypeError):
+                goals_for = 0
 
-        matches_played = 0
-        try:
-            if idx in standard_stats.index:
-                std_row = standard_stats.loc[idx]
-                try:
-                    matches_played = int(std_row[('Playing Time', 'MP')])
-                except (KeyError, ValueError, TypeError):
+            matches_played = 0
+            try:
+                if idx in standard_stats.index:
+                    std_row = standard_stats.loc[idx]
                     try:
-                        matches_played = int(std_row[('Playing Time', '90s')])
-                    except Exception:
-                        matches_played = 0
-        except Exception:
-            pass
+                        matches_played = int(std_row[('Playing Time', 'MP')])
+                    except (KeyError, ValueError, TypeError):
+                        try:
+                            matches_played = int(std_row[('Playing Time', '90s')])
+                        except Exception:
+                            matches_played = 0
+            except Exception:
+                pass
 
-        goals_against = 0
-        ps_xg_against = 0
-        try:
-            if idx in keeper_adv_stats.index:
-                keeper_row = keeper_adv_stats.loc[idx]
-                try:
-                    goals_against = int(keeper_row[('Goals', 'GA')])
-                except (KeyError, ValueError, TypeError):
-                    pass
-                try:
-                    ps_xg_against = float(keeper_row[('Expected', 'PSxG')])
-                except (KeyError, ValueError, TypeError):
-                    pass
-        except Exception:
-            pass
+            goals_against = 0
+            ps_xg_against = 0
+            try:
+                if idx in keeper_adv_stats.index:
+                    keeper_row = keeper_adv_stats.loc[idx]
+                    try:
+                        goals_against = int(keeper_row[('Goals', 'GA')])
+                    except (KeyError, ValueError, TypeError):
+                        pass
+                    try:
+                        ps_xg_against = float(keeper_row[('Expected', 'PSxG')])
+                    except (KeyError, ValueError, TypeError):
+                        pass
+            except Exception:
+                pass
 
-        xg_data[team_name] = {
-            'xg_for': xg_for,
-            'xg_against': ps_xg_against,
-            'ps_xg_against': ps_xg_against,
-            'matches_played': int(matches_played) if matches_played > 0 else 1,
-            'goals_for': goals_for,
-            'goals_against': goals_against,
-        }
+            xg_data[team_name] = {
+                'xg_for': xg_for,
+                'xg_against': ps_xg_against,
+                'ps_xg_against': ps_xg_against,
+                'matches_played': int(matches_played) if matches_played > 0 else 1,
+                'goals_for': goals_for,
+                'goals_against': goals_against,
+            }
 
-        if xg_data[team_name]['matches_played'] > 0:
-            matches = xg_data[team_name]['matches_played']
-            xg_data[team_name]['xg_for_per_game'] = round(xg_data[team_name]['xg_for'] / matches, 2)
-            xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)
-            xg_data[team_name]['ps_xg_against_per_game'] = round(xg_data[team_name]['ps_xg_against'] / matches, 2)
-            xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
-            xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
+            if xg_data[team_name]['matches_played'] > 0:
+                matches = xg_data[team_name]['matches_played']
+                xg_data[team_name]['xg_for_per_game'] = round(xg_data[team_name]['xg_for'] / matches, 2)
+                xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)
+                xg_data[team_name]['ps_xg_against_per_game'] = round(xg_data[team_name]['ps_xg_against'] / matches, 2)
+                xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
+                xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
 
-            scoring_clinicality_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
-            xg_data[team_name]['scoring_clinicality'] = round(scoring_clinicality_total / matches, 2)
+                scoring_clinicality_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
+                xg_data[team_name]['scoring_clinicality'] = round(scoring_clinicality_total / matches, 2)
 
-            ps_xg_performance = xg_data[team_name]['ps_xg_against'] - xg_data[team_name]['goals_against']
-            xg_data[team_name]['ps_xg_performance'] = round(ps_xg_performance / matches, 2)
-        else:
-            xg_data[team_name]['xg_for_per_game'] = 0
-            xg_data[team_name]['xg_against_per_game'] = 0
-            xg_data[team_name]['ps_xg_against_per_game'] = 0
-            xg_data[team_name]['goals_for_per_game'] = 0
-            xg_data[team_name]['goals_against_per_game'] = 0
-            xg_data[team_name]['scoring_clinicality'] = 0
-            xg_data[team_name]['ps_xg_performance'] = 0
+                ps_xg_performance = xg_data[team_name]['ps_xg_against'] - xg_data[team_name]['goals_against']
+                xg_data[team_name]['ps_xg_performance'] = round(ps_xg_performance / matches, 2)
+            else:
+                xg_data[team_name]['xg_for_per_game'] = 0
+                xg_data[team_name]['xg_against_per_game'] = 0
+                xg_data[team_name]['ps_xg_against_per_game'] = 0
+                xg_data[team_name]['goals_for_per_game'] = 0
+                xg_data[team_name]['goals_against_per_game'] = 0
+                xg_data[team_name]['scoring_clinicality'] = 0
+                xg_data[team_name]['ps_xg_performance'] = 0
+    finally:
+        alias_changes = _league_alias_summary.get() or []
+        if alias_changes:
+            sample_old, sample_new = alias_changes[0]
+            logger.info(
+                "league_xg_fetch: applied %d alias normalizations (e.g. '%s' → '%s')",
+                len(alias_changes),
+                sample_old,
+                sample_new,
+            )
+        _league_alias_summary.reset(alias_token)
 
     save_to_cache(cache_key, xg_data)
     logger.info("✅ Fetched xG stats for %d teams in %s", len(xg_data), league_name)
     return xg_data
 
-def fetch_league_xg_stats(league_code, season=None):
-    """
-    Fetch xG statistics for all teams in a league
-    """
+def fetch_league_xg_stats(league_code, season=None, cache_only: bool = False):
+    """Fetch xG statistics for all teams in a league."""
+
     if season is None:
         season = get_xg_season()
+
+    mem_data, mem_age = _get_from_mem_cache(league_code, season)
+    if mem_data:
+        logger.info("✅ Loaded xG data for %s from in-memory cache", league_code)
+
+        if not cache_only and _is_hard_expired(mem_age):
+            try:
+                fresh_data = _fetch_and_cache_league_stats_now(league_code, season)
+                if fresh_data:
+                    return fresh_data
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh produced empty payload",
+                    mem_age,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh failure: %s",
+                    mem_age,
+                    exc,
+                )
+        if _is_stale(mem_age):
+            logger.info(
+                "returning cached xg (age: %.0fs), triggering background refresh",
+                mem_age,
+            )
+            _refresh_league_async(league_code, season)
+        return mem_data
+
+    if cache_only:
+        _refresh_league_async(league_code, season)
+        return None
 
     cache_key = get_cache_key(league_code, season)
     cached_payload = load_from_cache(cache_key)
     if cached_payload:
         cached_data, cache_age = cached_payload
         logger.info("✅ Loaded xG data for %s from cache", league_code)
+        _set_mem_cache(league_code, season, cached_data)
 
-        if cache_age <= SOFT_TTL_SECONDS:
-            logger.info("returning cached xg (age: %.0fs), triggering background refresh", cache_age)
-            if league_code in LEAGUE_MAPPING:
-                _refresh_cache_in_background(league_code, season, cache_key)
-            return cached_data
-
-        if cache_age <= HARD_TTL_SECONDS:
+        if _is_hard_expired(cache_age):
             try:
-                fresh_data = _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
+                fresh_data = _fetch_and_cache_league_stats_now(league_code, season)
                 if fresh_data:
                     return fresh_data
-                logger.warning("returning cached xg (age: %.0fs) after refresh produced empty payload", cache_age)
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh produced empty payload",
+                    cache_age,
+                )
             except Exception as exc:
-                logger.warning("returning cached xg (age: %.0fs) after refresh failure: %s", cache_age, exc)
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh failure: %s",
+                    cache_age,
+                    exc,
+                )
             return cached_data
+
+        if _is_stale(cache_age):
+            logger.info(
+                "returning cached xg (age: %.0fs), triggering background refresh",
+                cache_age,
+            )
+            _refresh_league_async(league_code, season)
+        return cached_data
 
     if league_code not in LEAGUE_MAPPING:
         logger.warning("⚠️  League %s not supported for xG stats", league_code)
         return {}
 
     try:
-        return _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
+        return _fetch_and_cache_league_stats_now(league_code, season)
     except APIError:
         raise
     except requests.exceptions.RequestException as exc:
@@ -960,11 +1189,43 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
             _memo_resolve_success([])
             return []
 
-def get_team_xg_stats(team_name, league_code, season=None):
+
+def _should_log_stacktrace_once(league_code: str, canonical_team: str) -> bool:
+    now = time.monotonic()
+    key = (league_code, canonical_team)
+    with _stacktrace_guard_lock:
+        last = _last_stacktrace_log.get(key, 0.0)
+        if now - last >= REFRESH_COOLDOWN_S:
+            _last_stacktrace_log[key] = now
+            return True
+        return False
+
+
+def _ensure_team_logs_fresh(league_code: str, canonical_team: str, season: Optional[int] = None) -> None:
+    try:
+        fetch_team_match_logs(canonical_team, league_code, season)
+        _clear_refresh_attempt(league_code, canonical_team)
+    except Exception as exc:
+        if _should_log_stacktrace_once(league_code, canonical_team):
+            logger.exception(
+                "Error fetching match logs for %s/%s", league_code, canonical_team
+            )
+        else:
+            logger.warning(
+                "Match logs retry scheduled (cooldown %ss) for %s/%s: %s",
+                REFRESH_COOLDOWN_S,
+                league_code,
+                canonical_team,
+                exc,
+            )
+
+def get_team_xg_stats(team_name, league_code, season=None, league_stats=None):
     """
     Get xG statistics for a specific team
     """
-    league_stats = fetch_league_xg_stats(league_code, season)
+    if league_stats is None:
+        league_stats = fetch_league_xg_stats(league_code, season)
+
     if not league_stats:
         return None
 
@@ -1021,79 +1282,33 @@ def extract_last_5_results(matches, limit=5):
     form = ''.join([m['result'] for m in matches[:limit] if m['result']])
     return form
 
-def get_match_xg_prediction(home_team, away_team, league_code, season=None):
-    """
-    Generate xG-based prediction for a match
-    """
-    canonical_home = _resolve_fbref_team_name(home_team, "match_xg_home")
-    canonical_away = _resolve_fbref_team_name(away_team, "match_xg_away")
 
-    effective_league = league_code
-    if league_code not in LEAGUE_MAPPING:
-        inferred = _infer_domestic_league_for_both(canonical_home, canonical_away)
-        if inferred:
-            logger.info(
-                "🌍 Cross-competition fallback: %s → %s for %s vs %s",
-                league_code, inferred, canonical_home, canonical_away
-            )
-            effective_league = inferred
-        else:
-            if league_code in ['CL', 'EL']:
-                league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
-                return {
-                    'available': False,
-                    'error': (
-                        f'xG data not available for {league_name} '
-                        '(FBref is domestic-only; supported domestic leagues: '
-                        'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
-                    )
-                }
-            return {
-                'available': False,
-                'error': 'xG data not available for this competition (FBref is domestic-only).'
-            }
-    else:
-        # honor passed league
-        effective_league = league_code
+def _get_cached_team_logs_in_memory(
+    league_code: str, season: int, canonical_team: str
+) -> Optional[Any]:
+    key = (league_code, season, canonical_team)
+    cached = _match_logs_cache_get(key)
+    if cached is not None:
+        return cached
 
-    home_stats = get_team_xg_stats(canonical_home, effective_league, season)
-    away_stats = get_team_xg_stats(canonical_away, effective_league, season)
+    for alias in get_all_aliases_for(canonical_team):
+        alias_key = (league_code, season, alias)
+        cached_alias = _match_logs_cache_get(alias_key)
+        if cached_alias is not None:
+            return cached_alias
+    return None
 
-    if not home_stats or not away_stats:
-        if league_code in ['CL', 'EL']:
-            league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
-            return {
-                'available': False,
-                'error': (
-                    f'xG data not available for {league_name} '
-                    '(FBref is domestic-only; supported domestic leagues: '
-                    'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
-                )
-            }
-        return {'available': False, 'error': DOMESTIC_MAPPING_FALLBACK_MESSAGE}
 
-    # Fetch rolling averages, form, and recent matches (in parallel)
-    home_fbref_name = canonical_home
-    away_fbref_name = canonical_away
-
-    home_matches = []
-    away_matches = []
-
-    logger.info("🔄 Fetching match logs in parallel for both teams...")
-    request_memo_id = get_current_request_memo_id()
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        f_home = executor.submit(fetch_team_match_logs, home_fbref_name, effective_league, season, request_memo_id)
-        f_away = executor.submit(fetch_team_match_logs, away_fbref_name, effective_league, season, request_memo_id)
-
-        try:
-            home_matches = f_home.result(timeout=30)
-        except Exception as e:
-            logger.warning("Could not fetch rolling data for %s: %s", home_team, e)
-
-        try:
-            away_matches = f_away.result(timeout=30)
-        except Exception as e:
-            logger.warning("Could not fetch rolling data for %s: %s", away_team, e)
+def _build_prediction_payload(
+    home_team: str,
+    away_team: str,
+    home_stats: Dict[str, Any],
+    away_stats: Dict[str, Any],
+    home_matches: Optional[Any],
+    away_matches: Optional[Any],
+):
+    home_matches = list(home_matches or [])
+    away_matches = list(away_matches or [])
 
     home_rolling = {'xg_for_rolling': None, 'xg_against_rolling': None, 'matches_count': 0}
     away_rolling = {'xg_for_rolling': None, 'xg_against_rolling': None, 'matches_count': 0}
@@ -1126,11 +1341,14 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
             'result': m['result']
         } for m in away_matches[:5]]
 
-    # Expected goals calculation
-    home_advantage_factor = 1.15  # 15% home advantage
+    home_advantage_factor = 1.15
 
-    use_home_rolling = home_rolling['matches_count'] >= 3 and home_rolling['xg_for_rolling'] is not None
-    use_away_rolling = away_rolling['matches_count'] >= 3 and away_rolling['xg_for_rolling'] is not None
+    use_home_rolling = (
+        home_rolling['matches_count'] >= 3 and home_rolling['xg_for_rolling'] is not None
+    )
+    use_away_rolling = (
+        away_rolling['matches_count'] >= 3 and away_rolling['xg_for_rolling'] is not None
+    )
 
     home_xgf = home_rolling['xg_for_rolling'] if use_home_rolling else home_stats['xg_for_per_game']
     home_xga = home_rolling['xg_against_rolling'] if use_home_rolling else home_stats['xg_against_per_game']
@@ -1191,6 +1409,108 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
             'confidence': confidence
         }
     }
+
+
+def _pick_effective_league(
+    requested_league: str, canonical_home: str, canonical_away: str
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    if requested_league in LEAGUE_MAPPING:
+        return requested_league, None
+
+    inferred = _infer_domestic_league_for_both(canonical_home, canonical_away)
+    if inferred:
+        logger.info(
+            "🌍 Cross-competition fallback: %s → %s for %s vs %s",
+            requested_league,
+            inferred,
+            canonical_home,
+            canonical_away,
+        )
+        return inferred, None
+
+    if requested_league in ['CL', 'EL']:
+        league_name = 'Champions League' if requested_league == 'CL' else 'Europa League'
+        return None, {
+            'available': False,
+            'error': (
+                f'xG data not available for {league_name} '
+                '(FBref is domestic-only; supported domestic leagues: '
+                'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
+            )
+        }
+
+    return None, {
+        'available': False,
+        'error': 'xG data not available for this competition (FBref is domestic-only).'
+    }
+
+def get_match_xg_prediction(home_team, away_team, league_code, season=None):
+    """
+    Generate xG-based prediction for a match
+    """
+    canonical_home = _resolve_fbref_team_name(home_team, "match_xg_home")
+    canonical_away = _resolve_fbref_team_name(away_team, "match_xg_away")
+
+    effective_league, error_payload = _pick_effective_league(
+        league_code, canonical_home, canonical_away
+    )
+    if not effective_league:
+        return error_payload
+
+    resolved_season = season or get_xg_season()
+    table = fetch_league_xg_stats(effective_league, season=season, cache_only=True)
+    if not table:
+        return {
+            'available': False,
+            'error': 'xG data not available right now (warming). Try again in a moment.'
+        }
+
+    home_stats = get_team_xg_stats(
+        canonical_home, effective_league, season, league_stats=table
+    )
+    away_stats = get_team_xg_stats(
+        canonical_away, effective_league, season, league_stats=table
+    )
+
+    if not home_stats or not away_stats:
+        if league_code in ['CL', 'EL']:
+            league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
+            return {
+                'available': False,
+                'error': (
+                    f'xG data not available for {league_name} '
+                    '(FBref is domestic-only; supported domestic leagues: '
+                    'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
+                )
+            }
+        return {'available': False, 'error': DOMESTIC_MAPPING_FALLBACK_MESSAGE}
+
+    home_matches = _get_cached_team_logs_in_memory(
+        effective_league, resolved_season, canonical_home
+    )
+    away_matches = _get_cached_team_logs_in_memory(
+        effective_league, resolved_season, canonical_away
+    )
+
+    payload = _build_prediction_payload(
+        home_team,
+        away_team,
+        home_stats,
+        away_stats,
+        home_matches or [],
+        away_matches or [],
+    )
+
+    _refresh_logs_async(effective_league, canonical_home, resolved_season)
+    _refresh_logs_async(effective_league, canonical_away, resolved_season)
+
+    if not home_matches or not away_matches:
+        payload.setdefault(
+            'note',
+            'Using cached season xG; rolling form is warming…'
+        )
+
+    return payload
 
 # ----------------------------------------------------------------------
 # Manual test
