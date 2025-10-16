@@ -728,10 +728,10 @@ def get_match_context(match_id):
                 ae = away_elo
                 try:
                     if he is None and home_team:
-                        he = get_team_elo(home_team)
+                        he = get_team_elo(home_team, allow_network=False)
                         _elo_cache_put(home_team, he)
                     if ae is None and away_team:
-                        ae = get_team_elo(away_team)
+                        ae = get_team_elo(away_team, allow_network=False)
                         _elo_cache_put(away_team, ae)
                 except Exception as elo_err:
                     logger.warning(

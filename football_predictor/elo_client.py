@@ -53,11 +53,15 @@ def elo_is_unhealthy() -> bool:
     return _ELO_UNHEALTHY_UNTIL is not None and monotonic() < _ELO_UNHEALTHY_UNTIL
 
 
-def fetch_team_elo_ratings():
+def fetch_team_elo_ratings(allow_network: bool = True):
     """
     Fetch the latest team Elo ratings from ClubElo.com API.
     Returns a dictionary mapping team names to their current Elo ratings.
-    
+
+    Args:
+        allow_network (bool): When False, returns cached data without
+            attempting a network fetch.
+
     Returns:
         dict: {team_name: elo_rating} or None if fetch fails
     """
@@ -71,6 +75,10 @@ def fetch_team_elo_ratings():
                 (cache_age.seconds % 3600) // 60,
             )
             return _elo_cache["data"]
+
+    if not allow_network:
+        # Cache-only mode: return whatever we already have without touching network
+        return _elo_cache["data"]
 
     logger.info("🔍 Fetching latest Elo ratings from ClubElo.com...")
 
@@ -149,13 +157,15 @@ def fetch_team_elo_ratings():
     return None
 
 
-def get_team_elo(team_name: str) -> Optional[float]:
+def get_team_elo(team_name: str, allow_network: bool = True) -> Optional[float]:
     """
     Get the current Elo rating for a specific team.
     Uses alias mapping to handle variations in team names.
 
     Args:
         team_name (str): Name of the team
+        allow_network (bool): When False, uses cached ratings only and
+            avoids network requests.
 
     Returns:
         float: Elo rating or None if not found
@@ -165,7 +175,7 @@ def get_team_elo(team_name: str) -> Optional[float]:
         return None
 
     try:
-        elo_ratings = fetch_team_elo_ratings()
+        elo_ratings = fetch_team_elo_ratings(allow_network=allow_network)
     except APIError as exc:
         if exc.code in ("TIMEOUT", "NETWORK_ERROR", "429", "HTTP_ERROR"):
             _mark_elo_unhealthy()
