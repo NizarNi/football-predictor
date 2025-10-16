@@ -120,10 +120,14 @@ def test_upcoming_route_returns_make_error_on_failure(monkeypatch):
     client = flask_app.test_client()
     response = client.get("/upcoming")
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     body = response.get_json()
-    assert body["error"]
-    assert body["message"]
+    assert body == {
+        "matches": [],
+        "total_matches": 0,
+        "source": "odds_unavailable",
+        "warning": "odds_unavailable_for_league",
+    }
 
 
 def test_xg_fetcher_wraps_request_exceptions(monkeypatch):
