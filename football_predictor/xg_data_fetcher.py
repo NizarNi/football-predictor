@@ -696,8 +696,7 @@ def fetch_career_xg_stats(team_name, league_code):
     total_xg = sum(s['xg_for'] for s in seasons_data)
     total_xga = sum(s['xga'] for s in seasons_data)
     total_games = sum(s['games'] for s in seasons_data)
-    seasons_count = len(s
-easons_data)
+    seasons_count = len(seasons_data)
 
     career_stats = {
         'team': team_name,
