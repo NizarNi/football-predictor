@@ -58,7 +58,8 @@ class TestAppUtils(unittest.TestCase):
         self.assertEqual(status_code, 404)
         self.assertEqual(response.mimetype, "application/json")
         self.assertEqual(
-            response.get_json(), {"error": "Not found", "message": "Match not found"}
+            response.get_json(),
+            {"error": "Not found", "message": "Match not found", "ok": False},
         )
 
 

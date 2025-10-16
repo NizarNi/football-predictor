@@ -437,44 +437,19 @@ def get_match(match_id):
     logger.info("Handling /match request", extra={"match_id": match_id})
     # Endpoint deprecated - match details now come from The Odds API in /upcoming
     return make_error(
-        error="This endpoint is deprecated. Match details are included in the /upcoming endpoint.",
-        message="Endpoint deprecated",
-        status_code=410
+        error="Endpoint deprecated",
+        message="This endpoint has been removed. Use documented routes instead.",
+        status_code=410,
     )
 
 @app.route("/predict/<match_id>", methods=["GET"])
 def predict_match(match_id):
-    """Get predictions for a specific match"""
-    try:
-        logger.info("Handling /predict request", extra={"match_id": match_id})
-        response = {
-            "predictions": {
-                "1x2": {
-                    "prediction": "N/A",
-                    "confidence": 0,
-                    "probabilities": {
-                        "HOME_WIN": 0.33,
-                        "DRAW": 0.33,
-                        "AWAY_WIN": 0.33
-                    },
-                    "is_safe_bet": False,
-                    "note": "Individual match predictions available when browsing upcoming matches with odds"
-                },
-                "best_odds": None,
-                "arbitrage": None
-            },
-            "note": "Prediction data with odds is available when browsing upcoming matches"
-        }
-        
-        return make_ok(response)
-
-    except Exception as e:
-        logger.exception("Error predicting match %s", match_id)
-        return make_error(
-            error="Unable to load predictions. Please try again later.",
-            message="Prediction service error",
-            status_code=500
-        )
+    logger.info("Handling /predict request", extra={"match_id": match_id})
+    return make_error(
+        error="Endpoint deprecated",
+        message="This endpoint has been removed. Use documented routes instead.",
+        status_code=410,
+    )
 
 @app.route("/match/<event_id>/totals", methods=["GET"])
 def get_match_totals(event_id):
@@ -969,20 +944,12 @@ def generate_match_narrative(home_data, away_data):
 @app.route("/process_data", methods=["POST"])
 def process_data():
     """Process all scraped match data"""
-    try:
-        logger.info("Handling /process_data request")
-        return make_error(
-            error="Data processing via this endpoint is deprecated. Please use API-Football for data.",
-            message="Endpoint deprecated",
-            status_code=400
-        )
-    except Exception as e:
-        logger.exception("Error handling /process_data request")
-        return make_error(
-            error="Service error. Please try again later.",
-            message="Service error",
-            status_code=500
-        )
+    logger.info("Handling /process_data request")
+    return make_error(
+        error="Endpoint deprecated",
+        message="This endpoint has been removed. Use documented routes instead.",
+        status_code=410,
+    )
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)

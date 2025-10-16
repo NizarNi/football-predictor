@@ -81,6 +81,16 @@ GET /
 
 Returns a simple JSON response indicating the API is running.
 
+## Legacy Endpoints
+
+The following legacy endpoints now return **410 Gone**:
+
+- `/match/<match_id>`
+- `/predict/<match_id>`
+- `/process_data`
+
+Use `/upcoming` (and `/match/<event_id>/{xg|btts|totals}`) for current data instead.
+
 ## Installation
 
 ### Prerequisites

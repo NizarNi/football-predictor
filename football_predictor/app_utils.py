@@ -105,10 +105,11 @@ _LEGACY_EXACT_PATHS = {
     "/upcoming",
     "/search",
     "/career_xg",
+    "/process_data",
 }
 
 # All nested `/match/...` endpoints previously returned unwrapped payloads.
-_LEGACY_PREFIXES = ("/match/",)
+_LEGACY_PREFIXES = ("/match/", "/predict/")
 
 
 def legacy_endpoint(func):
@@ -178,7 +179,7 @@ def _build_success_payload(data: Optional[Any], message: str) -> Dict[str, Any] 
 def _build_error_payload(error: Any, message: str) -> Dict[str, Any] | Any:
     """Construct error payload, wrapping unless legacy route."""
     if _is_legacy_request():
-        legacy_payload = {"error": error}
+        legacy_payload = {"ok": False, "error": error}
         if message:
             legacy_payload["message"] = message
         return legacy_payload

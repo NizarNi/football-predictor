@@ -35,11 +35,11 @@ def test_legacy_endpoints_unwrapped(client, endpoint):
     assert "error" in data or "matches" in data or "career_xg" in data
 
 
-def test_predict_endpoint_wrapped(client):
-    """Modern endpoint should return wrapped JSON."""
+def test_predict_endpoint_deprecated(client):
+    """Deprecated endpoint should return standardized 410 error."""
     resp = client.get("/predict/test123")
+    assert resp.status_code == 410
     data = resp.get_json()
-    assert "status" in data
-    assert "data" in data
-    assert "predictions" in data["data"]
+    assert data.get("ok") is False
+    assert data.get("error") == "Endpoint deprecated"
 
