@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -17,18 +18,29 @@ from .utils import create_retry_session, get_xg_season
 from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
 from .errors import APIError
 from .constants import (
-    CACHE_DIR,
     CAREER_XG_CACHE_TTL,
     LEAGUE_MAPPING,
     MATCH_LOGS_CACHE_TTL,
     TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING,
-    XG_CACHE_DURATION_HOURS,
 )
+
+CACHE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "processed_data", "xg_cache")
+)
+LEGACY_CACHE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "processed_data", "xg_cache")
+)
+SOFT_TTL_SECONDS = 6 * 3600
+HARD_TTL_SECONDS = 24 * 3600
 
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 logger = setup_logger(__name__)
+logger.info("xg_data_fetcher: using cache dir at %s", CACHE_DIR)
+if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
+    logger.warning("xg_data_fetcher: ignoring legacy cache dir at %s", LEGACY_CACHE_DIR)
+_background_refreshes = set()
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT, max_timeout=30)
 
 STATUS_FORCELIST = (429, 500, 502, 503, 504)
@@ -119,40 +131,28 @@ def get_cache_key(league_code, season):
     return f"{league_code}_{season}"
 
 
-def is_cache_valid(cache_file):
-    """Check if cache file exists and is still valid"""
-    if not os.path.exists(cache_file):
-        return False
-    
-    # Check if cache is older than XG_CACHE_DURATION_HOURS
-    file_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
-    if datetime.now() - file_time > timedelta(hours=XG_CACHE_DURATION_HOURS):
-        return False
-    
-    return True
-
-
 def load_from_cache(cache_key):
     """Load xG data from cache with backward compatibility"""
     cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
-    
-    if is_cache_valid(cache_file):
-        try:
-            with open(cache_file, 'r') as f:
-                data = json.load(f)
-                
-            # Backward compatibility: migrate old xg_overperformance to scoring_clinicality
-            for team_name, team_data in data.items():
-                if 'xg_overperformance' in team_data and 'scoring_clinicality' not in team_data:
-                    team_data['scoring_clinicality'] = team_data['xg_overperformance']
-                    logger.info("🔄 Migrated %s: xg_overperformance → scoring_clinicality", team_name)
 
-            return data
-        except Exception as e:
-            logger.exception("Error loading cache")
-            return None
-    
-    return None
+    if not os.path.exists(cache_file):
+        return None
+
+    try:
+        with open(cache_file, 'r') as f:
+            data = json.load(f)
+
+        # Backward compatibility: migrate old xg_overperformance to scoring_clinicality
+        for team_name, team_data in data.items():
+            if 'xg_overperformance' in team_data and 'scoring_clinicality' not in team_data:
+                team_data['scoring_clinicality'] = team_data['xg_overperformance']
+                logger.info("🔄 Migrated %s: xg_overperformance → scoring_clinicality", team_name)
+
+        age_seconds = time.time() - os.path.getmtime(cache_file)
+        return data, age_seconds
+    except Exception:
+        logger.exception("Error loading cache")
+        return None
 
 
 def save_to_cache(cache_key, data):
@@ -336,166 +336,194 @@ def fetch_career_xg_stats(team_name, league_code):
     return career_stats
 
 
+def _refresh_cache_in_background(league_code, season, cache_key):
+    refresh_key = (league_code, season)
+    if refresh_key in _background_refreshes:
+        return
+
+    _background_refreshes.add(refresh_key)
+
+    def _worker():
+        try:
+            _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
+        except Exception as exc:  # pragma: no cover - best-effort background refresh
+            logger.warning(
+                "xg_data_fetcher: background refresh failed for %s (%s): %s",
+                league_code,
+                season,
+                exc,
+            )
+        finally:
+            _background_refreshes.discard(refresh_key)
+
+    threading.Thread(
+        target=_worker,
+        name=f"xg-refresh-{league_code}-{season}",
+        daemon=True,
+    ).start()
+
+
+def _fetch_and_cache_league_xg_stats(league_code, season, cache_key):
+    league_name = LEAGUE_MAPPING[league_code]
+
+    # Handle season display (could be int like 2024 or string like "2024-2025")
+    if isinstance(season, int):
+        season_display = f"{season}-{season+1}"
+    else:
+        season_display = str(season)
+    logger.info("📊 Fetching xG stats for %s (season %s)...", league_name, season_display)
+
+    fbref = _configure_fbref_client(sd.FBref(leagues=league_name, seasons=season))
+
+    shooting_stats = _safe_soccerdata_call(
+        fbref.read_team_season_stats,
+        f"FBref shooting stats ({league_code} {season})",
+        stat_type='shooting',
+    )  # xG For
+    standard_stats = _safe_soccerdata_call(
+        fbref.read_team_season_stats,
+        f"FBref standard stats ({league_code} {season})",
+        stat_type='standard',
+    )  # Matches played
+    keeper_adv_stats = _safe_soccerdata_call(
+        fbref.read_team_season_stats,
+        f"FBref keeper advanced stats ({league_code} {season})",
+        stat_type='keeper_adv',
+    )  # Goals Against, PSxG (xGA)
+
+    xg_data = {}
+
+    for idx, row in shooting_stats.iterrows():
+        team_name = idx[2] if isinstance(idx, tuple) and len(idx) >= 3 else str(idx)
+
+        try:
+            xg_for = float(row[('Expected', 'xG')])
+        except (KeyError, ValueError, TypeError):
+            xg_for = 0
+
+        try:
+            goals_for = int(row[('Standard', 'Gls')])
+        except (KeyError, ValueError, TypeError):
+            goals_for = 0
+
+        matches_played = 0
+        try:
+            if idx in standard_stats.index:
+                std_row = standard_stats.loc[idx]
+                try:
+                    matches_played = int(std_row[('Playing Time', 'MP')])
+                except (KeyError, ValueError, TypeError):
+                    try:
+                        matches_played = int(std_row[('Playing Time', '90s')])
+                    except Exception:
+                        matches_played = 0
+        except Exception:
+            pass
+
+        goals_against = 0
+        ps_xg_against = 0
+        try:
+            if idx in keeper_adv_stats.index:
+                keeper_row = keeper_adv_stats.loc[idx]
+                try:
+                    goals_against = int(keeper_row[('Goals', 'GA')])
+                except (KeyError, ValueError, TypeError):
+                    pass
+                try:
+                    ps_xg_against = float(keeper_row[('Expected', 'PSxG')])
+                except (KeyError, ValueError, TypeError):
+                    pass
+        except Exception:
+            pass
+
+        xg_data[team_name] = {
+            'xg_for': xg_for,
+            'xg_against': ps_xg_against,
+            'ps_xg_against': ps_xg_against,
+            'matches_played': int(matches_played) if matches_played > 0 else 1,
+            'goals_for': goals_for,
+            'goals_against': goals_against,
+        }
+
+        if xg_data[team_name]['matches_played'] > 0:
+            matches = xg_data[team_name]['matches_played']
+            xg_data[team_name]['xg_for_per_game'] = round(xg_data[team_name]['xg_for'] / matches, 2)
+            xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)
+            xg_data[team_name]['ps_xg_against_per_game'] = round(xg_data[team_name]['ps_xg_against'] / matches, 2)
+            xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
+            xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
+
+            scoring_clinicality_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
+            xg_data[team_name]['scoring_clinicality'] = round(scoring_clinicality_total / matches, 2)
+
+            ps_xg_performance = xg_data[team_name]['ps_xg_against'] - xg_data[team_name]['goals_against']
+            xg_data[team_name]['ps_xg_performance'] = round(ps_xg_performance / matches, 2)
+        else:
+            xg_data[team_name]['xg_for_per_game'] = 0
+            xg_data[team_name]['xg_against_per_game'] = 0
+            xg_data[team_name]['ps_xg_against_per_game'] = 0
+            xg_data[team_name]['goals_for_per_game'] = 0
+            xg_data[team_name]['goals_against_per_game'] = 0
+            xg_data[team_name]['scoring_clinicality'] = 0
+            xg_data[team_name]['ps_xg_performance'] = 0
+
+    save_to_cache(cache_key, xg_data)
+    logger.info("✅ Fetched xG stats for %d teams in %s", len(xg_data), league_name)
+    return xg_data
+
+
 def fetch_league_xg_stats(league_code, season=None):
     """
     Fetch xG statistics for all teams in a league
-    
+
     Args:
         league_code: League code (PL, PD, BL1, SA, FL1, CL, EL)
         season: Season year (e.g., 2024 for 2024-25 season). If None, uses current season.
-    
+
     Returns:
         dict: Team xG statistics {team_name: {xg_for, xg_against, matches_played, ...}}
     """
     if season is None:
         season = get_xg_season()
-    
-    # Check cache first
-    cache_key = get_cache_key(league_code, season)
-    cached_data = load_from_cache(cache_key)
-    if cached_data:
-        logger.info("✅ Loaded xG data for %s from cache", league_code)
-        return cached_data
 
-    # Get league name for soccerdata
+    cache_key = get_cache_key(league_code, season)
+    cached_payload = load_from_cache(cache_key)
+    if cached_payload:
+        cached_data, cache_age = cached_payload
+        logger.info("✅ Loaded xG data for %s from cache", league_code)
+
+        if cache_age <= SOFT_TTL_SECONDS:
+            logger.info(
+                "returning cached xg (age: %.0fs), triggering background refresh",
+                cache_age,
+            )
+            if league_code in LEAGUE_MAPPING:
+                _refresh_cache_in_background(league_code, season, cache_key)
+            return cached_data
+
+        if cache_age <= HARD_TTL_SECONDS:
+            try:
+                fresh_data = _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
+                if fresh_data:
+                    return fresh_data
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh produced empty payload",
+                    cache_age,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh failure: %s",
+                    cache_age,
+                    exc,
+                )
+            return cached_data
+
     if league_code not in LEAGUE_MAPPING:
         logger.warning("⚠️  League %s not supported for xG stats", league_code)
         return {}
-    
-    league_name = LEAGUE_MAPPING[league_code]
-    
+
     try:
-        # Handle season display (could be int like 2024 or string like "2024-2025")
-        if isinstance(season, int):
-            season_display = f"{season}-{season+1}"
-        else:
-            season_display = str(season)
-        logger.info("📊 Fetching xG stats for %s (season %s)...", league_name, season_display)
-        
-        # Fetch team stats from FBref
-        fbref = _configure_fbref_client(sd.FBref(leagues=league_name, seasons=season))
-
-        # Get team offensive and defensive stats
-        shooting_stats = _safe_soccerdata_call(
-            fbref.read_team_season_stats,
-            f"FBref shooting stats ({league_code} {season})",
-            stat_type='shooting',
-        )  # xG For
-        standard_stats = _safe_soccerdata_call(
-            fbref.read_team_season_stats,
-            f"FBref standard stats ({league_code} {season})",
-            stat_type='standard',
-        )  # Matches played
-        keeper_adv_stats = _safe_soccerdata_call(
-            fbref.read_team_season_stats,
-            f"FBref keeper advanced stats ({league_code} {season})",
-            stat_type='keeper_adv',
-        )  # Goals Against, PSxG (xGA)
-        
-        # Process stats into a usable format
-        xg_data = {}
-        
-        for idx, row in shooting_stats.iterrows():
-            # Index is MultiIndex: (league, season, team) - extract team name from position 2
-            team_name = idx[2] if isinstance(idx, tuple) and len(idx) >= 3 else str(idx)
-            
-            # FBref uses MultiIndex columns - access as tuples
-            # Shooting stats columns: ('Standard', 'Gls'), ('Expected', 'xG'), etc.
-            try:
-                xg_for = float(row[('Expected', 'xG')])
-            except (KeyError, ValueError, TypeError):
-                xg_for = 0
-            
-            try:
-                goals_for = int(row[('Standard', 'Gls')])
-            except (KeyError, ValueError, TypeError):
-                goals_for = 0
-            
-            # Get matches played from standard stats
-            matches_played = 0
-            try:
-                if idx in standard_stats.index:
-                    std_row = standard_stats.loc[idx]
-                    try:
-                        # Use 'MP' (Matches Played) from Playing Time columns
-                        matches_played = int(std_row[('Playing Time', 'MP')])
-                    except (KeyError, ValueError, TypeError):
-                        # Fallback to 90s if MP not available
-                        try:
-                            matches_played = int(std_row[('Playing Time', '90s')])
-                        except:
-                            matches_played = 0
-            except Exception:
-                pass
-            
-            # Get goals against and PSxG (Post-Shot xG Against) from keeper advanced stats
-            goals_against = 0
-            ps_xg_against = 0  # Post-Shot xG Against (goalkeeper quality)
-            try:
-                if idx in keeper_adv_stats.index:
-                    keeper_row = keeper_adv_stats.loc[idx]
-                    try:
-                        # Goals Against from goalkeeper stats
-                        goals_against = int(keeper_row[('Goals', 'GA')])
-                    except (KeyError, ValueError, TypeError):
-                        pass
-                    try:
-                        # PSxG (Post-Shot xG Against) - measures goalkeeper shot-stopping quality
-                        # Only counts on-target shots, considers shot placement/power/trajectory
-                        ps_xg_against = float(keeper_row[('Expected', 'PSxG')])
-                    except (KeyError, ValueError, TypeError):
-                        pass
-            except Exception:
-                pass
-            
-            # NOTE: FBref only provides PSxG (Post-Shot xG Against), NOT true xGA
-            # True defensive xGA comes from Understat (via /context endpoint)
-            # We store PSxGA in both xg_against (legacy) and ps_xg_against (explicit) fields
-            xg_data[team_name] = {
-                'xg_for': xg_for,
-                'xg_against': ps_xg_against,  # PSxGA (goalkeeper quality) - legacy field name for backwards compatibility
-                'ps_xg_against': ps_xg_against,  # PSxGA (goalkeeper quality) - explicit field name
-                'matches_played': int(matches_played) if matches_played > 0 else 1,  # Avoid division by zero
-                'goals_for': goals_for,
-                'goals_against': goals_against,
-            }
-            
-            # Calculate per-game averages
-            if xg_data[team_name]['matches_played'] > 0:
-                matches = xg_data[team_name]['matches_played']
-                xg_data[team_name]['xg_for_per_game'] = round(xg_data[team_name]['xg_for'] / matches, 2)
-                # Note: xg_against_per_game is PSxGA (goalkeeper quality), NOT defensive xGA
-                # Defensive xGA comes from Understat via /context endpoint
-                xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)  
-                xg_data[team_name]['ps_xg_against_per_game'] = round(xg_data[team_name]['ps_xg_against'] / matches, 2)
-                xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
-                xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
-                
-                # Calculate scoring clinicality per game (actual goals vs expected)
-                # Positive = clinical finishing, Negative = wasteful
-                scoring_clinicality_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
-                xg_data[team_name]['scoring_clinicality'] = round(scoring_clinicality_total / matches, 2)
-                
-                # Calculate goalkeeper performance (PSxG+/- per game)
-                # Positive = saves more than expected, Negative = concedes more than expected  
-                ps_xg_performance = xg_data[team_name]['ps_xg_against'] - xg_data[team_name]['goals_against']
-                xg_data[team_name]['ps_xg_performance'] = round(ps_xg_performance / matches, 2)
-            else:
-                xg_data[team_name]['xg_for_per_game'] = 0
-                xg_data[team_name]['xg_against_per_game'] = 0
-                xg_data[team_name]['ps_xg_against_per_game'] = 0
-                xg_data[team_name]['goals_for_per_game'] = 0
-                xg_data[team_name]['goals_against_per_game'] = 0
-                xg_data[team_name]['scoring_clinicality'] = 0
-                xg_data[team_name]['ps_xg_performance'] = 0
-        
-        
-        # Save to cache
-        save_to_cache(cache_key, xg_data)
-        
-        logger.info("✅ Fetched xG stats for %d teams in %s", len(xg_data), league_name)
-        return xg_data
-
+        return _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
     except APIError:
         raise
     except requests.exceptions.RequestException as exc:
@@ -507,7 +535,7 @@ def fetch_league_xg_stats(league_code, season=None):
             "Unable to fetch xG stats.",
             error_msg,
         ) from exc
-    except Exception as e:
+    except Exception:
         logger.exception("❌ Error fetching xG stats for %s", league_code)
         return {}
 
