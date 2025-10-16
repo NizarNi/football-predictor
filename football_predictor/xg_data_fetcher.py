@@ -70,6 +70,7 @@ def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) ->
             return code
     return None
 
+
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -123,7 +124,6 @@ _refresh_attempt_lock = threading.Lock()
 _last_refresh_attempt: Dict[Tuple[str, str], float] = {}
 REFRESH_COOLDOWN_S = 120
 
-
 def _clear_refresh_attempt(league_code: str, canonical_team: str) -> None:
     with _refresh_attempt_lock:
         _last_refresh_attempt.pop((league_code, canonical_team), None)
@@ -131,7 +131,7 @@ def _clear_refresh_attempt(league_code: str, canonical_team: str) -> None:
 _stacktrace_guard_lock = threading.Lock()
 _last_stacktrace_log: Dict[Tuple[str, str], float] = {}
 
-# Background refresh guard
+# Background refresh guard (single-flight per (league, season) for league tables)
 _background_refreshes = set()
 
 # Adaptive timeout controller for FBref calls
@@ -436,6 +436,7 @@ def _set_mem_cache(league_code: str, season: int, data: Dict[str, Any]) -> None:
     key = (league_code, season)
     with _LEAGUE_MEM_CACHE_LOCK:
         _LEAGUE_MEM_CACHE[key] = (time.time(), data)
+    # Clear any per-league debounce/stacktrace guards when we successfully refreshed
     with _refresh_attempt_lock:
         stale_keys = [k for k in _last_refresh_attempt if k[0] == league_code]
         for entry in stale_keys:
@@ -695,7 +696,8 @@ def fetch_career_xg_stats(team_name, league_code):
     total_xg = sum(s['xg_for'] for s in seasons_data)
     total_xga = sum(s['xga'] for s in seasons_data)
     total_games = sum(s['games'] for s in seasons_data)
-    seasons_count = len(seasons_data)
+    seasons_count = len(s
+easons_data)
 
     career_stats = {
         'team': team_name,
@@ -1207,9 +1209,7 @@ def _ensure_team_logs_fresh(league_code: str, canonical_team: str, season: Optio
         _clear_refresh_attempt(league_code, canonical_team)
     except Exception as exc:
         if _should_log_stacktrace_once(league_code, canonical_team):
-            logger.exception(
-                "Error fetching match logs for %s/%s", league_code, canonical_team
-            )
+            logger.exception("Error fetching match logs for %s/%s", league_code, canonical_team)
         else:
             logger.warning(
                 "Match logs retry scheduled (cooldown %ss) for %s/%s: %s",
@@ -1501,6 +1501,7 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         away_matches or [],
     )
 
+    # Non-blocking background warmers (debounced)
     _refresh_logs_async(effective_league, canonical_home, resolved_season)
     _refresh_logs_async(effective_league, canonical_away, resolved_season)
 

@@ -96,6 +96,7 @@ def test_fastpath_returns_cached_season_xg(monkeypatch, immediate_executor):
     assert 'home_xg' in result and 'away_xg' in result
     assert any(word in result.get('note', '').lower() for word in ['season xg', 'warming'])
 
+    # two async warmers scheduled via executor wrapping function (_logs_task)
     assert len(refresh_calls) == 2
     ensure_targets = [fn for fn, *_ in immediate_executor.calls]
     assert all(call.__name__ == "_logs_task" for call in ensure_targets)
@@ -122,6 +123,7 @@ def test_cold_cache_returns_warming(monkeypatch, immediate_executor):
 
     assert result['available'] is False
     assert 'warming' in result['error'].lower()
+    # _refresh_league_async submits the fetch task to the (immediate) executor
     assert fetch_calls == [('PL', season)]
 
 
