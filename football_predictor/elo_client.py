@@ -36,6 +36,10 @@ _elo_cache: Dict[str, Optional[Any]] = {
     "timestamp": None
 }
 
+# New: small circuit breaker to avoid hammering ClubElo when it’s down
+_LAST_ELO_FAILURE_AT: Optional[datetime] = None
+ELO_FAILURE_SNOOZE_SECONDS = 600  # 10 minutes
+
 
 logger = setup_logger(__name__)
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT_ELO, max_timeout=30)
@@ -60,6 +64,22 @@ def fetch_team_elo_ratings():
             )
             return _elo_cache["data"]
 
+    global _LAST_ELO_FAILURE_AT
+    if _LAST_ELO_FAILURE_AT:
+        since = (datetime.now() - _LAST_ELO_FAILURE_AT).total_seconds()
+        if since < ELO_FAILURE_SNOOZE_SECONDS:
+            if _elo_cache["data"]:
+                logger.warning(
+                    "⏳ ClubElo recently failed (%.0fs ago) — using cache (circuit open)",
+                    since,
+                )
+                return _elo_cache["data"]
+            logger.warning(
+                "⏳ ClubElo recently failed (%.0fs ago) — skipping network call (circuit open)",
+                since,
+            )
+            return None
+
     logger.info("🔍 Fetching latest Elo ratings from ClubElo.com...")
 
     # ClubElo API requires date parameter (YYYY-MM-DD)
@@ -71,13 +91,16 @@ def fetch_team_elo_ratings():
         response = requests.get(api_url, timeout=timeout)
         response.raise_for_status()
         adaptive_timeout.record_success()
+        _LAST_ELO_FAILURE_AT = None  # reset breaker on success
     except requests.Timeout as exc:
         adaptive_timeout.record_failure()
         logger.warning("[Resilience] API timeout or network issue: %s", exc)
         logger.error("❌ ClubElo request timed out after %.1f seconds", timeout)
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")
+            _LAST_ELO_FAILURE_AT = datetime.now()
             return _elo_cache["data"]
+        _LAST_ELO_FAILURE_AT = datetime.now()
         raise APIError("EloAPI", "TIMEOUT", "The Elo API did not respond in time.") from exc
     except requests.ConnectionError as exc:
         adaptive_timeout.record_failure()
@@ -86,7 +109,9 @@ def fetch_team_elo_ratings():
         logger.error("❌ Error fetching Elo ratings: %s", error_msg)
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")
+            _LAST_ELO_FAILURE_AT = datetime.now()
             return _elo_cache["data"]
+        _LAST_ELO_FAILURE_AT = datetime.now()
         raise APIError("EloAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
     except requests.RequestException as exc:
         adaptive_timeout.record_failure()
@@ -95,7 +120,9 @@ def fetch_team_elo_ratings():
         logger.error("❌ Error fetching Elo ratings: %s", error_msg)
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to fetch error")
+            _LAST_ELO_FAILURE_AT = datetime.now()
             return _elo_cache["data"]
+        _LAST_ELO_FAILURE_AT = datetime.now()
         raise APIError("EloAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
 
     team_elo_ratings: Dict[str, float] = {}
@@ -120,7 +147,9 @@ def fetch_team_elo_ratings():
         logger.error("❌ Failed to parse ClubElo response: %s", error_msg)
         if _elo_cache["data"]:
             logger.warning("⚠️ Using expired cache due to parse error")
+            _LAST_ELO_FAILURE_AT = datetime.now()
             return _elo_cache["data"]
+        _LAST_ELO_FAILURE_AT = datetime.now()
         raise APIError("EloAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg) from exc
 
     if team_elo_ratings:

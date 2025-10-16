@@ -118,6 +118,7 @@ def test_invalid_json_raises_apierror(mock_request):
 def test_elo_timeout_raises_apierror(mock_get):
     elo_client._elo_cache["data"] = None
     elo_client._elo_cache["timestamp"] = None
+    elo_client._LAST_ELO_FAILURE_AT = None
     mock_get.side_effect = requests.Timeout("Timeout occurred")
 
     with pytest.raises(APIError) as exc:
@@ -131,6 +132,7 @@ def test_elo_timeout_raises_apierror(mock_get):
 def test_elo_invalid_response_raises_apierror(mock_get, mock_reader):
     elo_client._elo_cache["data"] = None
     elo_client._elo_cache["timestamp"] = None
+    elo_client._LAST_ELO_FAILURE_AT = None
 
     response = MagicMock()
     response.raise_for_status.return_value = None

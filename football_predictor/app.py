@@ -189,12 +189,16 @@ def upcoming():
                     "source": "The Odds API"
                 })
         except APIError as e:
-            logger.warning("⚠️  The Odds API unavailable: %s", e)
-            return make_error(
-                error=e,
-                message="Failed to fetch upcoming matches",
-                status_code=503
+            logger.warning(
+                "upcoming: odds unavailable (%s). returning empty list",
+                getattr(e, "code", type(e).__name__),
             )
+            return make_ok({
+                "matches": [],
+                "total_matches": 0,
+                "source": "odds_unavailable",
+                "warning": "odds_unavailable_for_league"
+            })
         except Exception as e:
             logger.exception("⚠️  The Odds API error")
             return make_error(
