@@ -1489,15 +1489,9 @@
                 event_id: matchIdentifier || null,
             };
 
-            const hasEloHint = (match.elo_home !== undefined && match.elo_home !== null) ||
-                               (match.elo_away !== undefined && match.elo_away !== null);
-
-            if (hasEloHint) {
-                corePayload.elo_hint = {
-                    home: match.elo_home ?? null,
-                    away: match.elo_away ?? null,
-                    ts: match.elo_ts ?? null,
-                };
+            const eloHint = buildEloHintForMatch(match, matchIdentifier);
+            if (eloHint) {
+                corePayload.elo_hint = eloHint;
             }
 
             const coreRequestOptions = {
@@ -1505,6 +1499,13 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(corePayload)
             };
+
+            if (eloHint) {
+                const encodedHint = encodeEloHintHeader(eloHint);
+                if (encodedHint) {
+                    coreRequestOptions.headers['X-Elo-Hint'] = encodedHint;
+                }
+            }
 
             const finalize = () => {
                 stopMatchContextTrickle();
@@ -2350,7 +2351,7 @@
             function searchTeam() {
                 let teamName = teamSearchInput.value.trim();
                 if (!teamName) return;
-                
+
                 // Normalize the team name (resolve aliases to canonical names)
                 teamName = normalizeTeamName(teamName);
                 
@@ -2383,7 +2384,342 @@
                     matchesList.innerHTML = `<p class="text-danger">Error searching for team: ${error.message}</p>`;
                 });
             }
-            
+
+            const MAX_ELO_SNAPSHOT_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+            const MAX_ELO_SNAPSHOT_SIZE = 200;
+
+            function ensureEloSnapshot() {
+                if (!window.__eloSnapshot) {
+                    window.__eloSnapshot = {
+                        version: 1,
+                        updatedAt: null,
+                        fingerprint: null,
+                        teams: {},
+                        events: {},
+                    };
+                }
+                return window.__eloSnapshot;
+            }
+
+            function normalizeSnapshotTeamKey(name) {
+                return (name || '').trim().toLowerCase();
+            }
+
+            function resolveEloNumeric(value) {
+                if (value === null || value === undefined) {
+                    return null;
+                }
+                if (typeof value === 'number' && Number.isFinite(value)) {
+                    return value;
+                }
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? parsed : null;
+            }
+
+            function parseEloTimestamp(ts) {
+                if (ts === null || ts === undefined) {
+                    return null;
+                }
+                if (typeof ts === 'number' && Number.isFinite(ts)) {
+                    return ts > 1e12 ? ts : ts * 1000;
+                }
+                if (typeof ts === 'string') {
+                    const trimmed = ts.trim();
+                    if (!trimmed) {
+                        return null;
+                    }
+                    const numeric = Number(trimmed);
+                    if (Number.isFinite(numeric)) {
+                        return numeric > 1e12 ? numeric : numeric * 1000;
+                    }
+                    const parsed = Date.parse(trimmed);
+                    return Number.isNaN(parsed) ? null : parsed;
+                }
+                return null;
+            }
+
+            function pruneEloSnapshot(snapshot, nowMs) {
+                const pruneCollection = (collection, sizeLimit) => {
+                    for (const [key, entry] of Object.entries(collection)) {
+                        const entryTs = typeof entry?.ts === 'number' ? entry.ts : parseEloTimestamp(entry?.ts);
+                        if (!entryTs || nowMs - entryTs > MAX_ELO_SNAPSHOT_AGE_MS) {
+                            delete collection[key];
+                        }
+                    }
+                    const keys = Object.keys(collection);
+                    if (keys.length > sizeLimit) {
+                        keys.sort((a, b) => {
+                            const aTs = typeof collection[a]?.ts === 'number' ? collection[a].ts : parseEloTimestamp(collection[a]?.ts);
+                            const bTs = typeof collection[b]?.ts === 'number' ? collection[b].ts : parseEloTimestamp(collection[b]?.ts);
+                            return (aTs || 0) - (bTs || 0);
+                        });
+                        const excess = keys.length - sizeLimit;
+                        for (let i = 0; i < excess; i++) {
+                            delete collection[keys[i]];
+                        }
+                    }
+                };
+
+                pruneCollection(snapshot.teams, MAX_ELO_SNAPSHOT_SIZE);
+                pruneCollection(snapshot.events, MAX_ELO_SNAPSHOT_SIZE);
+            }
+
+            function updateEloSnapshot(matches) {
+                if (!matches || !Array.isArray(matches) || matches.length === 0) {
+                    return;
+                }
+
+                const snapshot = ensureEloSnapshot();
+                const nowMs = Date.now();
+                let newestTs = snapshot.updatedAt ? parseEloTimestamp(snapshot.updatedAt) || 0 : 0;
+
+                matches.forEach(match => {
+                    if (!match) {
+                        return;
+                    }
+                    const eventIdRaw = match.event_id ?? match.id ?? match.eventId;
+                    const eventId = eventIdRaw ? String(eventIdRaw) : null;
+                    const homeTeam = match.home_team || null;
+                    const awayTeam = match.away_team || null;
+                    const homeRating = resolveEloNumeric(match.elo_home);
+                    const awayRating = resolveEloNumeric(match.elo_away);
+                    const eloTimestampMs = parseEloTimestamp(match.elo_ts) || nowMs;
+
+                    if (homeRating !== null) {
+                        match.elo_home = homeRating;
+                    }
+                    if (awayRating !== null) {
+                        match.elo_away = awayRating;
+                    }
+
+                    if (homeRating !== null && homeTeam) {
+                        const teamKey = normalizeSnapshotTeamKey(homeTeam);
+                        const existing = snapshot.teams[teamKey];
+                        const existingTs = existing ? (typeof existing.ts === 'number' ? existing.ts : parseEloTimestamp(existing.ts)) || 0 : 0;
+                        if (!existing || existingTs <= eloTimestampMs) {
+                            snapshot.teams[teamKey] = {
+                                rating: homeRating,
+                                ts: eloTimestampMs,
+                                name: homeTeam,
+                            };
+                        }
+                    }
+
+                    if (awayRating !== null && awayTeam) {
+                        const teamKey = normalizeSnapshotTeamKey(awayTeam);
+                        const existing = snapshot.teams[teamKey];
+                        const existingTs = existing ? (typeof existing.ts === 'number' ? existing.ts : parseEloTimestamp(existing.ts)) || 0 : 0;
+                        if (!existing || existingTs <= eloTimestampMs) {
+                            snapshot.teams[teamKey] = {
+                                rating: awayRating,
+                                ts: eloTimestampMs,
+                                name: awayTeam,
+                            };
+                        }
+                    }
+
+                    if (eventId) {
+                        const existingEvent = snapshot.events[eventId];
+                        const existingEventTs = existingEvent ? (typeof existingEvent.ts === 'number' ? existingEvent.ts : parseEloTimestamp(existingEvent.ts)) || 0 : 0;
+                        if (!existingEvent || existingEventTs <= eloTimestampMs) {
+                            snapshot.events[eventId] = {
+                                home_team: homeTeam,
+                                away_team: awayTeam,
+                                home: homeRating,
+                                away: awayRating,
+                                ts: eloTimestampMs,
+                            };
+                        }
+                    }
+
+                    if (eloTimestampMs > newestTs) {
+                        newestTs = eloTimestampMs;
+                    }
+                });
+
+                pruneEloSnapshot(snapshot, Date.now());
+
+                if (newestTs) {
+                    snapshot.updatedAt = new Date(newestTs).toISOString();
+                }
+                const teamCount = Object.keys(snapshot.teams).length;
+                snapshot.fingerprint = `${snapshot.version}:${teamCount}:${snapshot.updatedAt || ''}`;
+            }
+
+            function hydrateMatchesFromSnapshot(matches) {
+                const snapshot = window.__eloSnapshot;
+                if (!snapshot || !matches || !Array.isArray(matches)) {
+                    return;
+                }
+
+                matches.forEach(match => {
+                    if (!match) {
+                        return;
+                    }
+
+                    const eventIdRaw = match.event_id ?? match.id ?? match.eventId;
+                    const eventId = eventIdRaw ? String(eventIdRaw) : null;
+                    const homeTeam = match.home_team || null;
+                    const awayTeam = match.away_team || null;
+                    const normalizedHome = normalizeSnapshotTeamKey(homeTeam);
+                    const normalizedAway = normalizeSnapshotTeamKey(awayTeam);
+
+                    const currentHomeRating = resolveEloNumeric(match.elo_home);
+                    if (currentHomeRating !== null) {
+                        match.elo_home = currentHomeRating;
+                    }
+                    const currentAwayRating = resolveEloNumeric(match.elo_away);
+                    if (currentAwayRating !== null) {
+                        match.elo_away = currentAwayRating;
+                    }
+
+                    if ((match.elo_home === undefined || match.elo_home === null) && normalizedHome && snapshot.teams[normalizedHome]) {
+                        const entry = snapshot.teams[normalizedHome];
+                        match.elo_home = resolveEloNumeric(entry.rating);
+                        if (!match.elo_ts && entry.ts) {
+                            const tsValue = typeof entry.ts === 'number' ? entry.ts : parseEloTimestamp(entry.ts);
+                            if (tsValue) {
+                                match.elo_ts = new Date(tsValue).toISOString();
+                            }
+                        }
+                    }
+
+                    if ((match.elo_away === undefined || match.elo_away === null) && normalizedAway && snapshot.teams[normalizedAway]) {
+                        const entry = snapshot.teams[normalizedAway];
+                        match.elo_away = resolveEloNumeric(entry.rating);
+                        if (!match.elo_ts && entry.ts) {
+                            const tsValue = typeof entry.ts === 'number' ? entry.ts : parseEloTimestamp(entry.ts);
+                            if (tsValue) {
+                                match.elo_ts = new Date(tsValue).toISOString();
+                            }
+                        }
+                    }
+
+                    if (eventId && snapshot.events[eventId]) {
+                        const eventEntry = snapshot.events[eventId];
+                        if (match.elo_home === undefined || match.elo_home === null) {
+                            match.elo_home = resolveEloNumeric(eventEntry.home);
+                        }
+                        if (match.elo_away === undefined || match.elo_away === null) {
+                            match.elo_away = resolveEloNumeric(eventEntry.away);
+                        }
+                        if (!match.elo_ts && eventEntry.ts) {
+                            const tsValue = typeof eventEntry.ts === 'number' ? eventEntry.ts : parseEloTimestamp(eventEntry.ts);
+                            if (tsValue) {
+                                match.elo_ts = new Date(tsValue).toISOString();
+                            }
+                        }
+                    }
+                });
+            }
+
+            function buildEloHintForMatch(match, eventId) {
+                if (!match) {
+                    return null;
+                }
+
+                const snapshot = window.__eloSnapshot;
+                const homeTeam = match.home_team || null;
+                const awayTeam = match.away_team || null;
+                const normalizedHome = normalizeSnapshotTeamKey(homeTeam);
+                const normalizedAway = normalizeSnapshotTeamKey(awayTeam);
+                const eventKey = eventId ? String(eventId) : null;
+
+                let homeRating = resolveEloNumeric(match.elo_home);
+                let awayRating = resolveEloNumeric(match.elo_away);
+                let timestampMs = parseEloTimestamp(match.elo_ts);
+
+                if (snapshot) {
+                    if (homeRating === null && normalizedHome && snapshot.teams[normalizedHome]) {
+                        const entry = snapshot.teams[normalizedHome];
+                        homeRating = resolveEloNumeric(entry.rating);
+                        if (!timestampMs && entry.ts) {
+                            timestampMs = typeof entry.ts === 'number' ? entry.ts : parseEloTimestamp(entry.ts);
+                        }
+                    }
+                    if (awayRating === null && normalizedAway && snapshot.teams[normalizedAway]) {
+                        const entry = snapshot.teams[normalizedAway];
+                        awayRating = resolveEloNumeric(entry.rating);
+                        if (!timestampMs && entry.ts) {
+                            timestampMs = typeof entry.ts === 'number' ? entry.ts : parseEloTimestamp(entry.ts);
+                        }
+                    }
+                    if (eventKey && snapshot.events[eventKey]) {
+                        const eventEntry = snapshot.events[eventKey];
+                        if (homeRating === null) {
+                            homeRating = resolveEloNumeric(eventEntry.home);
+                        }
+                        if (awayRating === null) {
+                            awayRating = resolveEloNumeric(eventEntry.away);
+                        }
+                        if (!timestampMs && eventEntry.ts) {
+                            timestampMs = typeof eventEntry.ts === 'number' ? eventEntry.ts : parseEloTimestamp(eventEntry.ts);
+                        }
+                    }
+                    if (!timestampMs && snapshot.updatedAt) {
+                        timestampMs = parseEloTimestamp(snapshot.updatedAt);
+                    }
+                }
+
+                if (homeRating === null && awayRating === null) {
+                    return null;
+                }
+
+                const hint = {
+                    version: 1,
+                    home_team: homeTeam,
+                    away_team: awayTeam,
+                };
+
+                if (eventKey) {
+                    hint.event_id = eventKey;
+                }
+                if (homeRating !== null) {
+                    hint.home = homeRating;
+                }
+                if (awayRating !== null) {
+                    hint.away = awayRating;
+                }
+                if (timestampMs) {
+                    hint.ts = new Date(timestampMs).toISOString();
+                }
+                if (snapshot) {
+                    if (snapshot.fingerprint) {
+                        hint.fingerprint = snapshot.fingerprint;
+                    }
+                    if (snapshot.updatedAt) {
+                        hint.snapshot_ts = snapshot.updatedAt;
+                    }
+                }
+
+                return hint;
+            }
+
+            function encodeEloHintHeader(hint) {
+                if (!hint) {
+                    return null;
+                }
+                if (typeof btoa !== 'function') {
+                    return null;
+                }
+                try {
+                    const json = JSON.stringify(hint);
+                    if (typeof TextEncoder !== 'undefined') {
+                        const encoder = new TextEncoder();
+                        const bytes = encoder.encode(json);
+                        let binary = '';
+                        bytes.forEach(byte => {
+                            binary += String.fromCharCode(byte);
+                        });
+                        return btoa(binary);
+                    }
+                    return btoa(unescape(encodeURIComponent(json)));
+                } catch (err) {
+                    console.warn('Failed to encode Elo hint header', err);
+                    return null;
+                }
+            }
+
             function getUpcomingMatches(league) {
                 matchesList.innerHTML = `
                     <div class="loading">
@@ -2433,10 +2769,13 @@
                     matchesList.innerHTML = `<p class="text-center text-muted">No matches found</p>`;
                     return;
                 }
-                
+
+                updateEloSnapshot(matches);
+                hydrateMatchesFromSnapshot(matches);
+
                 // Store matches globally
                 window.currentMatches = matches;
-                
+
                 // Get current filter settings from the top filter bar
                 const arbitrageFilter = document.getElementById('arbitrage-filter-checkbox')?.checked || false;
                 
@@ -2490,12 +2829,12 @@
                     
                     const homeLogo = getLogoUrlOrFallback(match.home_logo_url);
                     const awayLogo = getLogoUrlOrFallback(match.away_logo_url);
-                    const eloHomeAttr = match.elo_home ?? '';
-                    const eloAwayAttr = match.elo_away ?? '';
+                    const eloHomeAttr = resolveEloNumeric(match.elo_home);
+                    const eloAwayAttr = resolveEloNumeric(match.elo_away);
                     const eloTsAttr = match.elo_ts ?? '';
 
                     html += `
-                        <div class="card match-card mb-2${popularClass}${arbitrageClass}" data-match-index="${originalIndex}" data-elo-home="${eloHomeAttr}" data-elo-away="${eloAwayAttr}" data-elo-ts="${eloTsAttr}">
+                        <div class="card match-card mb-2${popularClass}${arbitrageClass}" data-match-index="${originalIndex}" data-elo-home="${eloHomeAttr ?? ''}" data-elo-away="${eloAwayAttr ?? ''}" data-elo-ts="${eloTsAttr}">
                             <div class="card-body p-3">
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div class="flex-grow-1">
