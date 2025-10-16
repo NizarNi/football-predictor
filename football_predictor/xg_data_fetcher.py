@@ -26,7 +26,7 @@ from .constants import (
     LEAGUE_MAPPING,
     MATCH_LOGS_CACHE_TTL,
 )
-from .name_resolver import get_all_aliases_for, resolve_team_name
+from .name_resolver import resolve_team_name, get_all_aliases_for
 
 # ----------------------------------------------------------------------
 # Paths, TTLs, logger
@@ -45,6 +45,29 @@ INMEM_TTL_SECONDS = 60
 DOMESTIC_MAPPING_FALLBACK_MESSAGE = (
     "FBref mapping refresh in progress for this club. Please try again shortly while we sync the aliases."
 )
+
+SUPPORTED_DOMESTIC = ["PL", "PD", "SA", "BL1", "FL1"]
+
+
+def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) -> Optional[str]:
+    for code in SUPPORTED_DOMESTIC:
+        table = fetch_league_xg_stats(code)
+        if not table:
+            continue
+
+        def _has_team(name: str) -> bool:
+            if name in table:
+                return True
+            for alias in get_all_aliases_for(name):
+                if alias in table:
+                    return True
+            # last-chance: light case-insensitive partial
+            n = name.lower()
+            return any(n in k.lower() or k.lower() in n for k in table.keys())
+
+        if _has_team(canonical_home) and _has_team(canonical_away):
+            return code
+    return None
 
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -1005,15 +1028,47 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     canonical_home = _resolve_fbref_team_name(home_team, "match_xg_home")
     canonical_away = _resolve_fbref_team_name(away_team, "match_xg_away")
 
-    home_stats = get_team_xg_stats(canonical_home, league_code, season)
-    away_stats = get_team_xg_stats(canonical_away, league_code, season)
+    effective_league = league_code
+    if league_code not in LEAGUE_MAPPING:
+        inferred = _infer_domestic_league_for_both(canonical_home, canonical_away)
+        if inferred:
+            logger.info(
+                "🌍 Cross-competition fallback: %s → %s for %s vs %s",
+                league_code, inferred, canonical_home, canonical_away
+            )
+            effective_league = inferred
+        else:
+            if league_code in ['CL', 'EL']:
+                league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
+                return {
+                    'available': False,
+                    'error': (
+                        f'xG data not available for {league_name} '
+                        '(FBref is domestic-only; supported domestic leagues: '
+                        'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
+                    )
+                }
+            return {
+                'available': False,
+                'error': 'xG data not available for this competition (FBref is domestic-only).'
+            }
+    else:
+        # honor passed league
+        effective_league = league_code
+
+    home_stats = get_team_xg_stats(canonical_home, effective_league, season)
+    away_stats = get_team_xg_stats(canonical_away, effective_league, season)
 
     if not home_stats or not away_stats:
         if league_code in ['CL', 'EL']:
             league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
             return {
                 'available': False,
-                'error': f'xG data not available for {league_name} (FBref only supports domestic leagues: Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
+                'error': (
+                    f'xG data not available for {league_name} '
+                    '(FBref is domestic-only; supported domestic leagues: '
+                    'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
+                )
             }
         return {'available': False, 'error': DOMESTIC_MAPPING_FALLBACK_MESSAGE}
 
@@ -1027,8 +1082,8 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     logger.info("🔄 Fetching match logs in parallel for both teams...")
     request_memo_id = get_current_request_memo_id()
     with ThreadPoolExecutor(max_workers=2) as executor:
-        f_home = executor.submit(fetch_team_match_logs, home_fbref_name, league_code, season, request_memo_id)
-        f_away = executor.submit(fetch_team_match_logs, away_fbref_name, league_code, season, request_memo_id)
+        f_home = executor.submit(fetch_team_match_logs, home_fbref_name, effective_league, season, request_memo_id)
+        f_away = executor.submit(fetch_team_match_logs, away_fbref_name, effective_league, season, request_memo_id)
 
         try:
             home_matches = f_home.result(timeout=30)
