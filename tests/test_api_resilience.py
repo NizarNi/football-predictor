@@ -165,7 +165,7 @@ def test_upcoming_skips_elo_after_timeout(monkeypatch):
 
     call_count = {"count": 0}
 
-    def failing_get_team_elo(team_name):
+    def failing_get_team_elo(team_name, allow_network=True):
         call_count["count"] += 1
         if call_count["count"] == 1:
             elo_client._mark_elo_unhealthy()

@@ -21,7 +21,10 @@ def mock_context_dependencies(monkeypatch):
             {"name": "Away Team", "position": 2, "points": 48, "form": "WWLWD"},
         ],
     )
-    monkeypatch.setattr("football_predictor.elo_client.get_team_elo", lambda team: 1500)
+    monkeypatch.setattr(
+        "football_predictor.elo_client.get_team_elo",
+        lambda team, allow_network=True: 1500,
+    )
 
 
 def test_context_upstream_api_error(client, mock_context_dependencies, monkeypatch):

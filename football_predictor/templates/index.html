@@ -1319,14 +1319,14 @@
                             icon === 'bullseye' ? 'fa-bullseye' :
                             icon === 'check-circle' ? 'fa-check-circle' :
                             'fa-spinner fa-spin';
-            
+
             matchContext.innerHTML = `
                 <div class="loading-container">
                     <div class="loading-icon">
                         <i class="fas ${iconClass} text-primary"></i>
                     </div>
                     <div class="loading-step-text">
-                        Step ${step}/${totalSteps} - ${message}
+                        ${message}
                     </div>
                     <div class="progress-bar-container">
                         <div class="progress-bar-fill" style="width: ${percentage}%">
