@@ -69,6 +69,7 @@ def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) ->
             return code
     return None
 
+
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -80,10 +81,12 @@ if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
 # Background worker pool (league + logs refresh)
 _executor = ThreadPoolExecutor(max_workers=4)
 
+# ----------------------------------------------------------------------
+# Debounce state (T35d): per (league, team) cooldown + single stacktrace window
+# ----------------------------------------------------------------------
 _refresh_attempt_lock = threading.Lock()
 _last_refresh_attempt: Dict[Tuple[str, str], float] = {}
-REFRESH_COOLDOWN_S = 120
-
+REFRESH_COOLDOWN_S = 120  # 2 minutes
 
 def _clear_refresh_attempt(league_code: str, canonical_team: str) -> None:
     with _refresh_attempt_lock:
@@ -92,7 +95,7 @@ def _clear_refresh_attempt(league_code: str, canonical_team: str) -> None:
 _stacktrace_guard_lock = threading.Lock()
 _last_stacktrace_log: Dict[Tuple[str, str], float] = {}
 
-# Background refresh guard
+# Background refresh guard (single-flight per (league, season) for league tables)
 _background_refreshes = set()
 
 # Adaptive timeout controller for FBref calls
@@ -397,6 +400,7 @@ def _set_mem_cache(league_code: str, season: int, data: Dict[str, Any]) -> None:
     key = (league_code, season)
     with _LEAGUE_MEM_CACHE_LOCK:
         _LEAGUE_MEM_CACHE[key] = (time.time(), data)
+    # Clear any per-league debounce/stacktrace guards when we successfully refreshed
     with _refresh_attempt_lock:
         stale_keys = [k for k in _last_refresh_attempt if k[0] == league_code]
         for entry in stale_keys:
@@ -445,6 +449,7 @@ def _refresh_league_async(league_code: str, season: int) -> None:
 def _refresh_logs_async(
     league_code: str, canonical_team: str, season: Optional[int] = None
 ) -> None:
+    # Debounce per (league, team)
     now = time.monotonic()
     key = (league_code, canonical_team)
     with _refresh_attempt_lock:
@@ -1134,9 +1139,7 @@ def _ensure_team_logs_fresh(league_code: str, canonical_team: str, season: Optio
         _clear_refresh_attempt(league_code, canonical_team)
     except Exception as exc:
         if _should_log_stacktrace_once(league_code, canonical_team):
-            logger.exception(
-                "Error fetching match logs for %s/%s", league_code, canonical_team
-            )
+            logger.exception("Error fetching match logs for %s/%s", league_code, canonical_team)
         else:
             logger.warning(
                 "Match logs retry scheduled (cooldown %ss) for %s/%s: %s",
@@ -1428,13 +1431,14 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         away_matches or [],
     )
 
+    # Non-blocking background warmers (debounced)
     _refresh_logs_async(effective_league, canonical_home, resolved_season)
     _refresh_logs_async(effective_league, canonical_away, resolved_season)
 
     if not home_matches or not away_matches:
         payload.setdefault(
             'note',
-            'Using cached season xG; rolling form is warming…'
+            'Using cached season xG; detailed logs are warming.'
         )
 
     return payload
