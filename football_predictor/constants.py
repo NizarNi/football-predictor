@@ -88,6 +88,7 @@ LEAGUE_CODE_MAPPING = {
     "BL1": "soccer_germany_bundesliga",
     "SA": "soccer_italy_serie_a",
     "FL1": "soccer_france_ligue_one",
+    "RFPL": "soccer_russia_premier_league",
     "CL": "soccer_uefa_champs_league",
     "EL": "soccer_uefa_europa_league"
 }

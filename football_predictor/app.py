@@ -112,10 +112,16 @@ def health():
 @legacy_endpoint
 def upcoming():
     """Get upcoming matches with predictions using The Odds API (primary) and football-data.org (fallback)"""
-    league, _lw = validate_league(request.args.get("league"))
+    raw_league = request.args.get("league")
+    league, _lw = validate_league(raw_league)
     next_n_days, _nw = validate_next_n_days(request.args.get("next_n_days"))
     home_team, _ = validate_team_optional(request.args.get("home_team"))
     away_team, _ = validate_team_optional(request.args.get("away_team"))
+    league_code: Optional[str] = None
+    if raw_league:
+        league_code = normalize_league_code(raw_league)
+    if not league_code and league:
+        league_code = normalize_league_code(league) or league
 
     try:
         logger.info("Handling /upcoming request", extra={
@@ -126,74 +132,113 @@ def upcoming():
         })
         # Try The Odds API first (provides both matches and odds-based predictions)
         logger.info("🔍 Fetching matches with odds from The Odds API...")
-        try:
-            if league:
-                leagues_to_fetch = [league]
-            else:
-                leagues_to_fetch = list(LEAGUE_CODE_MAPPING.keys())
+        if raw_league:
+            logger.debug(
+                "League query param normalized from %s to %s",
+                raw_league,
+                league_code,
+            )
 
-            odds_matches = get_upcoming_matches_with_odds(league_codes=leagues_to_fetch, next_n_days=next_n_days)
+        single_league_request = bool(raw_league)
+        leagues_to_fetch: list[str] = []
+        if league_code:
+            leagues_to_fetch = [league_code]
+        elif not raw_league:
+            leagues_to_fetch = list(LEAGUE_CODE_MAPPING.keys())
+        else:
+            logger.debug(
+                "No normalized league mapping for input '%s'; skipping Odds fetch",
+                raw_league,
+            )
 
-            if odds_matches:
-                # Import Elo client for predictions
-                from .elo_client import get_team_elo, calculate_elo_probabilities
-
-                # Calculate predictions from odds for each match
-                for match in odds_matches:
-                    predictions = calculate_predictions_from_odds(match)
-
-                    # Format match data
-                    match["datetime"] = match["commence_time"]
-                    match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                    home_logo_url, away_logo_url = build_team_logo_urls(
-                        match.get("home_team"),
-                        match.get("away_team"),
+        odds_matches = []
+        if leagues_to_fetch:
+            try:
+                odds_matches = get_upcoming_matches_with_odds(
+                    league_codes=leagues_to_fetch,
+                    next_n_days=next_n_days,
+                )
+            except APIError as e:
+                logger.warning(
+                    "Odds unavailable for league=%s due to %s",
+                    league_code or league or raw_league or "ALL",
+                    e.__class__.__name__,
+                )
+                if not single_league_request:
+                    return make_error(
+                        error=e,
+                        message="Failed to fetch upcoming matches",
+                        status_code=503,
                     )
-                    match["home_logo_url"] = home_logo_url
-                    match["away_logo_url"] = away_logo_url
+            except Exception as e:
+                logger.warning(
+                    "Odds unavailable for league=%s due to unexpected %s",
+                    league_code or league or raw_league or "ALL",
+                    e.__class__.__name__,
+                )
+                if not single_league_request:
+                    logger.exception("⚠️  The Odds API error")
+                    return make_error(
+                        error="Unable to fetch matches. Please try again later.",
+                        message="Failed to fetch upcoming matches",
+                        status_code=500,
+                    )
 
-                    # Add Elo predictions
-                    home_team = match.get("home_team")
-                    away_team = match.get("away_team")
-                    if home_team and away_team:
-                        home_elo = get_team_elo(home_team)
-                        away_elo = get_team_elo(away_team)
-                        if home_elo and away_elo:
-                            match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
+        if odds_matches:
+            # Import Elo client for predictions
+            from .elo_client import get_team_elo, calculate_elo_probabilities
 
-                    # Add predictions in the expected format
-                    match["predictions"] = {
-                        "1x2": {
-                            "prediction": predictions["prediction"],
-                            "confidence": predictions["confidence"],
-                            "probabilities": predictions["probabilities"],
-                            "is_safe_bet": predictions["confidence"] >= 60,
-                            "bookmaker_count": predictions["bookmaker_count"]
-                        },
-                        "best_odds": predictions["best_odds"],
-                        "arbitrage": predictions["arbitrage"]
-                    }
+            # Calculate predictions from odds for each match
+            for match in odds_matches:
+                predictions = calculate_predictions_from_odds(match)
 
-                logger.info("✅ Found %d matches from The Odds API", len(odds_matches))
-                return make_ok({
-                    "matches": odds_matches,
-                    "total_matches": len(odds_matches),
-                    "source": "The Odds API"
-                })
-        except APIError as e:
-            logger.warning("⚠️  The Odds API unavailable: %s", e)
-            return make_error(
-                error=e,
-                message="Failed to fetch upcoming matches",
-                status_code=503
-            )
-        except Exception as e:
-            logger.exception("⚠️  The Odds API error")
-            return make_error(
-                error="Unable to fetch matches. Please try again later.",
-                message="Failed to fetch upcoming matches",
-                status_code=500
-            )
+                # Format match data
+                match["datetime"] = match["commence_time"]
+                match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
+                home_logo_url, away_logo_url = build_team_logo_urls(
+                    match.get("home_team"),
+                    match.get("away_team"),
+                )
+                match["home_logo_url"] = home_logo_url
+                match["away_logo_url"] = away_logo_url
+
+                # Add Elo predictions
+                home_team_name = match.get("home_team")
+                away_team_name = match.get("away_team")
+                if home_team_name and away_team_name:
+                    home_elo = get_team_elo(home_team_name)
+                    away_elo = get_team_elo(away_team_name)
+                    if home_elo and away_elo:
+                        match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
+
+                # Add predictions in the expected format
+                match["predictions"] = {
+                    "1x2": {
+                        "prediction": predictions["prediction"],
+                        "confidence": predictions["confidence"],
+                        "probabilities": predictions["probabilities"],
+                        "is_safe_bet": predictions["confidence"] >= 60,
+                        "bookmaker_count": predictions["bookmaker_count"]
+                    },
+                    "best_odds": predictions["best_odds"],
+                    "arbitrage": predictions["arbitrage"]
+                }
+
+            logger.info("✅ Found %d matches from The Odds API", len(odds_matches))
+            return make_ok({
+                "matches": odds_matches,
+                "total_matches": len(odds_matches),
+                "source": "The Odds API"
+            })
+
+        if single_league_request:
+            warning_payload = {
+                "matches": [],
+                "total_matches": 0,
+                "source": "odds_unavailable",
+                "warning": "odds_unavailable_for_league",
+            }
+            return make_ok(warning_payload)
 
     except Exception as e:
         logger.exception("❌ Critical error")
