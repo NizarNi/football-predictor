@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Dict, Optional, Tuple, List
+from dataclasses import dataclass
 
 import json
 import os
@@ -82,11 +83,46 @@ if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
 _executor = ThreadPoolExecutor(max_workers=4)
 
 # ----------------------------------------------------------------------
+# Debounce registry (T35e): bounded backoff per (league, team) and per league
+# ----------------------------------------------------------------------
+@dataclass
+class DebounceState:
+    last_try_s: float = 0.0
+    backoff_s: float = 0.0   # increases on failure, resets on success
+    attempts: int = 0
+
+
+_DEBOUNCE: Dict[Tuple[str, Optional[str]], DebounceState] = {}
+
+
+def _should_debounce(key: Tuple[str, Optional[str]], floor: float, ceil: float) -> bool:
+    st = _DEBOUNCE.get(key)
+    if not st:
+        return False
+    now = time.monotonic()
+    wait = max(floor, min(ceil, st.backoff_s or floor))
+    return (now - st.last_try_s) < wait
+
+
+def _mark_attempt(key: Tuple[str, Optional[str]], ok: bool, floor: float, ceil: float) -> None:
+    st = _DEBOUNCE.get(key) or DebounceState()
+    st.last_try_s = time.monotonic()
+    if ok:
+        st.backoff_s = 0.0
+        st.attempts = 0
+    else:
+        # bounded exponential backoff
+        base = st.backoff_s * 2 if st.backoff_s else floor
+        st.backoff_s = min(ceil, base)
+        st.attempts += 1
+    _DEBOUNCE[key] = st
+
+# ----------------------------------------------------------------------
 # Debounce state (T35d): per (league, team) cooldown + single stacktrace window
 # ----------------------------------------------------------------------
 _refresh_attempt_lock = threading.Lock()
 _last_refresh_attempt: Dict[Tuple[str, str], float] = {}
-REFRESH_COOLDOWN_S = 120  # 2 minutes
+REFRESH_COOLDOWN_S = 120
 
 def _clear_refresh_attempt(league_code: str, canonical_team: str) -> None:
     with _refresh_attempt_lock:
@@ -409,6 +445,13 @@ def _set_mem_cache(league_code: str, season: int, data: Dict[str, Any]) -> None:
         stale_logs = [k for k in _last_stacktrace_log if k[0] == league_code]
         for entry in stale_logs:
             _last_stacktrace_log.pop(entry, None)
+    # Also reset adaptive debounce window for this league
+    try:
+        deb_key = (league_code, None)
+        if deb_key in _DEBOUNCE:
+            _DEBOUNCE.pop(deb_key, None)
+    except Exception:
+        pass
 
 
 def _is_stale(age_seconds: Optional[float]) -> bool:
@@ -424,6 +467,12 @@ def _is_hard_expired(age_seconds: Optional[float]) -> bool:
 
 
 def _refresh_league_async(league_code: str, season: int) -> None:
+    # T35e: per-league backoff window (60s → 10m)
+    deb_key = (league_code, None)
+    if _should_debounce(deb_key, floor=60.0, ceil=600.0):
+        logger.info("⏳ league-refresh debounced for %s", league_code)
+        return
+
     refresh_key = (league_code, season)
     if refresh_key in _background_refreshes:
         return
@@ -433,7 +482,10 @@ def _refresh_league_async(league_code: str, season: int) -> None:
     def _task():
         try:
             _fetch_and_cache_league_stats_now(league_code, season)
+            _mark_attempt(deb_key, ok=True, floor=60.0, ceil=600.0)
+            logger.info("✅ league-refresh ok for %s", league_code)
         except Exception as exc:  # best-effort
+            _mark_attempt(deb_key, ok=False, floor=60.0, ceil=600.0)
             logger.warning(
                 "xg_data_fetcher: background refresh failed for %s (%s): %s",
                 league_code,
@@ -449,15 +501,32 @@ def _refresh_league_async(league_code: str, season: int) -> None:
 def _refresh_logs_async(
     league_code: str, canonical_team: str, season: Optional[int] = None
 ) -> None:
-    # Debounce per (league, team)
+    # T35d fixed cooldown (120s) — keep as a first guard
     now = time.monotonic()
-    key = (league_code, canonical_team)
+    key_cool = (league_code, canonical_team)
     with _refresh_attempt_lock:
-        last = _last_refresh_attempt.get(key, 0.0)
+        last = _last_refresh_attempt.get(key_cool, 0.0)
         if now - last < REFRESH_COOLDOWN_S:
             return
-        _last_refresh_attempt[key] = now
-    _executor.submit(_ensure_team_logs_fresh, league_code, canonical_team, season)
+        _last_refresh_attempt[key_cool] = now
+
+    # T35e adaptive backoff (90s → 15m)
+    deb_key = (league_code, canonical_team)
+    if _should_debounce(deb_key, floor=90.0, ceil=900.0):
+        logger.info("⏳ logs-refresh debounced for %s/%s", league_code, canonical_team)
+        return
+
+    def _logs_task():
+        try:
+            _ensure_team_logs_fresh(league_code, canonical_team, season)
+            _mark_attempt(deb_key, ok=True, floor=90.0, ceil=900.0)
+            logger.info("✅ logs-refresh ok for %s/%s", league_code, canonical_team)
+        except Exception as exc:
+            _mark_attempt(deb_key, ok=False, floor=90.0, ceil=900.0)
+            # _ensure_team_logs_fresh already swallows/logs details per T35d
+            logger.warning("⚠️ logs-refresh failed for %s/%s: %s", league_code, canonical_team, exc)
+
+    _executor.submit(_logs_task)
 
 def get_cache_key(league_code, season):
     """Generate cache key for xG data"""
@@ -627,7 +696,8 @@ def fetch_career_xg_stats(team_name, league_code):
     total_xg = sum(s['xg_for'] for s in seasons_data)
     total_xga = sum(s['xga'] for s in seasons_data)
     total_games = sum(s['games'] for s in seasons_data)
-    seasons_count = len(seasons_data)
+    seasons_count = len(s
+easons_data)
 
     career_stats = {
         'team': team_name,
@@ -1438,7 +1508,7 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     if not home_matches or not away_matches:
         payload.setdefault(
             'note',
-            'Using cached season xG; detailed logs are warming.'
+            'Using cached season xG; rolling form is warming…'
         )
 
     return payload

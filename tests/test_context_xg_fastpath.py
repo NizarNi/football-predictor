@@ -27,10 +27,12 @@ def reset_caches():
     league_snapshot = dict(xg_data_fetcher._LEAGUE_MEM_CACHE)
     match_snapshot = dict(xg_data_fetcher.MATCH_LOGS_CACHE)
     background_snapshot = set(xg_data_fetcher._background_refreshes)
+    debounce_snapshot = dict(xg_data_fetcher._DEBOUNCE)
 
     xg_data_fetcher._LEAGUE_MEM_CACHE.clear()
     xg_data_fetcher.MATCH_LOGS_CACHE.clear()
     xg_data_fetcher._background_refreshes.clear()
+    xg_data_fetcher._DEBOUNCE.clear()
     yield
     xg_data_fetcher._LEAGUE_MEM_CACHE.clear()
     xg_data_fetcher._LEAGUE_MEM_CACHE.update(league_snapshot)
@@ -38,6 +40,8 @@ def reset_caches():
     xg_data_fetcher.MATCH_LOGS_CACHE.update(match_snapshot)
     xg_data_fetcher._background_refreshes.clear()
     xg_data_fetcher._background_refreshes.update(background_snapshot)
+    xg_data_fetcher._DEBOUNCE.clear()
+    xg_data_fetcher._DEBOUNCE.update(debounce_snapshot)
 
 
 @pytest.fixture
@@ -92,9 +96,10 @@ def test_fastpath_returns_cached_season_xg(monkeypatch, immediate_executor):
     assert 'home_xg' in result and 'away_xg' in result
     assert any(word in result.get('note', '').lower() for word in ['season xg', 'warming'])
 
+    # two async warmers scheduled via executor wrapping function (_logs_task)
     assert len(refresh_calls) == 2
     ensure_targets = [fn for fn, *_ in immediate_executor.calls]
-    assert all(call == fake_ensure for call in ensure_targets)
+    assert all(call.__name__ == "_logs_task" for call in ensure_targets)
 
 
 def test_cold_cache_returns_warming(monkeypatch, immediate_executor):
@@ -118,6 +123,7 @@ def test_cold_cache_returns_warming(monkeypatch, immediate_executor):
 
     assert result['available'] is False
     assert 'warming' in result['error'].lower()
+    # _refresh_league_async submits the fetch task to the (immediate) executor
     assert fetch_calls == [('PL', season)]
 
 
