@@ -22,7 +22,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from .odds_api_client import get_upcoming_matches_with_odds, LEAGUE_CODE_MAPPING
 from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import get_match_xg_prediction
-from .utils import get_current_season, normalize_league_code, normalize_team_name, fuzzy_team_match
+from .utils import (
+    get_current_season,
+    normalize_league_code,
+    normalize_team_name,
+    fuzzy_team_match,
+)
 from .errors import APIError
 from .validators import (
     validate_league,
@@ -34,11 +39,13 @@ PKG_DIR = os.path.dirname(__file__)
 STATIC_DIR = os.path.join(PKG_DIR, "static")
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
-app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 logger = setup_logger(__name__)
 
+# ---------------------------
 # Logo helpers
+# ---------------------------
 
 def to_static_url(abs_path: str) -> str:
     """
@@ -55,42 +62,51 @@ def to_static_url(abs_path: str) -> str:
 
 
 def build_team_logo_urls(home_team: Optional[str], away_team: Optional[str]) -> tuple[str, str]:
+    """
+    Resolve local or remote logos for the two teams.
+    If resolve_logo returns an absolute HTTP(S) URL, pass it through.
+    Otherwise, convert the absolute filesystem path under /static to a URL.
+    """
     home_logo_ref = resolve_logo(home_team)
     away_logo_ref = resolve_logo(away_team)
 
     home_logo_url = (
         home_logo_ref
-        if isinstance(home_logo_ref, str) and home_logo_ref.startswith("http")
+        if isinstance(home_logo_ref, str) and home_logo_ref.startswith(("http://", "https://"))
         else to_static_url(home_logo_ref)
     )
     away_logo_url = (
         away_logo_ref
-        if isinstance(away_logo_ref, str) and away_logo_ref.startswith("http")
+        if isinstance(away_logo_ref, str) and away_logo_ref.startswith(("http://", "https://"))
         else to_static_url(away_logo_ref)
     )
 
     return home_logo_url, away_logo_url
 
-# Global variables
-# Note: Matches fetched from The Odds API, standings from Understat
+
+# ---------------------------
+# Routes
+# ---------------------------
 
 @app.route("/")
 def index():
     """Render the home page"""
     return render_template("index.html")
 
+
 @app.route("/learn")
 def learn():
     """Educational page about football analytics and betting strategies"""
     return render_template("learn.html")
 
+
 @app.route("/demo")
 def demo():
     """Demo page to showcase Over/Under and Match Context features (static version)"""
     try:
-        with open('/tmp/demo_static.html', 'r') as f:
+        with open("/tmp/demo_static.html", "r") as f:
             return f.read()
-    except:
+    except Exception:
         return "Demo page not available", 404
 
 
@@ -110,126 +126,132 @@ def health():
         status_code=200,
     )
 
+
 @app.route("/upcoming", methods=["GET"])
 @legacy_endpoint
 def upcoming():
-    """Get upcoming matches with predictions using The Odds API (primary) and football-data.org (fallback)"""
-    league, _lw = validate_league(request.args.get("league"))
+    """Get upcoming matches with predictions using The Odds API (primary)."""
+    raw_league = request.args.get("league")
+    league, _lw = validate_league(raw_league)
     next_n_days, _nw = validate_next_n_days(request.args.get("next_n_days"))
-    home_team, _ = validate_team_optional(request.args.get("home_team"))
-    away_team, _ = validate_team_optional(request.args.get("away_team"))
+    home_team_param, _ = validate_team_optional(request.args.get("home_team"))
+    away_team_param, _ = validate_team_optional(request.args.get("away_team"))
 
-    try:
-        logger.info("Handling /upcoming request", extra={
+    # Normalize league to canonical code for Odds mapping
+    league_code: Optional[str] = None
+    if raw_league:
+        league_code = normalize_league_code(raw_league)
+    if not league_code and league:
+        league_code = normalize_league_code(league) or league
+
+    logger.info(
+        "Handling /upcoming request",
+        extra={
             "league": league,
+            "league_code": league_code,
             "next_n_days": next_n_days,
-            "home_team": home_team,
-            "away_team": away_team,
-        })
+            "home_team": home_team_param,
+            "away_team": away_team_param,
+        },
+    )
+
+    # Build the list of leagues to fetch from Odds
+    if league_code:
+        leagues_to_fetch: list[str] = [league_code]
+        logger.debug("upcoming: normalized league=%s from raw=%s", league_code, raw_league or league)
+    elif raw_league:
+        # User provided something we could not normalize; fall back to all mapped leagues
         leagues_to_fetch = list(LEAGUE_CODE_MAPPING.keys())
-        normalized_league_code = None
+        logger.debug("upcoming: cannot normalize league=%s; defaulting to all mapped leagues", raw_league)
+    else:
+        leagues_to_fetch = list(LEAGUE_CODE_MAPPING.keys())
 
-        if league:
-            normalized_league_code = normalize_league_code(league)
-            logger.debug(
-                "upcoming: received league=%s normalized_league_code=%s",
-                league,
-                normalized_league_code,
-            )
-            if normalized_league_code:
-                leagues_to_fetch = [normalized_league_code]
-            else:
-                logger.debug(
-                    "upcoming: cannot normalize league=%s; using default all-leagues",
-                    league,
-                )
-        # Try The Odds API first (provides both matches and odds-based predictions)
-        logger.info("🔍 Fetching matches with odds from The Odds API...")
-        try:
-            odds_matches = get_upcoming_matches_with_odds(league_codes=leagues_to_fetch, next_n_days=next_n_days)
+    logger.info("🔍 Fetching matches with odds from The Odds API...")
 
-            if not odds_matches:
-                logger.info(
-                    "upcoming: no matches returned from odds for league(s)=%s",
-                    leagues_to_fetch,
-                )
-                return make_ok({
-                    "matches": [],
-                    "total_matches": 0,
-                    "source": "odds",
-                })
-
-            # Import Elo client for predictions
-            from .elo_client import get_team_elo, calculate_elo_probabilities
-
-            # Calculate predictions from odds for each match
-            for match in odds_matches:
-                predictions = calculate_predictions_from_odds(match)
-
-                # Format match data
-                match["datetime"] = match["commence_time"]
-                match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
-                home_logo_url, away_logo_url = build_team_logo_urls(
-                    match.get("home_team"),
-                    match.get("away_team"),
-                )
-                match["home_logo_url"] = home_logo_url
-                match["away_logo_url"] = away_logo_url
-
-                # Add Elo predictions
-                home_team = match.get("home_team")
-                away_team = match.get("away_team")
-                if home_team and away_team:
-                    home_elo = get_team_elo(home_team)
-                    away_elo = get_team_elo(away_team)
-                    if home_elo and away_elo:
-                        match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
-
-                # Add predictions in the expected format
-                match["predictions"] = {
-                    "1x2": {
-                        "prediction": predictions["prediction"],
-                        "confidence": predictions["confidence"],
-                        "probabilities": predictions["probabilities"],
-                        "is_safe_bet": predictions["confidence"] >= 60,
-                        "bookmaker_count": predictions["bookmaker_count"]
-                    },
-                    "best_odds": predictions["best_odds"],
-                    "arbitrage": predictions["arbitrage"]
-                }
-
-            logger.info("✅ Found %d matches from The Odds API", len(odds_matches))
-            return make_ok({
-                "matches": odds_matches,
-                "total_matches": len(odds_matches),
-                "source": "The Odds API"
-            })
-        except (APIError, requests.RequestException) as e:
-            logger.warning(
-                "upcoming: odds unavailable for league(s)=%s", leagues_to_fetch,
-                exc_info=False,
-            )
-            logger.debug("upcoming: odds failure detail=%s", e)
-            return make_ok({
+    # Graceful resilience: never emit 503 for Odds failures; return 200 + warning/empty.
+    try:
+        odds_matches = get_upcoming_matches_with_odds(
+            league_codes=leagues_to_fetch,
+            next_n_days=next_n_days,
+        )
+    except (APIError, requests.RequestException) as e:
+        logger.warning(
+            "upcoming: odds unavailable for leagues=%s due to %s",
+            leagues_to_fetch,
+            getattr(e, "code", e.__class__.__name__),
+        )
+        return make_ok(
+            {
                 "matches": [],
+                "total_matches": 0,
                 "source": "odds_unavailable",
                 "warning": "odds_unavailable_for_league",
-            })
-        except Exception:
-            logger.exception("⚠️  The Odds API error")
-            return make_error(
-                error="Unable to fetch matches. Please try again later.",
-                message="Failed to fetch upcoming matches",
-                status_code=500
-            )
-
-    except Exception as e:
-        logger.exception("❌ Critical error")
-        return make_error(
-            error="Service temporarily unavailable. Please try again later.",
-            message="Service temporarily unavailable",
-            status_code=500
+            }
         )
+    except Exception:
+        logger.exception("⚠️  Unexpected error while fetching odds")
+        return make_ok(
+            {
+                "matches": [],
+                "total_matches": 0,
+                "source": "odds_unavailable",
+                "warning": "odds_unavailable_for_league",
+            }
+        )
+
+    if not odds_matches:
+        logger.info("upcoming: no matches from odds for leagues=%s", leagues_to_fetch)
+        return make_ok({"matches": [], "total_matches": 0, "source": "odds"})
+
+    # ---- Decorate results (unchanged business logic) ---------------------------------
+    from .elo_client import get_team_elo, calculate_elo_probabilities
+
+    for match in odds_matches:
+        predictions = calculate_predictions_from_odds(match)
+
+        # Format match data
+        match["datetime"] = match["commence_time"]
+        match["timestamp"] = datetime.fromisoformat(
+            match["commence_time"].replace("Z", "+00:00")
+        ).timestamp()
+
+        home_logo_url, away_logo_url = build_team_logo_urls(
+            match.get("home_team"),
+            match.get("away_team"),
+        )
+        match["home_logo_url"] = home_logo_url
+        match["away_logo_url"] = away_logo_url
+
+        # Elo predictions
+        home_team_name = match.get("home_team")
+        away_team_name = match.get("away_team")
+        if home_team_name and away_team_name:
+            home_elo = get_team_elo(home_team_name)
+            away_elo = get_team_elo(away_team_name)
+            if home_elo and away_elo:
+                match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
+
+        # Unified predictions format
+        match["predictions"] = {
+            "1x2": {
+                "prediction": predictions["prediction"],
+                "confidence": predictions["confidence"],
+                "probabilities": predictions["probabilities"],
+                "is_safe_bet": predictions["confidence"] >= 60,
+                "bookmaker_count": predictions["bookmaker_count"],
+            },
+            "best_odds": predictions["best_odds"],
+            "arbitrage": predictions["arbitrage"],
+        }
+
+    logger.info("✅ Found %d matches from The Odds API", len(odds_matches))
+    return make_ok(
+        {
+            "matches": odds_matches,
+            "total_matches": len(odds_matches),
+            "source": "The Odds API",
+        }
+    )
 
 
 @app.route("/search", methods=["POST"])
@@ -242,7 +264,7 @@ def search():
         return make_error(
             error="Please provide a team name",
             message="Invalid team name",
-            status_code=400
+            status_code=400,
         )
 
     try:
@@ -253,40 +275,43 @@ def search():
         try:
             odds_matches = get_upcoming_matches_with_odds(
                 league_codes=list(LEAGUE_CODE_MAPPING.keys()),
-                next_n_days=30
+                next_n_days=30,
             )
-            
+
             if not odds_matches:
                 # No matches from Odds API - return empty result
                 logger.info("ℹ️ No matches available from The Odds API")
                 return make_error(
                     error=f"No matches found for team '{team_name}' - try again later",
                     message="No matches available",
-                    status_code=404
+                    status_code=404,
                 )
 
             # Filter matches by team name
             team_name_lower = team_name.lower()
             filtered_matches = [
-                match for match in odds_matches
-                if team_name_lower in match.get("home_team", "").lower() or 
-                   team_name_lower in match.get("away_team", "").lower()
+                match
+                for match in odds_matches
+                if team_name_lower in match.get("home_team", "").lower()
+                or team_name_lower in match.get("away_team", "").lower()
             ]
-            
+
             if not filtered_matches:
                 return make_error(
                     error=f"No matches found for team '{team_name}'",
                     message="No matches found",
-                    status_code=404
+                    status_code=404,
                 )
-            
+
             # Calculate predictions from odds for each match
             for match in filtered_matches:
                 predictions = calculate_predictions_from_odds(match)
 
                 # Format match data
                 match["datetime"] = match["commence_time"]
-                match["timestamp"] = datetime.fromisoformat(match["commence_time"].replace('Z', '+00:00')).timestamp()
+                match["timestamp"] = datetime.fromisoformat(
+                    match["commence_time"].replace("Z", "+00:00")
+                ).timestamp()
                 home_logo_url, away_logo_url = build_team_logo_urls(
                     match.get("home_team"),
                     match.get("away_team"),
@@ -301,36 +326,38 @@ def search():
                         "confidence": predictions["confidence"],
                         "probabilities": predictions["probabilities"],
                         "is_safe_bet": predictions["confidence"] >= 60,
-                        "bookmaker_count": predictions["bookmaker_count"]
+                        "bookmaker_count": predictions["bookmaker_count"],
                     },
                     "best_odds": predictions["best_odds"],
-                    "arbitrage": predictions["arbitrage"]
+                    "arbitrage": predictions["arbitrage"],
                 }
-            
+
             # Sort by date
             filtered_matches = sorted(filtered_matches, key=lambda x: x["timestamp"])
-            
-            logger.info("✅ Found %d matches for '%s' from The Odds API", len(filtered_matches), team_name)
-            return make_ok({
-                "matches": filtered_matches,
-                "source": "The Odds API"
-            })
 
-        except Exception as odds_e:
+            logger.info(
+                "✅ Found %d matches for '%s' from The Odds API",
+                len(filtered_matches),
+                team_name,
+            )
+            return make_ok({"matches": filtered_matches, "source": "The Odds API"})
+
+        except Exception:
             logger.exception("⚠️ The Odds API error during search")
             return make_error(
                 error="Search service temporarily unavailable",
                 message="Search service temporarily unavailable",
-                status_code=503
+                status_code=503,
             )
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error in search")
         return make_error(
             error="Search failed. Please try again later.",
             message="Search failed",
-            status_code=500
+            status_code=500,
         )
+
 
 @app.route("/match/<match_id>", methods=["GET"])
 def get_match(match_id):
@@ -340,8 +367,9 @@ def get_match(match_id):
     return make_error(
         error="This endpoint is deprecated. Match details are included in the /upcoming endpoint.",
         message="Endpoint deprecated",
-        status_code=410
+        status_code=410,
     )
+
 
 @app.route("/predict/<match_id>", methods=["GET"])
 def predict_match(match_id):
@@ -356,17 +384,17 @@ def predict_match(match_id):
                     "probabilities": {
                         "HOME_WIN": 0.33,
                         "DRAW": 0.33,
-                        "AWAY_WIN": 0.33
+                        "AWAY_WIN": 0.33,
                     },
                     "is_safe_bet": False,
-                    "note": "Individual match predictions available when browsing upcoming matches with odds"
+                    "note": "Individual match predictions available when browsing upcoming matches with odds",
                 },
                 "best_odds": None,
-                "arbitrage": None
+                "arbitrage": None,
             },
-            "note": "Prediction data with odds is available when browsing upcoming matches"
+            "note": "Prediction data with odds is available when browsing upcoming matches",
         }
-        
+
         return make_ok(response)
 
     except Exception as e:
@@ -374,8 +402,9 @@ def predict_match(match_id):
         return make_error(
             error="Unable to load predictions. Please try again later.",
             message="Prediction service error",
-            status_code=500
+            status_code=500,
         )
+
 
 @app.route("/match/<event_id>/totals", methods=["GET"])
 def get_match_totals(event_id):
@@ -387,35 +416,35 @@ def get_match_totals(event_id):
             return make_error(
                 error="sport_key parameter required",
                 message="Missing sport_key parameter",
-                status_code=400
+                status_code=400,
             )
 
         from .odds_api_client import get_event_odds
         from .odds_calculator import calculate_totals_from_odds
 
-        odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="totals")
+        odds_data = get_event_odds(
+            sport_key, event_id, regions="us,uk,eu", markets="totals"
+        )
 
         if not odds_data:
             return make_error(
                 error="No totals odds found for this match",
                 message="No totals odds found",
-                status_code=404
+                status_code=404,
             )
 
         totals_predictions = calculate_totals_from_odds(odds_data)
 
-        return make_ok({
-            "totals": totals_predictions,
-            "source": "The Odds API"
-        })
+        return make_ok({"totals": totals_predictions, "source": "The Odds API"})
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error fetching totals for %s", event_id)
         return make_error(
             error="Unable to load over/under data. Please try again later.",
             message="Failed to fetch totals",
-            status_code=500
+            status_code=500,
         )
+
 
 @app.route("/match/<event_id>/btts", methods=["GET"])
 def get_match_btts(event_id):
@@ -431,25 +460,30 @@ def get_match_btts(event_id):
             return make_error(
                 error="sport_key parameter required",
                 message="Missing sport_key parameter",
-                status_code=400
+                status_code=400,
             )
 
         from .odds_api_client import get_event_odds
-        from .odds_calculator import calculate_btts_from_odds, calculate_btts_probability_from_xg
+        from .odds_calculator import (
+            calculate_btts_from_odds,
+            calculate_btts_probability_from_xg,
+        )
 
         # Fetch BTTS odds from The Odds API
-        odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="btts")
+        odds_data = get_event_odds(
+            sport_key, event_id, regions="us,uk,eu", markets="btts"
+        )
 
         if not odds_data:
             return make_error(
                 error="No BTTS odds found for this match",
                 message="No BTTS odds found",
-                status_code=404
+                status_code=404,
             )
-        
+
         # Calculate market consensus from bookmakers
         btts_market = calculate_btts_from_odds(odds_data)
-        
+
         # Get xG-based prediction if xG data available
         # NOTE: BTTS needs TRUE defensive xGA from Understat, not FBref's PSxGA (goalkeeper metric)
         btts_xg = None
@@ -457,59 +491,78 @@ def get_match_btts(event_id):
             try:
                 # Get offensive xG from FBref
                 xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
-                
+
                 # Get defensive xGA from Understat context (TRUE defensive metric, not goalkeeper PSxGA)
                 from .understat_client import fetch_understat_standings
+
                 current_season = get_current_season()
                 standings = fetch_understat_standings(league_code, current_season)
-                
+
                 home_xg_per_game = None
                 away_xg_per_game = None
                 home_xga_per_game = None
                 away_xga_per_game = None
-                
+
                 # Get offensive xG/game from FBref
-                if xg_prediction.get('available') and xg_prediction.get('xg'):
-                    home_xg_per_game = xg_prediction['xg'].get('home_stats', {}).get('xg_for_per_game')
-                    away_xg_per_game = xg_prediction['xg'].get('away_stats', {}).get('xg_for_per_game')
-                
+                if xg_prediction.get("available") and xg_prediction.get("xg"):
+                    home_xg_per_game = xg_prediction["xg"].get("home_stats", {}).get(
+                        "xg_for_per_game"
+                    )
+                    away_xg_per_game = xg_prediction["xg"].get("away_stats", {}).get(
+                        "xg_for_per_game"
+                    )
+
                 # Get defensive xGA/game from Understat standings (NOT PSxGA)
                 if standings:
-                    home_standings = next((team for team in standings if fuzzy_team_match(team['name'], home_team)), None)
-                    away_standings = next((team for team in standings if fuzzy_team_match(team['name'], away_team)), None)
-                    
-                    if home_standings and home_standings.get('xGA') is not None and home_standings.get('played', 0) > 0:
-                        home_xga_per_game = home_standings['xGA'] / home_standings['played']
-                    
-                    if away_standings and away_standings.get('xGA') is not None and away_standings.get('played', 0) > 0:
-                        away_xga_per_game = away_standings['xGA'] / away_standings['played']
-                    
-                if all([x is not None for x in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]]):
+                    home_standings = next(
+                        (team for team in standings if fuzzy_team_match(team["name"], home_team)),
+                        None,
+                    )
+                    away_standings = next(
+                        (team for team in standings if fuzzy_team_match(team["name"], away_team)),
+                        None,
+                    )
+
+                    if (
+                        home_standings
+                        and home_standings.get("xGA") is not None
+                        and home_standings.get("played", 0) > 0
+                    ):
+                        home_xga_per_game = home_standings["xGA"] / home_standings["played"]
+
+                    if (
+                        away_standings
+                        and away_standings.get("xGA") is not None
+                        and away_standings.get("played", 0) > 0
+                    ):
+                        away_xga_per_game = away_standings["xGA"] / away_standings["played"]
+
+                if all(
+                    x is not None
+                    for x in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]
+                ):
                     btts_xg = calculate_btts_probability_from_xg(
                         home_xg_per_game,
                         away_xg_per_game,
                         home_xga_per_game,
-                        away_xga_per_game
+                        away_xga_per_game,
                     )
             except Exception as e:
                 logger.warning("⚠️  Could not calculate xG-based BTTS: %s", e)
                 btts_xg = None
-        
-        return make_ok({
-            "btts": {
-                "market": btts_market,
-                "xg_model": btts_xg
-            },
-            "source": "The Odds API + xG Analysis"
-        })
 
-    except Exception as e:
+        return make_ok(
+            {"btts": {"market": btts_market, "xg_model": btts_xg}, "source": "The Odds API + xG Analysis"}
+        )
+
+    except Exception:
         logger.exception("Error fetching BTTS for %s", event_id)
         return make_error(
             error="Unable to load BTTS data. Please try again later.",
             message="Failed to fetch BTTS data",
-            status_code=500
+            status_code=500,
         )
+
 
 @app.route("/match/<event_id>/xg", methods=["GET"])
 def get_match_xg(event_id):
@@ -524,38 +577,38 @@ def get_match_xg(event_id):
             return make_error(
                 error="home_team and away_team parameters required",
                 message="Missing team parameters",
-                status_code=400
+                status_code=400,
             )
 
         if not league_code:
             return make_error(
                 error="league parameter required",
                 message="Missing league parameter",
-                status_code=400
+                status_code=400,
             )
 
         # Get xG prediction for the match
         xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
 
-        if not xg_prediction.get('available'):
-            return make_ok({
-                "xg": None,
-                "error": xg_prediction.get('error', 'xG data not available'),
-                "source": "FBref via soccerdata"
-            })
+        if not xg_prediction.get("available"):
+            return make_ok(
+                {
+                    "xg": None,
+                    "error": xg_prediction.get("error", "xG data not available"),
+                    "source": "FBref via soccerdata",
+                }
+            )
 
-        return make_ok({
-            "xg": xg_prediction,
-            "source": "FBref via soccerdata"
-        })
+        return make_ok({"xg": xg_prediction, "source": "FBref via soccerdata"})
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error fetching xG for %s", event_id)
         return make_error(
             error="Unable to load xG data. Please try again later.",
             message="Failed to fetch xG data",
-            status_code=200
+            status_code=200,
         )
+
 
 @app.route("/career_xg", methods=["GET"])
 @legacy_endpoint
@@ -570,7 +623,7 @@ def get_career_xg():
             return make_error(
                 error="team and league parameters required",
                 message="Missing team or league parameter",
-                status_code=400
+                status_code=400,
             )
 
         from .xg_data_fetcher import fetch_career_xg_stats
@@ -578,24 +631,24 @@ def get_career_xg():
         career_stats = fetch_career_xg_stats(team, league)
 
         if not career_stats:
-            return make_ok({
-                "career_xg": None,
-                "error": "No historical xG data available for this team",
-                "source": "FBref (2010-2025)"
-            })
+            return make_ok(
+                {
+                    "career_xg": None,
+                    "error": "No historical xG data available for this team",
+                    "source": "FBref (2010-2025)",
+                }
+            )
 
-        return make_ok({
-            "career_xg": career_stats,
-            "source": "FBref (2010-2025)"
-        })
+        return make_ok({"career_xg": career_stats, "source": "FBref (2010-2025)"})
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error fetching career xG")
         return make_error(
             error="Unable to load career xG data",
             message="Failed to fetch career xG",
-            status_code=200
+            status_code=200,
         )
+
 
 @app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
@@ -618,7 +671,7 @@ def get_match_context(match_id):
                 return make_error(
                     error="league parameter required",
                     message="Missing league parameter",
-                    status_code=400
+                    status_code=400,
                 )
 
         from .understat_client import fetch_understat_standings
@@ -649,7 +702,7 @@ def get_match_context(match_id):
                     "understat": executor.submit(fetch_understat_standings, league, current_season),
                     "elo": executor.submit(fetch_elos),
                 }
-                done, not_done = wait(futures.values(), timeout=API_TIMEOUT_CONTEXT)
+                done, _ = wait(futures.values(), timeout=API_TIMEOUT_CONTEXT)
 
                 for key, future in futures.items():
                     if future in done:
@@ -660,8 +713,6 @@ def get_match_context(match_id):
                                 source = "Understat" if standings else None
                             elif key == "elo":
                                 home_elo, away_elo = result
-                            else:
-                                pass
                         except APIError as api_err:
                             logger.warning(
                                 "API error from %s: %s", key, getattr(api_err, "message", str(api_err))
@@ -673,7 +724,7 @@ def get_match_context(match_id):
                         except FuturesTimeoutError:
                             logger.warning("Timeout retrieving future for %s", key)
                             missing_sources.append(key)
-                        except Exception as unexpected:
+                        except Exception:
                             logger.exception("Unexpected error from %s", key)
                             missing_sources.append(key)
                     else:
@@ -690,17 +741,23 @@ def get_match_context(match_id):
                 logger.warning("[ContextFetcher] Partial data due to errors: %s", missing_sources)
 
             # Calculate Elo-based probabilities
-            elo_probs = calculate_elo_probabilities(home_elo, away_elo) if home_elo and away_elo else None
-            
+            elo_probs = (
+                calculate_elo_probabilities(home_elo, away_elo) if home_elo and away_elo else None
+            )
+
             home_data = None
             away_data = None
-            
+
             if standings and home_team:
-                home_data = next((team for team in standings if fuzzy_team_match(team['name'], home_team)), None)
-            
+                home_data = next(
+                    (team for team in standings if fuzzy_team_match(team["name"], home_team)), None
+                )
+
             if standings and away_team:
-                away_data = next((team for team in standings if fuzzy_team_match(team['name'], away_team)), None)
-            
+                away_data = next(
+                    (team for team in standings if fuzzy_team_match(team["name"], away_team)), None
+                )
+
             # Generate narrative based on available data
             if home_data and away_data:
                 narrative = generate_match_narrative(home_data, away_data)
@@ -709,54 +766,56 @@ def get_match_context(match_id):
             elif home_data or away_data:
                 narrative = "Partial standings available. Full context data unavailable for this match."
             else:
-                narrative = f"Standings not available for {league}. This may be a cup competition or teams not found in league standings."
-            
+                narrative = (
+                    f"Standings not available for {league}. This may be a cup competition or teams not found in league standings."
+                )
+
             # Calculate season display string
             season_start = current_season - 1
             season_display = f"{season_start}/{str(current_season)[-2:]}"
-            
+
             home_logo_url, away_logo_url = build_team_logo_urls(home_team, away_team)
 
             context = {
                 "home_team": {
-                    "position": home_data.get('position') if home_data else None,
-                    "points": home_data.get('points') if home_data else None,
-                    "form": home_data.get('form') if home_data else None,
+                    "position": home_data.get("position") if home_data else None,
+                    "points": home_data.get("points") if home_data else None,
+                    "form": home_data.get("form") if home_data else None,
                     "name": home_team,
                     "logo_url": home_logo_url,
-                    "ppda_coef": home_data.get('ppda_coef') if home_data else None,
-                    "oppda_coef": home_data.get('oppda_coef') if home_data else None,
-                    "xG": home_data.get('xG') if home_data else None,
-                    "xGA": home_data.get('xGA') if home_data else None,
+                    "ppda_coef": home_data.get("ppda_coef") if home_data else None,
+                    "oppda_coef": home_data.get("oppda_coef") if home_data else None,
+                    "xG": home_data.get("xG") if home_data else None,
+                    "xGA": home_data.get("xGA") if home_data else None,
                     "elo_rating": home_elo,
-                    "played": home_data.get('match_count', home_data.get('played', 0)) if home_data else 0,
-                    "xg_percentile": home_data.get('xg_percentile') if home_data else None,
-                    "xga_percentile": home_data.get('xga_percentile') if home_data else None,
-                    "ppda_percentile": home_data.get('ppda_percentile') if home_data else None,
-                    "attack_rating": home_data.get('attack_rating') if home_data else None,
-                    "defense_rating": home_data.get('defense_rating') if home_data else None,
-                    "league_stats": home_data.get('league_stats') if home_data else None,
-                    "recent_trend": home_data.get('recent_trend') if home_data else None
+                    "played": home_data.get("match_count", home_data.get("played", 0)) if home_data else 0,
+                    "xg_percentile": home_data.get("xg_percentile") if home_data else None,
+                    "xga_percentile": home_data.get("xga_percentile") if home_data else None,
+                    "ppda_percentile": home_data.get("ppda_percentile") if home_data else None,
+                    "attack_rating": home_data.get("attack_rating") if home_data else None,
+                    "defense_rating": home_data.get("defense_rating") if home_data else None,
+                    "league_stats": home_data.get("league_stats") if home_data else None,
+                    "recent_trend": home_data.get("recent_trend") if home_data else None,
                 },
                 "away_team": {
-                    "position": away_data.get('position') if away_data else None,
-                    "points": away_data.get('points') if away_data else None,
-                    "form": away_data.get('form') if away_data else None,
+                    "position": away_data.get("position") if away_data else None,
+                    "points": away_data.get("points") if away_data else None,
+                    "form": away_data.get("form") if away_data else None,
                     "name": away_team,
                     "logo_url": away_logo_url,
-                    "ppda_coef": away_data.get('ppda_coef') if away_data else None,
-                    "oppda_coef": away_data.get('oppda_coef') if away_data else None,
-                    "xG": away_data.get('xG') if away_data else None,
-                    "xGA": away_data.get('xGA') if away_data else None,
+                    "ppda_coef": away_data.get("ppda_coef") if away_data else None,
+                    "oppda_coef": away_data.get("oppda_coef") if away_data else None,
+                    "xG": away_data.get("xG") if away_data else None,
+                    "xGA": away_data.get("xGA") if away_data else None,
                     "elo_rating": away_elo,
-                    "played": away_data.get('match_count', away_data.get('played', 0)) if away_data else 0,
-                    "xg_percentile": away_data.get('xg_percentile') if away_data else None,
-                    "xga_percentile": away_data.get('xga_percentile') if away_data else None,
-                    "ppda_percentile": away_data.get('ppda_percentile') if away_data else None,
-                    "attack_rating": away_data.get('attack_rating') if away_data else None,
-                    "defense_rating": away_data.get('defense_rating') if away_data else None,
-                    "league_stats": away_data.get('league_stats') if away_data else None,
-                    "recent_trend": away_data.get('recent_trend') if away_data else None
+                    "played": away_data.get("match_count", away_data.get("played", 0)) if away_data else 0,
+                    "xg_percentile": away_data.get("xg_percentile") if away_data else None,
+                    "xga_percentile": away_data.get("xga_percentile") if away_data else None,
+                    "ppda_percentile": away_data.get("ppda_percentile") if away_data else None,
+                    "attack_rating": away_data.get("attack_rating") if away_data else None,
+                    "defense_rating": away_data.get("defense_rating") if away_data else None,
+                    "league_stats": away_data.get("league_stats") if away_data else None,
+                    "recent_trend": away_data.get("recent_trend") if away_data else None,
                 },
                 "elo_predictions": elo_probs,
                 "narrative": narrative,
@@ -771,10 +830,10 @@ def get_match_context(match_id):
                 logger.info(
                     "✅ Elo predictions computed",
                     extra={
-                        "home_win": elo_probs['home_win'],
-                        "draw": elo_probs['draw'],
-                        "away_win": elo_probs['away_win']
-                    }
+                        "home_win": elo_probs["home_win"],
+                        "draw": elo_probs["draw"],
+                        "away_win": elo_probs["away_win"],
+                    },
                 )
 
             if timed_out:
@@ -797,14 +856,13 @@ def get_match_context(match_id):
             raise
         except FuturesTimeoutError:
             raise
-        except Exception as e:
+        except Exception:
             logger.exception("Error fetching context for %s", match_id)
             return make_ok({"narrative": "Match context unavailable"})
 
     except APIError as e:
         logger.warning(
-            "Upstream API error in /match/context: %s",
-            getattr(e, "message", str(e)),
+            "Upstream API error in /match/context: %s", getattr(e, "message", str(e))
         )
         return make_error(
             {"source": getattr(e, "source", None), "detail": str(e)},
@@ -814,19 +872,20 @@ def get_match_context(match_id):
     except FuturesTimeoutError:
         logger.warning("Global timeout in /match/context")
         return make_error(None, "Context assembly timeout", status_code=504)
-    except Exception as e:
+    except Exception:
         logger.exception("Error in match context for %s", match_id)
         return make_error(
             error="Unable to load match context. Please try again later.",
             message="Failed to fetch match context",
-            status_code=500
+            status_code=500,
         )
+
 
 def generate_match_narrative(home_data, away_data):
     """Generate a narrative description of the match importance"""
-    home_pos = home_data.get('position', 99)
-    away_pos = away_data.get('position', 99)
-    
+    home_pos = home_data.get("position", 99)
+    away_pos = away_data.get("position", 99)
+
     if home_pos <= 2 and away_pos <= 2:
         return "Top of the table clash between title contenders"
     elif home_pos <= 4 and away_pos <= 4:
@@ -834,11 +893,12 @@ def generate_match_narrative(home_data, away_data):
     elif abs(home_pos - away_pos) <= 2:
         return "Close contest between neighboring teams in the standings"
     elif home_pos <= 3:
-        return f"League leaders face mid-table opposition"
+        return "League leaders face mid-table opposition"
     elif away_pos <= 3:
-        return f"Underdogs host league leaders"
+        return "Underdogs host league leaders"
     else:
         return "Mid-table encounter"
+
 
 @app.route("/process_data", methods=["POST"])
 def process_data():
@@ -848,16 +908,16 @@ def process_data():
         return make_error(
             error="Data processing via this endpoint is deprecated. Please use API-Football for data.",
             message="Endpoint deprecated",
-            status_code=400
+            status_code=400,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Error handling /process_data request")
         return make_error(
             error="Service error. Please try again later.",
             message="Service error",
-            status_code=500
+            status_code=500,
         )
+
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
-
