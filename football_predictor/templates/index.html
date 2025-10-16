@@ -1265,6 +1265,7 @@
         let currentProgressValue = 0;
         let matchContextProgressInterval = null;
         let isMatchContextLoading = false;
+        let contextRequestToken = 0;
 
         function getProgress() {
             return currentProgressValue;
@@ -1307,6 +1308,42 @@
                 }, delay);
             };
             schedule();
+        }
+
+        function fetchJsonWithTimeout(url, timeoutMs = 40000, label = 'request') {
+            const controller = new AbortController();
+            const { signal } = controller;
+
+            return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => {
+                    controller.abort();
+                    const timeoutError = new Error(`${label} timeout`);
+                    timeoutError.name = 'TimeoutError';
+                    reject(timeoutError);
+                }, timeoutMs);
+
+                fetch(url, { signal })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`${label} failed (${response.status})`);
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        clearTimeout(timer);
+                        resolve(data);
+                    })
+                    .catch(error => {
+                        clearTimeout(timer);
+                        if (error.name === 'AbortError') {
+                            const timeoutError = new Error(`${label} timeout`);
+                            timeoutError.name = 'TimeoutError';
+                            reject(timeoutError);
+                        } else {
+                            reject(error);
+                        }
+                    });
+            });
         }
 
         function updateProgressStatus(message, icon = 'database') {
@@ -1365,7 +1402,7 @@
             currentTipIndex = 0;
         }
 
-        function loadMatchContext(match) {
+        async function loadMatchContext(match) {
             const matchContext = document.getElementById('match-context');
             if (!match || !match.league) {
                 matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
@@ -1376,8 +1413,8 @@
                 return;
             }
             isMatchContextLoading = true;
+            const requestToken = ++contextRequestToken;
 
-            // Clear xG data from previous match to prevent stale data
             currentXgData = null;
 
             const triggerButton = document.getElementById('load-match-context-btn');
@@ -1388,16 +1425,12 @@
 
             const t0 = performance.now();
 
-            // Show initial progress
             updateProgressStatus('Initiating data fetch...', 'database');
             setProgress(0.55);
             console.debug('[context] open modal, progress=55%');
             startMatchContextTrickle();
 
-            // Use league_code from match data (added in odds_api_client.py)
             const leagueCode = match.league_code || match.league;
-
-            // Fallback mapping for older data without league_code
             const leagueMapFallback = {
                 'UEFA Champions League': 'CL',
                 'EPL': 'PL',
@@ -1420,82 +1453,117 @@
                 'UEFA Europa League': 'EL'
             };
 
-            // Apply fallback mapping if league code is a display name
             const finalLeagueCode = leagueMapFallback[leagueCode] || leagueCode;
 
-            // Update progress: Fetching from Understat
             setTimeout(() => updateProgressStatus('Fetching standings from Understat...', 'database'), 100);
             setTimeout(() => updateProgressStatus('Fetching match context insights...', 'database'), 180);
 
-            // Add timeout to prevent endless loading (increased to 40s for Understat)
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Request timeout')), 40000)
-            );
+            const coreUrl = `/match/${match.id}/context_core?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}&event_id=${encodeURIComponent(match.id)}`;
+            const xgUrl = `/match/${match.id}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`;
 
-            // Start context fetch
-            const contextFetch = fetch(`/match/${match.id}/context?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}&event_id=${encodeURIComponent(match.id)}`)
-                .then(r => r.json())
-                .then(data => {
-                    updateProgressStatus('Calculating xG metrics from FBref...', 'chart-line');
-                    return data;
-                });
-
-            // Start xG fetch after context starts
-            const xgFetch = fetch(`/match/${match.id}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
-                .then(r => r.json())
-                .then(data => {
-                    updateProgressStatus('Processing PPDA coefficients...', 'bullseye');
-                    return data;
-                });
+            const finalize = () => {
+                stopMatchContextTrickle();
+                setProgress(1);
+                isMatchContextLoading = false;
+                const reloadButton = document.getElementById('load-match-context-btn');
+                if (reloadButton) {
+                    reloadButton.disabled = false;
+                    reloadButton.classList.remove('disabled');
+                }
+            };
 
             console.debug('[context] request sent');
 
-            // Fetch essential data only (career xG now loads on-demand to prevent timeouts)
-            Promise.race([
-                Promise.all([contextFetch, xgFetch]),
-                timeoutPromise
-            ])
-            .then(([contextData, xgData]) => {
-                stopMatchContextTrickle();
-                updateProgressStatus('Finalizing data...', 'check-circle');
-                setProgress(1);
-                console.debug('[context] response received in', (performance.now() - t0).toFixed(0), 'ms');
+            try {
+                const coreStart = performance.now();
+                const coreData = await fetchJsonWithTimeout(coreUrl, 40000, 'context_core');
+                console.debug('[context] context_core response in', (performance.now() - coreStart).toFixed(0), 'ms');
 
-                if (contextData.error) {
-                    clearTipRotation();
-                    matchContext.innerHTML = `<p class="text-muted">${contextData.narrative || 'Context unavailable'}</p>`;
-                    console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
-                    requestAnimationFrame(() => {
-                        console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
-                    });
+                if (requestToken !== contextRequestToken) {
                     return;
                 }
 
-                // Merge xG data into context data
-                contextData.xg = xgData.xg || null;
-                // Career xG will be loaded separately on demand
-                contextData.home_career = null;
-                contextData.away_career = null;
-                
-                // Store globally for career stats access
-                currentContextData = contextData;
+                if (coreData && coreData.error) {
+                    throw new Error(coreData.error);
+                }
 
-                setTimeout(() => {
+                const standings = coreData && typeof coreData.standings === 'object' ? coreData.standings : {};
+                currentContextData = { ...standings };
+                currentContextData.xg = null;
+                currentContextData.xg_loading = true;
+                currentContextData.xg_error = null;
+                currentContextData.home_career = null;
+                currentContextData.away_career = null;
+
+                if (coreData?.elo) {
+                    const { home_rating, away_rating, predictions } = coreData.elo;
+                    if (currentContextData.home_team && home_rating !== undefined && home_rating !== null) {
+                        currentContextData.home_team.elo_rating = home_rating;
+                    }
+                    if (currentContextData.away_team && away_rating !== undefined && away_rating !== null) {
+                        currentContextData.away_team.elo_rating = away_rating;
+                    }
+                    if (predictions) {
+                        currentContextData.elo_predictions = predictions;
+                    }
+                }
+
+                if (coreData?.meta) {
+                    currentContextData.meta = coreData.meta;
+                }
+
+                clearTipRotation();
+                displayMatchContextData(currentContextData);
+                console.debug('[context] DOM (core) filled in', (performance.now() - t0).toFixed(0), 'ms');
+
+                try {
+                    const xgStart = performance.now();
+                    const xgData = await fetchJsonWithTimeout(xgUrl, 40000, 'context_xg');
+                    console.debug('[context] context_xg response in', (performance.now() - xgStart).toFixed(0), 'ms');
+
+                    if (requestToken !== contextRequestToken) {
+                        return;
+                    }
+
+                    if (xgData && xgData.xg) {
+                        currentContextData.xg = xgData.xg;
+                        currentContextData.xg_error = null;
+                        currentXgData = xgData.xg;
+                    } else {
+                        currentContextData.xg = null;
+                        currentContextData.xg_error = xgData?.error || 'xG data not available for this match.';
+                        currentXgData = null;
+                    }
+
+                    currentContextData.home_career = null;
+                    currentContextData.away_career = null;
+                    currentContextData.xg_loading = false;
+
                     clearTipRotation();
                     displayMatchContextData(currentContextData);
                     console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
                     requestAnimationFrame(() => {
                         console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
                     });
-                }, 300);
-            })
-            .catch(error => {
+                } catch (xgError) {
+                    console.error('Error loading xG context:', xgError);
+                    currentContextData.xg = null;
+                    currentContextData.xg_error = xgError.name === 'TimeoutError'
+                        ? 'xG data timed out. Showing standings & Elo only.'
+                        : 'xG data unavailable at the moment.';
+                    currentContextData.xg_loading = false;
+                    currentXgData = null;
+                    clearTipRotation();
+                    displayMatchContextData(currentContextData);
+                    console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
+                    requestAnimationFrame(() => {
+                        console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
+                    });
+                }
+            } catch (error) {
                 console.error('Error loading context:', error);
-                stopMatchContextTrickle();
-                console.debug('[context] response received in', (performance.now() - t0).toFixed(0), 'ms');
-                setProgress(1);
                 clearTipRotation();
-                const errorMsg = error.message === 'Request timeout'
+                const errorMsg = error.name === 'TimeoutError'
                     ? 'Match context loading timed out after 40 seconds. Please try again.'
                     : 'Unable to load match context';
                 matchContext.innerHTML = `
@@ -1510,17 +1578,9 @@
                 requestAnimationFrame(() => {
                     console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
                 });
-            })
-            .finally(() => {
-                stopMatchContextTrickle();
-                setProgress(1);
-                isMatchContextLoading = false;
-                const reloadButton = document.getElementById('load-match-context-btn');
-                if (reloadButton) {
-                    reloadButton.disabled = false;
-                    reloadButton.classList.remove('disabled');
-                }
-            });
+            } finally {
+                finalize();
+            }
         }
         
         function getTeamAbbreviation(teamName) {
@@ -1735,6 +1795,22 @@
                 // Add xG trend charts
                 if (contextData.xg) {
                     html += displayXgCharts(contextData.xg);
+                } else if (contextData.xg_loading) {
+                    html += `
+                        <div class="card mt-3">
+                            <div class="card-body text-center text-muted small">
+                                <i class="fas fa-spinner fa-spin me-2"></i>Loading xG trends...
+                            </div>
+                        </div>
+                    `;
+                } else if (contextData.xg_error) {
+                    html += `
+                        <div class="card mt-3">
+                            <div class="card-body text-center text-muted small">
+                                <i class="fas fa-info-circle me-2"></i>${contextData.xg_error}
+                            </div>
+                        </div>
+                    `;
                 }
             }
             
