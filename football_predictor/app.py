@@ -1,9 +1,10 @@
-from flask import Flask, render_template, request, url_for, current_app
+from flask import Flask, render_template, request, url_for, current_app, g
 import os
 import json
 from datetime import datetime, timezone
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from time import monotonic
@@ -20,7 +21,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # football-data.org API removed - using Understat as primary source for standings
 from .odds_api_client import get_upcoming_matches_with_odds, LEAGUE_CODE_MAPPING
 from .odds_calculator import calculate_predictions_from_odds
-from .xg_data_fetcher import get_match_xg_prediction
+from .xg_data_fetcher import (
+    clear_request_memo_id,
+    get_match_xg_prediction,
+    set_request_memo_id,
+)
 from .utils import get_current_season, fuzzy_team_match
 from .errors import APIError
 from .validators import (
@@ -36,6 +41,22 @@ app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 logger = setup_logger(__name__)
+
+
+@app.before_request
+def _prime_request_memo() -> None:
+    request_id = uuid.uuid4().hex
+    g._xg_request_memo_id = request_id
+    set_request_memo_id(request_id)
+
+
+@app.teardown_request
+def _clear_request_memo(_exc: Optional[BaseException]) -> None:
+    try:
+        clear_request_memo_id()
+    finally:
+        if hasattr(g, "pop"):
+            g.pop("_xg_request_memo_id", None)
 
 # ---- T29c: small Elo reuse caches (in-process) ----
 _RECENT_ELO_TTL_SEC = 30 * 60  # 30 minutes
@@ -134,6 +155,215 @@ def build_team_logo_urls(home_team: Optional[str], away_team: Optional[str]) -> 
 
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
+
+
+def _assemble_match_context_core(
+    league: str,
+    home_team: Optional[str],
+    away_team: Optional[str],
+    event_id: Optional[str],
+) -> dict:
+    from .understat_client import fetch_understat_standings
+    from .elo_client import calculate_elo_probabilities
+
+    # ---- T29c: try to reuse Elo from recent caches BEFORE calling ClubElo ----
+    home_elo = None
+    away_elo = None
+
+    cached_pair = _match_elo_cache_get(event_id)
+    if cached_pair is not None:
+        home_elo, away_elo = cached_pair
+
+    if home_elo is None and home_team:
+        home_elo = _elo_cache_get(home_team)
+    if away_elo is None and away_team:
+        away_elo = _elo_cache_get(away_team)
+    # ---- end T29c reuse ----
+
+    current_season = get_current_season()
+    logger.info("📊 Fetching standings from Understat", extra={"season": current_season})
+
+    start_time = time.monotonic()
+    standings = None
+    source = None
+    missing_sources: list[str] = []
+    timeout_missing: list[str] = []
+
+    def fetch_elos():
+        from .elo_client import get_team_elo
+
+        he = home_elo
+        ae = away_elo
+        try:
+            if he is None and home_team:
+                he = get_team_elo(home_team, allow_network=False)
+                _elo_cache_put(home_team, he)
+            if ae is None and away_team:
+                ae = get_team_elo(away_team, allow_network=False)
+                _elo_cache_put(away_team, ae)
+        except Exception as elo_err:
+            logger.warning(
+                "Context: Elo fetch issue: %s",
+                getattr(elo_err, "code", type(elo_err).__name__),
+            )
+        return (he, ae)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {
+            "understat": executor.submit(fetch_understat_standings, league, current_season),
+        }
+        if home_elo is None or away_elo is None:
+            futures["elo"] = executor.submit(fetch_elos)
+
+        done, _ = wait(futures.values(), timeout=API_TIMEOUT_CONTEXT)
+
+        for key, future in futures.items():
+            if future in done:
+                try:
+                    result = future.result()
+                    if key == "understat":
+                        standings = result
+                        source = "Understat" if standings else None
+                    elif key == "elo":
+                        home_elo, away_elo = result
+                except APIError as api_err:
+                    logger.warning(
+                        "API error from %s: %s",
+                        key,
+                        getattr(api_err, "message", str(api_err)),
+                    )
+                    missing_sources.append(key)
+                except (ValueError, KeyError) as parse_err:
+                    logger.warning("Parse error from %s: %s", key, parse_err)
+                    missing_sources.append(key)
+                except FuturesTimeoutError:
+                    logger.warning("Timeout retrieving future for %s", key)
+                    missing_sources.append(key)
+                except Exception as unexpected:
+                    logger.exception("Unexpected error from %s", key)
+                    missing_sources.append(key)
+            else:
+                future.cancel()
+                logger.warning("Timeout retrieving future for %s", key)
+                missing_sources.append(key)
+                timeout_missing.append(key)
+
+    timed_out = bool(timeout_missing)
+    if timed_out:
+        elapsed = time.monotonic() - start_time
+        logger.warning("[ContextFetcher] Timeout after %.2fs – served partial data.", elapsed)
+    elif missing_sources:
+        logger.warning("[ContextFetcher] Partial data due to errors: %s", missing_sources)
+
+    if event_id:
+        _match_elo_cache_put(event_id, home_elo, away_elo)
+
+    elo_probs = (
+        calculate_elo_probabilities(home_elo, away_elo)
+        if home_elo and away_elo
+        else None
+    )
+
+    home_data = None
+    away_data = None
+
+    if standings and home_team:
+        home_data = next((team for team in standings if fuzzy_team_match(team['name'], home_team)), None)
+
+    if standings and away_team:
+        away_data = next((team for team in standings if fuzzy_team_match(team['name'], away_team)), None)
+
+    if home_data and away_data:
+        narrative = generate_match_narrative(home_data, away_data)
+        if source:
+            logger.info("✅ Standings fetched", extra={"source": source})
+    elif home_data or away_data:
+        narrative = "Partial standings available. Full context data unavailable for this match."
+    else:
+        narrative = (
+            f"Standings not available for {league}. This may be a cup competition or teams not found in league standings."
+        )
+
+    season_start = current_season - 1
+    season_display = f"{season_start}/{str(current_season)[-2:]}"
+
+    home_logo_url, away_logo_url = build_team_logo_urls(home_team, away_team)
+
+    context = {
+        "home_team": {
+            "position": home_data.get('position') if home_data else None,
+            "points": home_data.get('points') if home_data else None,
+            "form": home_data.get('form') if home_data else None,
+            "name": home_team,
+            "logo_url": home_logo_url,
+            "ppda_coef": home_data.get('ppda_coef') if home_data else None,
+            "oppda_coef": home_data.get('oppda_coef') if home_data else None,
+            "xG": home_data.get('xG') if home_data else None,
+            "xGA": home_data.get('xGA') if home_data else None,
+            "elo_rating": home_elo,
+            "played": home_data.get('match_count', home_data.get('played', 0)) if home_data else 0,
+            "xg_percentile": home_data.get('xg_percentile') if home_data else None,
+            "xga_percentile": home_data.get('xga_percentile') if home_data else None,
+            "ppda_percentile": home_data.get('ppda_percentile') if home_data else None,
+            "attack_rating": home_data.get('attack_rating') if home_data else None,
+            "defense_rating": home_data.get('defense_rating') if home_data else None,
+            "league_stats": home_data.get('league_stats') if home_data else None,
+            "recent_trend": home_data.get('recent_trend') if home_data else None,
+        },
+        "away_team": {
+            "position": away_data.get('position') if away_data else None,
+            "points": away_data.get('points') if away_data else None,
+            "form": away_data.get('form') if away_data else None,
+            "name": away_team,
+            "logo_url": away_logo_url,
+            "ppda_coef": away_data.get('ppda_coef') if away_data else None,
+            "oppda_coef": away_data.get('oppda_coef') if away_data else None,
+            "xG": away_data.get('xG') if away_data else None,
+            "xGA": away_data.get('xGA') if away_data else None,
+            "elo_rating": away_elo,
+            "played": away_data.get('match_count', away_data.get('played', 0)) if away_data else 0,
+            "xg_percentile": away_data.get('xg_percentile') if away_data else None,
+            "xga_percentile": away_data.get('xga_percentile') if away_data else None,
+            "ppda_percentile": away_data.get('ppda_percentile') if away_data else None,
+            "attack_rating": away_data.get('attack_rating') if away_data else None,
+            "defense_rating": away_data.get('defense_rating') if away_data else None,
+            "league_stats": away_data.get('league_stats') if away_data else None,
+            "recent_trend": away_data.get('recent_trend') if away_data else None,
+        },
+        "elo_predictions": elo_probs,
+        "narrative": narrative,
+        "has_data": bool(home_data or away_data),
+        "source": source,
+        "season_display": season_display,
+        "home_logo_url": home_logo_url,
+        "away_logo_url": away_logo_url,
+    }
+
+    if elo_probs:
+        logger.info(
+            "✅ Elo predictions computed",
+            extra={
+                "home_win": elo_probs['home_win'],
+                "draw": elo_probs['draw'],
+                "away_win": elo_probs['away_win'],
+            },
+        )
+
+    if timed_out:
+        context.update(
+            {
+                "partial": True,
+                "missing": sorted(set(timeout_missing)),
+                "source": "partial_timeout",
+                "warning": "context timeout",
+            }
+        )
+        if source:
+            context["standings_source"] = source
+    else:
+        context["source"] = source
+
+    return context
 
 @app.route("/")
 def index():
@@ -608,16 +838,30 @@ def get_match_xg(event_id):
                 status_code=400
             )
 
+        start_time = time.monotonic()
+
         # Get xG prediction for the match
         xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
 
         if not xg_prediction.get('available'):
+            elapsed_ms = (time.monotonic() - start_time) * 1000
+            logger.info(
+                "context_xg ready in %.0f ms (partial)",
+                elapsed_ms,
+                extra={"event_id": event_id},
+            )
             return make_ok({
                 "xg": None,
                 "error": xg_prediction.get('error', 'xG data not available'),
                 "source": "FBref via soccerdata"
             })
 
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        logger.info(
+            "context_xg ready in %.0f ms",
+            elapsed_ms,
+            extra={"event_id": event_id},
+        )
         return make_ok({
             "xg": xg_prediction,
             "source": "FBref via soccerdata"
@@ -671,6 +915,110 @@ def get_career_xg():
             status_code=200
         )
 
+
+@app.route("/match/<event_id>/context_core", methods=["GET"])
+def get_match_context_core(event_id):
+    start_time = time.monotonic()
+    try:
+        logger.info("Handling /match context_core request", extra={"match_id": event_id})
+        raw_league = request.args.get("league")
+        league, _lw = validate_league(raw_league)
+        home_team, _ = validate_team_optional(request.args.get("home_team"))
+        away_team, _ = validate_team_optional(request.args.get("away_team"))
+
+        if not league:
+            fallback_league = str(raw_league).strip().upper() if raw_league else ""
+            if fallback_league:
+                league = fallback_league
+            else:
+                return make_error(
+                    error="league parameter required",
+                    message="Missing league parameter",
+                    status_code=400
+                )
+
+        effective_event_id = request.args.get("event_id") or event_id
+
+        try:
+            context = _assemble_match_context_core(league, home_team, away_team, effective_event_id)
+        except APIError:
+            raise
+        except FuturesTimeoutError:
+            raise
+        except Exception:
+            logger.exception("Error building core context for %s", event_id)
+            payload = {
+                "ok": True,
+                "standings": {
+                    "narrative": "Match context unavailable",
+                    "has_data": False,
+                    "home_team": None,
+                    "away_team": None,
+                },
+                "elo": {
+                    "home_rating": None,
+                    "away_rating": None,
+                    "predictions": None,
+                },
+                "meta": {
+                    "league": league,
+                    "home": home_team,
+                    "away": away_team,
+                },
+            }
+            elapsed_ms = (time.monotonic() - start_time) * 1000
+            logger.info(
+                "context_core ready in %.0f ms (error)",
+                elapsed_ms,
+                extra={"match_id": event_id},
+            )
+            return make_ok(payload)
+
+        payload = {
+            "ok": True,
+            "standings": context,
+            "elo": {
+                "home_rating": (context.get("home_team") or {}).get("elo_rating"),
+                "away_rating": (context.get("away_team") or {}).get("elo_rating"),
+                "predictions": context.get("elo_predictions"),
+            },
+            "meta": {
+                "league": league,
+                "home": home_team,
+                "away": away_team,
+            },
+        }
+
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        logger.info(
+            "context_core ready in %.0f ms",
+            elapsed_ms,
+            extra={"match_id": event_id},
+        )
+        return make_ok(payload)
+
+    except APIError as e:
+        logger.warning(
+            "Upstream API error in /match/context_core: %s",
+            getattr(e, "message", str(e)),
+        )
+        return make_error(
+            {"source": getattr(e, "source", None), "detail": str(e)},
+            "Upstream API error",
+            status_code=502,
+        )
+    except FuturesTimeoutError:
+        logger.warning("Global timeout in /match/context_core")
+        return make_error(None, "Context assembly timeout", status_code=504)
+    except Exception as e:
+        logger.exception("Error in match context_core for %s", event_id)
+        return make_error(
+            error="Unable to load match context. Please try again later.",
+            message="Failed to fetch match context",
+            status_code=500,
+        )
+
+
 @app.route("/match/<match_id>/context", methods=["GET"])
 def get_match_context(match_id):
     """Get match context including standings, form, and Elo ratings"""
@@ -692,208 +1040,10 @@ def get_match_context(match_id):
                     status_code=400
                 )
 
-        from .understat_client import fetch_understat_standings
-        from .elo_client import calculate_elo_probabilities
-
-        # ---- T29c: try to reuse Elo from recent caches BEFORE calling ClubElo ----
         event_id = request.args.get("event_id") or None
-        home_elo = None
-        away_elo = None
-
-        cached_pair = _match_elo_cache_get(event_id)
-        if cached_pair is not None:
-            home_elo, away_elo = cached_pair
-
-        if home_elo is None and home_team:
-            home_elo = _elo_cache_get(home_team)
-        if away_elo is None and away_team:
-            away_elo = _elo_cache_get(away_team)
-        # ---- end T29c reuse ----
 
         try:
-            # Use Understat as primary source for standings with dynamic season
-            current_season = get_current_season()
-            logger.info("📊 Fetching standings from Understat", extra={"season": current_season})
-
-            start_time = time.monotonic()
-            standings = None
-            source = None
-            missing_sources = []
-            timeout_missing = []
-
-            def fetch_elos():
-                from .elo_client import get_team_elo
-
-                he = home_elo
-                ae = away_elo
-                try:
-                    if he is None and home_team:
-                        he = get_team_elo(home_team, allow_network=False)
-                        _elo_cache_put(home_team, he)
-                    if ae is None and away_team:
-                        ae = get_team_elo(away_team, allow_network=False)
-                        _elo_cache_put(away_team, ae)
-                except Exception as elo_err:
-                    logger.warning(
-                        "Context: Elo fetch issue: %s",
-                        getattr(elo_err, "code", type(elo_err).__name__),
-                    )
-                return (he, ae)
-
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                futures = {
-                    "understat": executor.submit(fetch_understat_standings, league, current_season),
-                }
-                if home_elo is None or away_elo is None:
-                    futures["elo"] = executor.submit(fetch_elos)
-
-                done, not_done = wait(futures.values(), timeout=API_TIMEOUT_CONTEXT)
-
-                for key, future in futures.items():
-                    if future in done:
-                        try:
-                            result = future.result()
-                            if key == "understat":
-                                standings = result
-                                source = "Understat" if standings else None
-                            elif key == "elo":
-                                home_elo, away_elo = result
-                            else:
-                                pass
-                        except APIError as api_err:
-                            logger.warning(
-                                "API error from %s: %s", key, getattr(api_err, "message", str(api_err))
-                            )
-                            missing_sources.append(key)
-                        except (ValueError, KeyError) as parse_err:
-                            logger.warning("Parse error from %s: %s", key, parse_err)
-                            missing_sources.append(key)
-                        except FuturesTimeoutError:
-                            logger.warning("Timeout retrieving future for %s", key)
-                            missing_sources.append(key)
-                        except Exception as unexpected:
-                            logger.exception("Unexpected error from %s", key)
-                            missing_sources.append(key)
-                    else:
-                        future.cancel()
-                        logger.warning("Timeout retrieving future for %s", key)
-                        missing_sources.append(key)
-                        timeout_missing.append(key)
-
-            timed_out = bool(timeout_missing)
-            if timed_out:
-                elapsed = time.monotonic() - start_time
-                logger.warning("[ContextFetcher] Timeout after %.2fs – served partial data.", elapsed)
-            elif missing_sources:
-                logger.warning("[ContextFetcher] Partial data due to errors: %s", missing_sources)
-
-            if event_id:
-                _match_elo_cache_put(event_id, home_elo, away_elo)
-
-            # Calculate Elo-based probabilities
-            elo_probs = calculate_elo_probabilities(home_elo, away_elo) if home_elo and away_elo else None
-            
-            home_data = None
-            away_data = None
-            
-            if standings and home_team:
-                home_data = next((team for team in standings if fuzzy_team_match(team['name'], home_team)), None)
-            
-            if standings and away_team:
-                away_data = next((team for team in standings if fuzzy_team_match(team['name'], away_team)), None)
-            
-            # Generate narrative based on available data
-            if home_data and away_data:
-                narrative = generate_match_narrative(home_data, away_data)
-                if source:
-                    logger.info("✅ Standings fetched", extra={"source": source})
-            elif home_data or away_data:
-                narrative = "Partial standings available. Full context data unavailable for this match."
-            else:
-                narrative = f"Standings not available for {league}. This may be a cup competition or teams not found in league standings."
-            
-            # Calculate season display string
-            season_start = current_season - 1
-            season_display = f"{season_start}/{str(current_season)[-2:]}"
-            
-            home_logo_url, away_logo_url = build_team_logo_urls(home_team, away_team)
-
-            context = {
-                "home_team": {
-                    "position": home_data.get('position') if home_data else None,
-                    "points": home_data.get('points') if home_data else None,
-                    "form": home_data.get('form') if home_data else None,
-                    "name": home_team,
-                    "logo_url": home_logo_url,
-                    "ppda_coef": home_data.get('ppda_coef') if home_data else None,
-                    "oppda_coef": home_data.get('oppda_coef') if home_data else None,
-                    "xG": home_data.get('xG') if home_data else None,
-                    "xGA": home_data.get('xGA') if home_data else None,
-                    "elo_rating": home_elo,
-                    "played": home_data.get('match_count', home_data.get('played', 0)) if home_data else 0,
-                    "xg_percentile": home_data.get('xg_percentile') if home_data else None,
-                    "xga_percentile": home_data.get('xga_percentile') if home_data else None,
-                    "ppda_percentile": home_data.get('ppda_percentile') if home_data else None,
-                    "attack_rating": home_data.get('attack_rating') if home_data else None,
-                    "defense_rating": home_data.get('defense_rating') if home_data else None,
-                    "league_stats": home_data.get('league_stats') if home_data else None,
-                    "recent_trend": home_data.get('recent_trend') if home_data else None
-                },
-                "away_team": {
-                    "position": away_data.get('position') if away_data else None,
-                    "points": away_data.get('points') if away_data else None,
-                    "form": away_data.get('form') if away_data else None,
-                    "name": away_team,
-                    "logo_url": away_logo_url,
-                    "ppda_coef": away_data.get('ppda_coef') if away_data else None,
-                    "oppda_coef": away_data.get('oppda_coef') if away_data else None,
-                    "xG": away_data.get('xG') if away_data else None,
-                    "xGA": away_data.get('xGA') if away_data else None,
-                    "elo_rating": away_elo,
-                    "played": away_data.get('match_count', away_data.get('played', 0)) if away_data else 0,
-                    "xg_percentile": away_data.get('xg_percentile') if away_data else None,
-                    "xga_percentile": away_data.get('xga_percentile') if away_data else None,
-                    "ppda_percentile": away_data.get('ppda_percentile') if away_data else None,
-                    "attack_rating": away_data.get('attack_rating') if away_data else None,
-                    "defense_rating": away_data.get('defense_rating') if away_data else None,
-                    "league_stats": away_data.get('league_stats') if away_data else None,
-                    "recent_trend": away_data.get('recent_trend') if away_data else None
-                },
-                "elo_predictions": elo_probs,
-                "narrative": narrative,
-                "has_data": bool(home_data or away_data),
-                "source": source,
-                "season_display": season_display,
-                "home_logo_url": home_logo_url,
-                "away_logo_url": away_logo_url,
-            }
-
-            if elo_probs:
-                logger.info(
-                    "✅ Elo predictions computed",
-                    extra={
-                        "home_win": elo_probs['home_win'],
-                        "draw": elo_probs['draw'],
-                        "away_win": elo_probs['away_win']
-                    }
-                )
-
-            if timed_out:
-                context.update(
-                    {
-                        "partial": True,
-                        "missing": sorted(set(timeout_missing)),
-                        "source": "partial_timeout",
-                        "warning": "context timeout",
-                    }
-                )
-                if source:
-                    context["standings_source"] = source
-            else:
-                context["source"] = source
-
-            return make_ok(context)
-
+            context = _assemble_match_context_core(league, home_team, away_team, event_id)
         except APIError:
             raise
         except FuturesTimeoutError:
@@ -901,6 +1051,8 @@ def get_match_context(match_id):
         except Exception as e:
             logger.exception("Error fetching context for %s", match_id)
             return make_ok({"narrative": "Match context unavailable"})
+
+        return make_ok(context)
 
     except APIError as e:
         logger.warning(

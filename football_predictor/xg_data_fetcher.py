@@ -4,12 +4,14 @@ Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 """
 import soccerdata as sd
 import pandas as pd
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 import json
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from typing import Any, Dict, Optional, Tuple
 
 import requests
 
@@ -43,6 +45,11 @@ if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
 _background_refreshes = set()
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT, max_timeout=30)
 
+# Request-scoped memo for team match logs to prevent duplicate fetches per HTTP burst
+_request_memo_id: ContextVar[Optional[str]] = ContextVar("xg_request_memo_id", default=None)
+_request_memo_store: Dict[str, Dict[Tuple[str, str, int], Any]] = {}
+_request_memo_lock = threading.Lock()
+
 STATUS_FORCELIST = (429, 500, 502, 503, 504)
 BACKOFF_FACTOR = 0.5
 
@@ -56,6 +63,39 @@ MATCH_LOGS_CACHE = {}
 
 # Career xG cache (team+league -> {data, timestamp})
 CAREER_XG_CACHE = {}
+
+
+def set_request_memo_id(request_id: Optional[str]) -> None:
+    """Register the active request memo identifier for match log reuse."""
+
+    _request_memo_id.set(request_id)
+    if request_id is None:
+        return
+    with _request_memo_lock:
+        _request_memo_store.setdefault(request_id, {})
+
+
+def clear_request_memo_id() -> None:
+    """Clear memoized match logs for the current request."""
+
+    request_id = _request_memo_id.get()
+    if request_id:
+        with _request_memo_lock:
+            _request_memo_store.pop(request_id, None)
+    _request_memo_id.set(None)
+
+
+def get_current_request_memo_id() -> Optional[str]:
+    """Return the memo identifier associated with the current request (if any)."""
+
+    return _request_memo_id.get()
+
+
+def _get_request_memo_bucket(request_id: Optional[str]):
+    if not request_id:
+        return None
+    with _request_memo_lock:
+        return _request_memo_store.setdefault(request_id, {})
 
 
 def _configure_fbref_client(fbref_client):
@@ -625,10 +665,23 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     away_matches = []
     
     logger.info("🔄 Fetching match logs in parallel for both teams...")
+    request_memo_id = get_current_request_memo_id()
     with ThreadPoolExecutor(max_workers=2) as executor:
         # Submit both fetch tasks
-        future_home = executor.submit(fetch_team_match_logs, home_fbref_name, league_code, season)
-        future_away = executor.submit(fetch_team_match_logs, away_fbref_name, league_code, season)
+        future_home = executor.submit(
+            fetch_team_match_logs,
+            home_fbref_name,
+            league_code,
+            season,
+            request_memo_id,
+        )
+        future_away = executor.submit(
+            fetch_team_match_logs,
+            away_fbref_name,
+            league_code,
+            season,
+            request_memo_id,
+        )
         
         # Get results
         try:
@@ -807,7 +860,7 @@ def safe_extract_value(row, column_name, default=None):
         return default
 
 
-def fetch_team_match_logs(team_name, league_code, season=None):
+def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=None):
     """
     Fetch match-by-match logs for a team including xG and results
     
@@ -823,22 +876,52 @@ def fetch_team_match_logs(team_name, league_code, season=None):
     if league_code not in LEAGUE_MAPPING:
         logger.warning("⚠️  League %s not supported for match logs", league_code)
         return []
-    
+
     league_name = LEAGUE_MAPPING[league_code]
-    
-    # Determine season
-    if not season:
-        season = get_xg_season()
-    
+
+    memo_id = request_memo_id or get_current_request_memo_id()
+    resolved_season = season or get_xg_season()
+    memo_bucket = _get_request_memo_bucket(memo_id)
+    memo_key = (team_name, league_code, resolved_season)
+    memo_future: Optional[Future] = None
+
+    if memo_bucket is not None:
+        existing = memo_bucket.get(memo_key)
+        if isinstance(existing, Future):
+            logger.debug("🔁 Awaiting in-flight match log fetch for %s (%s %s)", team_name, league_code, resolved_season)
+            return existing.result()
+        if existing is not None:
+            logger.debug("✅ Using request-memoized match logs for %s (%s %s)", team_name, league_code, resolved_season)
+            return existing
+        memo_future = Future()
+        memo_bucket[memo_key] = memo_future
+
+    def _memo_resolve_success(result):
+        if memo_bucket is None:
+            return
+        if memo_future and not memo_future.done():
+            memo_future.set_result(result)
+        memo_bucket[memo_key] = result
+
+    def _memo_resolve_error(exc: Exception):
+        if memo_bucket is None:
+            return
+        if memo_future and not memo_future.done():
+            memo_future.set_exception(exc)
+        memo_bucket.pop(memo_key, None)
+
+    season = resolved_season
+
     # Check cache first
     cache_key = f"{team_name}_{league_code}_{season}"
     current_time = datetime.now().timestamp()
-    
+
     if cache_key in MATCH_LOGS_CACHE:
         cached_data = MATCH_LOGS_CACHE[cache_key]
         cache_age = current_time - cached_data['timestamp']
         if cache_age < MATCH_LOGS_CACHE_TTL:
             logger.info("✅ Using cached match logs for %s (age: %.1fs)", team_name, cache_age)
+            _memo_resolve_success(cached_data['data'])
             return cached_data['data']
     
     try:
@@ -960,11 +1043,14 @@ def fetch_team_match_logs(team_name, league_code, season=None):
             'timestamp': datetime.now().timestamp()
         }
         
+        _memo_resolve_success(matches)
         return matches
-        
-    except APIError:
+
+    except APIError as api_err:
+        _memo_resolve_error(api_err)
         raise
     except requests.exceptions.RequestException as exc:
+        _memo_resolve_error(exc)
         error_msg = str(exc)
         logger.error("❌ FBref schedule request failed for %s: %s", team_name, error_msg)
         raise APIError(
@@ -975,6 +1061,7 @@ def fetch_team_match_logs(team_name, league_code, season=None):
         ) from exc
     except Exception as e:
         logger.exception("❌ Error fetching match logs for %s", team_name)
+        _memo_resolve_success([])
         return []
 
 
