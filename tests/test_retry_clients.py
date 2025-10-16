@@ -124,45 +124,39 @@ def test_understat_retry_eventually_succeeds(monkeypatch):
         ]
     }
 
-    responses = [
-        FakeJSONResponse(502),
-        FakeJSONResponse(502),
-        FakeJSONResponse(200, teams_payload),
-        FakeJSONResponse(200, results_payload),
-    ]
-    fake_session = FakeSession(responses)
+    payload_iter = iter([teams_payload, results_payload])
+    captured_kwargs: list[dict] = []
 
-    def _fake_get_session(retries, backoff_factor, status_forcelist):
-        return fake_session
+    def _fake_request_with_retries(*args, **kwargs):
+        captured_kwargs.append(kwargs)
+        return FakeJSONResponse(200, next(payload_iter))
 
-    net_retry._get_session.cache_clear()
-    monkeypatch.setattr(net_retry, "_get_session", _fake_get_session)
+    monkeypatch.setattr(understat_client, "request_with_retries", _fake_request_with_retries)
     monkeypatch.setattr(understat_client, "_standings_cache", {})
 
-    result = understat_client.fetch_understat_standings("PL", season=2023)
+    result = understat_client.fetch_understat_standings("Premier League", season=2023)
 
-    assert fake_session.calls == 4
+    assert len(captured_kwargs) == 2
+    assert all(
+        kwargs["retries"] == understat_client._RETRY_ATTEMPTS for kwargs in captured_kwargs
+    )
+    assert all(502 in kwargs["status_forcelist"] for kwargs in captured_kwargs)
+    assert all(kwargs["params"]["league"] == "epl" for kwargs in captured_kwargs)
     assert any(team["name"] == "Team A" for team in result)
 
 
 def test_understat_retry_rate_limited(monkeypatch):
-    responses = [
-        FakeJSONResponse(429),
-        FakeJSONResponse(429),
-        FakeJSONResponse(429),
-    ]
-    fake_session = FakeSession(responses)
+    def _fake_request_with_retries(*args, **kwargs):
+        response = requests.Response()
+        response.status_code = 429
+        response.url = "https://understat.test/api"
+        raise requests.HTTPError("429 Too Many Requests", response=response)
 
-    def _fake_get_session(retries, backoff_factor, status_forcelist):
-        return fake_session
-
-    net_retry._get_session.cache_clear()
-    monkeypatch.setattr(net_retry, "_get_session", _fake_get_session)
+    monkeypatch.setattr(understat_client, "request_with_retries", _fake_request_with_retries)
     monkeypatch.setattr(understat_client, "_standings_cache", {})
 
     with pytest.raises(APIError) as excinfo:
-        understat_client.fetch_understat_standings("PL", season=2023)
+        understat_client.fetch_understat_standings("EPL", season=2023)
 
-    assert fake_session.calls == understat_client._RETRY_ATTEMPTS
     assert excinfo.value.code == "429"
     assert excinfo.value.details == "rate_limited"

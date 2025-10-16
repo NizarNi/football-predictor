@@ -11,7 +11,7 @@ from .app_utils import AdaptiveTimeoutController
 from .config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT, setup_logger
 from .errors import APIError
 from .net_retry import request_with_retries
-from .utils import get_current_season
+from .utils import get_current_season, normalize_league_code
 
 try:  # pragma: no cover - compatibility shim for tests expecting aiohttp attribute
     import aiohttp  # type: ignore
@@ -227,13 +227,16 @@ def _fetch_league_standings(league_code: str, season: Optional[int] = None) -> L
     if season is None:
         season = get_current_season()
 
-    understat_league = LEAGUE_MAP.get(league_code)
+    normalized_code = normalize_league_code(league_code)
+    canonical_code = normalized_code or (str(league_code).strip().upper() if league_code else "")
+
+    understat_league = LEAGUE_MAP.get(canonical_code)
 
     if not understat_league:
         logger.warning("⚠️ Understat: League %s not supported", league_code)
         return []
 
-    context_prefix = f"standings:{league_code}:{season}"
+    context_prefix = f"standings:{canonical_code or league_code}:{season}"
 
     try:
         teams_payload = _make_understat_request(
@@ -454,7 +457,7 @@ def _fetch_league_standings(league_code: str, season: Optional[int] = None) -> L
     logger.info(
         "✅ Understat: Retrieved %d teams for %s",
         len(standings_list),
-        league_code,
+        canonical_code or league_code,
     )
     return standings_list
 
@@ -468,7 +471,10 @@ def _fetch_match_probabilities(
     if season is None:
         season = get_current_season()
 
-    understat_league = LEAGUE_MAP.get(league_code)
+    normalized_code = normalize_league_code(league_code)
+    canonical_code = normalized_code or (str(league_code).strip().upper() if league_code else "")
+
+    understat_league = LEAGUE_MAP.get(canonical_code)
 
     if not understat_league:
         logger.warning("⚠️ Understat: League %s not supported for probabilities", league_code)
@@ -478,7 +484,7 @@ def _fetch_match_probabilities(
         results_payload = _make_understat_request(
             "/league/results",
             params={"league": understat_league, "season": season},
-            context=f"probabilities:{league_code}:{season}",
+            context=f"probabilities:{canonical_code or league_code}:{season}",
         )
     except APIError:
         raise
@@ -533,7 +539,9 @@ def fetch_understat_standings(league_code: str, season: Optional[int] = None) ->
     if season is None:
         season = get_current_season()
     
-    cache_key = f"{league_code}_{season}"
+    normalized_code = normalize_league_code(league_code)
+    canonical_code = normalized_code or (str(league_code).strip().upper() if league_code else "")
+    cache_key = f"{canonical_code}_{season}"
     
     # Check cache first
     with _cache_lock:
@@ -543,13 +551,13 @@ def fetch_understat_standings(league_code: str, season: Optional[int] = None) ->
                 age = datetime.now() - timestamp
                 logger.info(
                     "✅ Using cached Understat data for %s (age: %ss)",
-                    league_code,
+                    canonical_code or league_code,
                     age.seconds,
                 )
                 return cached_data
 
     # Fetch fresh data
-    standings = _fetch_league_standings(league_code, season)
+    standings = _fetch_league_standings(canonical_code or league_code, season)
     
     # Update cache
     if standings:

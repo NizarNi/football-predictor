@@ -58,6 +58,87 @@ def get_xg_season():
     return now.year if now.month >= SEASON_START_MONTH else now.year - 1
 
 
+_UNDERSTAT_CANONICAL_LEAGUES: frozenset[str] = frozenset({
+    "PL",
+    "PD",
+    "BL1",
+    "SA",
+    "FL1",
+    "RFPL",
+})
+
+_UNDERSTAT_LEAGUE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "PL": (
+        "EPL",
+        "PREMIER LEAGUE",
+        "PREMIER_LEAGUE",
+        "PREMIERLEAGUE",
+        "ENGLISH PREMIER LEAGUE",
+        "ENGLISH_PREMIER_LEAGUE",
+        "ENGLISHPREMIERLEAGUE",
+    ),
+    "PD": (
+        "LA LIGA",
+        "LA_LIGA",
+        "LALIGA",
+        "SPANISH LA LIGA",
+        "SPANISH_LA_LIGA",
+    ),
+    "BL1": (
+        "BUNDESLIGA",
+        "GERMAN BUNDESLIGA",
+        "GERMAN_BUNDESLIGA",
+    ),
+    "SA": (
+        "SERIE A",
+        "SERIE_A",
+        "SERIEA",
+        "ITALIAN SERIE A",
+        "ITALIAN_SERIE_A",
+    ),
+    "FL1": (
+        "LIGUE 1",
+        "LIGUE_1",
+        "LIGUE1",
+        "FRENCH LIGUE 1",
+        "FRENCH_LIGUE_1",
+        "FRENCHLIGUE1",
+    ),
+    "RFPL": (
+        "RPL",
+        "RUSSIAN PREMIER LEAGUE",
+        "RUSSIAN_PREMIER_LEAGUE",
+    ),
+}
+
+
+def normalize_league_code(code: Optional[str]) -> Optional[str]:
+    """Normalize common league descriptors to canonical Understat codes."""
+
+    if not code:
+        return None
+
+    raw = str(code).strip()
+    if not raw:
+        return None
+
+    upper = raw.upper()
+    normalized_spaces = " ".join(upper.replace("-", " ").replace(".", " ").split())
+    alias_key = normalized_spaces.replace(" ", "_")
+
+    if normalized_spaces in _UNDERSTAT_CANONICAL_LEAGUES:
+        return normalized_spaces
+
+    if alias_key in _UNDERSTAT_CANONICAL_LEAGUES:
+        return alias_key
+
+    for canonical, synonyms in _UNDERSTAT_LEAGUE_SYNONYMS.items():
+        if normalized_spaces in synonyms or alias_key in synonyms:
+            return canonical
+
+    return None
+
+
 def normalize_team_name(name):
     """
     Normalize team name for better matching across data sources.
