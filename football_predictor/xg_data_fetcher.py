@@ -51,7 +51,7 @@ SUPPORTED_DOMESTIC = ["PL", "PD", "SA", "BL1", "FL1"]
 
 def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) -> Optional[str]:
     for code in SUPPORTED_DOMESTIC:
-        table = fetch_league_xg_stats(code)
+        table = fetch_league_xg_stats(code, cache_only=True)
         if not table:
             continue
 
@@ -76,6 +76,9 @@ logger = setup_logger(__name__)
 logger.info("xg_data_fetcher: using cache dir at %s", CACHE_DIR)
 if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
     logger.warning("xg_data_fetcher: ignoring legacy cache dir at %s", LEGACY_CACHE_DIR)
+
+# Background worker pool (league + logs refresh)
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # Background refresh guard
 _background_refreshes = set()
@@ -337,6 +340,65 @@ def _safe_soccerdata_call(func, context: str, *args, **kwargs):
 # League xG cache (league-wide) with stale-while-revalidate
 # ----------------------------------------------------------------------
 
+_LEAGUE_MEM_CACHE: Dict[Tuple[str, int], Tuple[float, Dict[str, Any]]] = {}
+_LEAGUE_MEM_CACHE_LOCK = threading.Lock()
+
+
+def _get_from_mem_cache(league_code: str, season: int) -> Tuple[Optional[Dict[str, Any]], Optional[float]]:
+    key = (league_code, season)
+    with _LEAGUE_MEM_CACHE_LOCK:
+        entry = _LEAGUE_MEM_CACHE.get(key)
+    if not entry:
+        return None, None
+    stored_at, data = entry
+    age = time.time() - stored_at
+    return data, age
+
+
+def _set_mem_cache(league_code: str, season: int, data: Dict[str, Any]) -> None:
+    key = (league_code, season)
+    with _LEAGUE_MEM_CACHE_LOCK:
+        _LEAGUE_MEM_CACHE[key] = (time.time(), data)
+
+
+def _is_stale(age_seconds: Optional[float]) -> bool:
+    if age_seconds is None:
+        return False
+    return age_seconds >= SOFT_TTL_SECONDS
+
+
+def _is_hard_expired(age_seconds: Optional[float]) -> bool:
+    if age_seconds is None:
+        return False
+    return age_seconds >= HARD_TTL_SECONDS
+
+
+def _refresh_league_async(league_code: str, season: int) -> None:
+    refresh_key = (league_code, season)
+    if refresh_key in _background_refreshes:
+        return
+
+    _background_refreshes.add(refresh_key)
+
+    def _task():
+        try:
+            _fetch_and_cache_league_stats_now(league_code, season)
+        except Exception as exc:  # best-effort
+            logger.warning(
+                "xg_data_fetcher: background refresh failed for %s (%s): %s",
+                league_code,
+                season,
+                exc,
+            )
+        finally:
+            _background_refreshes.discard(refresh_key)
+
+    _executor.submit(_task)
+
+
+def _refresh_logs_async(league_code: str, canonical_team: str, season: Optional[int] = None) -> None:
+    _executor.submit(_ensure_team_logs_fresh, league_code, canonical_team, season)
+
 def get_cache_key(league_code, season):
     """Generate cache key for xG data"""
     return f"{league_code}_{season}"
@@ -532,27 +594,13 @@ def fetch_career_xg_stats(team_name, league_code):
 # League xG fetch (season aggregates)
 # ----------------------------------------------------------------------
 
-def _refresh_cache_in_background(league_code, season, cache_key):
-    refresh_key = (league_code, season)
-    if refresh_key in _background_refreshes:
-        return
 
-    _background_refreshes.add(refresh_key)
-
-    def _worker():
-        try:
-            _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
-        except Exception as exc:  # best-effort
-            logger.warning("xg_data_fetcher: background refresh failed for %s (%s): %s",
-                           league_code, season, exc)
-        finally:
-            _background_refreshes.discard(refresh_key)
-
-    threading.Thread(
-        target=_worker,
-        name=f"xg-refresh-{league_code}-{season}",
-        daemon=True,
-    ).start()
+def _fetch_and_cache_league_stats_now(league_code: str, season: int) -> Dict[str, Any]:
+    cache_key = get_cache_key(league_code, season)
+    data = _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
+    if data:
+        _set_mem_cache(league_code, season, data)
+    return data
 
 def _fetch_and_cache_league_xg_stats(league_code, season, cache_key):
     league_name = LEAGUE_MAPPING[league_code]
@@ -663,41 +711,81 @@ def _fetch_and_cache_league_xg_stats(league_code, season, cache_key):
     logger.info("✅ Fetched xG stats for %d teams in %s", len(xg_data), league_name)
     return xg_data
 
-def fetch_league_xg_stats(league_code, season=None):
-    """
-    Fetch xG statistics for all teams in a league
-    """
+def fetch_league_xg_stats(league_code, season=None, cache_only: bool = False):
+    """Fetch xG statistics for all teams in a league."""
+
     if season is None:
         season = get_xg_season()
+
+    mem_data, mem_age = _get_from_mem_cache(league_code, season)
+    if mem_data:
+        logger.info("✅ Loaded xG data for %s from in-memory cache", league_code)
+
+        if not cache_only and _is_hard_expired(mem_age):
+            try:
+                fresh_data = _fetch_and_cache_league_stats_now(league_code, season)
+                if fresh_data:
+                    return fresh_data
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh produced empty payload",
+                    mem_age,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh failure: %s",
+                    mem_age,
+                    exc,
+                )
+        if _is_stale(mem_age):
+            logger.info(
+                "returning cached xg (age: %.0fs), triggering background refresh",
+                mem_age,
+            )
+            _refresh_league_async(league_code, season)
+        return mem_data
+
+    if cache_only:
+        _refresh_league_async(league_code, season)
+        return None
 
     cache_key = get_cache_key(league_code, season)
     cached_payload = load_from_cache(cache_key)
     if cached_payload:
         cached_data, cache_age = cached_payload
         logger.info("✅ Loaded xG data for %s from cache", league_code)
+        _set_mem_cache(league_code, season, cached_data)
 
-        if cache_age <= SOFT_TTL_SECONDS:
-            logger.info("returning cached xg (age: %.0fs), triggering background refresh", cache_age)
-            if league_code in LEAGUE_MAPPING:
-                _refresh_cache_in_background(league_code, season, cache_key)
-            return cached_data
-
-        if cache_age <= HARD_TTL_SECONDS:
+        if _is_hard_expired(cache_age):
             try:
-                fresh_data = _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
+                fresh_data = _fetch_and_cache_league_stats_now(league_code, season)
                 if fresh_data:
                     return fresh_data
-                logger.warning("returning cached xg (age: %.0fs) after refresh produced empty payload", cache_age)
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh produced empty payload",
+                    cache_age,
+                )
             except Exception as exc:
-                logger.warning("returning cached xg (age: %.0fs) after refresh failure: %s", cache_age, exc)
+                logger.warning(
+                    "returning cached xg (age: %.0fs) after refresh failure: %s",
+                    cache_age,
+                    exc,
+                )
             return cached_data
+
+        if _is_stale(cache_age):
+            logger.info(
+                "returning cached xg (age: %.0fs), triggering background refresh",
+                cache_age,
+            )
+            _refresh_league_async(league_code, season)
+        return cached_data
 
     if league_code not in LEAGUE_MAPPING:
         logger.warning("⚠️  League %s not supported for xG stats", league_code)
         return {}
 
     try:
-        return _fetch_and_cache_league_xg_stats(league_code, season, cache_key)
+        return _fetch_and_cache_league_stats_now(league_code, season)
     except APIError:
         raise
     except requests.exceptions.RequestException as exc:
@@ -960,11 +1048,25 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
             _memo_resolve_success([])
             return []
 
-def get_team_xg_stats(team_name, league_code, season=None):
+
+def _ensure_team_logs_fresh(league_code: str, canonical_team: str, season: Optional[int] = None) -> None:
+    try:
+        fetch_team_match_logs(canonical_team, league_code, season)
+    except Exception as exc:
+        logger.warning(
+            "match-logs refresh failed for %s/%s: %s",
+            league_code,
+            canonical_team,
+            exc,
+        )
+
+def get_team_xg_stats(team_name, league_code, season=None, league_stats=None):
     """
     Get xG statistics for a specific team
     """
-    league_stats = fetch_league_xg_stats(league_code, season)
+    if league_stats is None:
+        league_stats = fetch_league_xg_stats(league_code, season)
+
     if not league_stats:
         return None
 
@@ -1021,79 +1123,33 @@ def extract_last_5_results(matches, limit=5):
     form = ''.join([m['result'] for m in matches[:limit] if m['result']])
     return form
 
-def get_match_xg_prediction(home_team, away_team, league_code, season=None):
-    """
-    Generate xG-based prediction for a match
-    """
-    canonical_home = _resolve_fbref_team_name(home_team, "match_xg_home")
-    canonical_away = _resolve_fbref_team_name(away_team, "match_xg_away")
 
-    effective_league = league_code
-    if league_code not in LEAGUE_MAPPING:
-        inferred = _infer_domestic_league_for_both(canonical_home, canonical_away)
-        if inferred:
-            logger.info(
-                "🌍 Cross-competition fallback: %s → %s for %s vs %s",
-                league_code, inferred, canonical_home, canonical_away
-            )
-            effective_league = inferred
-        else:
-            if league_code in ['CL', 'EL']:
-                league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
-                return {
-                    'available': False,
-                    'error': (
-                        f'xG data not available for {league_name} '
-                        '(FBref is domestic-only; supported domestic leagues: '
-                        'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
-                    )
-                }
-            return {
-                'available': False,
-                'error': 'xG data not available for this competition (FBref is domestic-only).'
-            }
-    else:
-        # honor passed league
-        effective_league = league_code
+def _get_cached_team_logs_in_memory(
+    league_code: str, season: int, canonical_team: str
+) -> Optional[Any]:
+    key = (league_code, season, canonical_team)
+    cached = _match_logs_cache_get(key)
+    if cached is not None:
+        return cached
 
-    home_stats = get_team_xg_stats(canonical_home, effective_league, season)
-    away_stats = get_team_xg_stats(canonical_away, effective_league, season)
+    for alias in get_all_aliases_for(canonical_team):
+        alias_key = (league_code, season, alias)
+        cached_alias = _match_logs_cache_get(alias_key)
+        if cached_alias is not None:
+            return cached_alias
+    return None
 
-    if not home_stats or not away_stats:
-        if league_code in ['CL', 'EL']:
-            league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
-            return {
-                'available': False,
-                'error': (
-                    f'xG data not available for {league_name} '
-                    '(FBref is domestic-only; supported domestic leagues: '
-                    'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
-                )
-            }
-        return {'available': False, 'error': DOMESTIC_MAPPING_FALLBACK_MESSAGE}
 
-    # Fetch rolling averages, form, and recent matches (in parallel)
-    home_fbref_name = canonical_home
-    away_fbref_name = canonical_away
-
-    home_matches = []
-    away_matches = []
-
-    logger.info("🔄 Fetching match logs in parallel for both teams...")
-    request_memo_id = get_current_request_memo_id()
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        f_home = executor.submit(fetch_team_match_logs, home_fbref_name, effective_league, season, request_memo_id)
-        f_away = executor.submit(fetch_team_match_logs, away_fbref_name, effective_league, season, request_memo_id)
-
-        try:
-            home_matches = f_home.result(timeout=30)
-        except Exception as e:
-            logger.warning("Could not fetch rolling data for %s: %s", home_team, e)
-
-        try:
-            away_matches = f_away.result(timeout=30)
-        except Exception as e:
-            logger.warning("Could not fetch rolling data for %s: %s", away_team, e)
+def _build_prediction_payload(
+    home_team: str,
+    away_team: str,
+    home_stats: Dict[str, Any],
+    away_stats: Dict[str, Any],
+    home_matches: Optional[Any],
+    away_matches: Optional[Any],
+):
+    home_matches = list(home_matches or [])
+    away_matches = list(away_matches or [])
 
     home_rolling = {'xg_for_rolling': None, 'xg_against_rolling': None, 'matches_count': 0}
     away_rolling = {'xg_for_rolling': None, 'xg_against_rolling': None, 'matches_count': 0}
@@ -1126,11 +1182,14 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
             'result': m['result']
         } for m in away_matches[:5]]
 
-    # Expected goals calculation
-    home_advantage_factor = 1.15  # 15% home advantage
+    home_advantage_factor = 1.15
 
-    use_home_rolling = home_rolling['matches_count'] >= 3 and home_rolling['xg_for_rolling'] is not None
-    use_away_rolling = away_rolling['matches_count'] >= 3 and away_rolling['xg_for_rolling'] is not None
+    use_home_rolling = (
+        home_rolling['matches_count'] >= 3 and home_rolling['xg_for_rolling'] is not None
+    )
+    use_away_rolling = (
+        away_rolling['matches_count'] >= 3 and away_rolling['xg_for_rolling'] is not None
+    )
 
     home_xgf = home_rolling['xg_for_rolling'] if use_home_rolling else home_stats['xg_for_per_game']
     home_xga = home_rolling['xg_against_rolling'] if use_home_rolling else home_stats['xg_against_per_game']
@@ -1191,6 +1250,108 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
             'confidence': confidence
         }
     }
+
+
+def _pick_effective_league(
+    requested_league: str, canonical_home: str, canonical_away: str
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    if requested_league in LEAGUE_MAPPING:
+        return requested_league, None
+
+    inferred = _infer_domestic_league_for_both(canonical_home, canonical_away)
+    if inferred:
+        logger.info(
+            "🌍 Cross-competition fallback: %s → %s for %s vs %s",
+            requested_league,
+            inferred,
+            canonical_home,
+            canonical_away,
+        )
+        return inferred, None
+
+    if requested_league in ['CL', 'EL']:
+        league_name = 'Champions League' if requested_league == 'CL' else 'Europa League'
+        return None, {
+            'available': False,
+            'error': (
+                f'xG data not available for {league_name} '
+                '(FBref is domestic-only; supported domestic leagues: '
+                'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
+            )
+        }
+
+    return None, {
+        'available': False,
+        'error': 'xG data not available for this competition (FBref is domestic-only).'
+    }
+
+def get_match_xg_prediction(home_team, away_team, league_code, season=None):
+    """
+    Generate xG-based prediction for a match
+    """
+    canonical_home = _resolve_fbref_team_name(home_team, "match_xg_home")
+    canonical_away = _resolve_fbref_team_name(away_team, "match_xg_away")
+
+    effective_league, error_payload = _pick_effective_league(
+        league_code, canonical_home, canonical_away
+    )
+    if not effective_league:
+        return error_payload
+
+    resolved_season = season or get_xg_season()
+    table = fetch_league_xg_stats(effective_league, season=season, cache_only=True)
+    if not table:
+        return {
+            'available': False,
+            'error': 'xG data not available right now (warming). Try again in a moment.'
+        }
+
+    home_stats = get_team_xg_stats(
+        canonical_home, effective_league, season, league_stats=table
+    )
+    away_stats = get_team_xg_stats(
+        canonical_away, effective_league, season, league_stats=table
+    )
+
+    if not home_stats or not away_stats:
+        if league_code in ['CL', 'EL']:
+            league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
+            return {
+                'available': False,
+                'error': (
+                    f'xG data not available for {league_name} '
+                    '(FBref is domestic-only; supported domestic leagues: '
+                    'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
+                )
+            }
+        return {'available': False, 'error': DOMESTIC_MAPPING_FALLBACK_MESSAGE}
+
+    home_matches = _get_cached_team_logs_in_memory(
+        effective_league, resolved_season, canonical_home
+    )
+    away_matches = _get_cached_team_logs_in_memory(
+        effective_league, resolved_season, canonical_away
+    )
+
+    payload = _build_prediction_payload(
+        home_team,
+        away_team,
+        home_stats,
+        away_stats,
+        home_matches or [],
+        away_matches or [],
+    )
+
+    _refresh_logs_async(effective_league, canonical_home, resolved_season)
+    _refresh_logs_async(effective_league, canonical_away, resolved_season)
+
+    if not home_matches or not away_matches:
+        payload.setdefault(
+            'note',
+            'Using cached season xG; detailed logs are warming.'
+        )
+
+    return payload
 
 # ----------------------------------------------------------------------
 # Manual test

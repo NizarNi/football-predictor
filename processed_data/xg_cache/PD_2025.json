@@ -1,0 +1,32 @@
+{
+  "Atlético Madrid": {
+    "xg_for": 58.0,
+    "xg_against": 34.0,
+    "ps_xg_against": 32.0,
+    "matches_played": 38,
+    "goals_for": 63,
+    "goals_against": 30,
+    "xg_for_per_game": 1.53,
+    "xg_against_per_game": 0.89,
+    "ps_xg_against_per_game": 0.84,
+    "goals_for_per_game": 1.66,
+    "goals_against_per_game": 0.79,
+    "scoring_clinicality": 0.26,
+    "ps_xg_performance": 0.05
+  },
+  "Athletic Club": {
+    "xg_for": 55.0,
+    "xg_against": 40.0,
+    "ps_xg_against": 39.0,
+    "matches_played": 38,
+    "goals_for": 57,
+    "goals_against": 38,
+    "xg_for_per_game": 1.45,
+    "xg_against_per_game": 1.05,
+    "ps_xg_against_per_game": 1.03,
+    "goals_for_per_game": 1.5,
+    "goals_against_per_game": 1.0,
+    "scoring_clinicality": 0.05,
+    "ps_xg_performance": 0.03
+  }
+}
