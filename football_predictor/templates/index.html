@@ -1224,10 +1224,15 @@
                 matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
                 return;
             }
-            
+
+            stopMatchContextTrickle();
+            isMatchContextLoading = false;
+            currentProgressValue = 0;
+            setProgress(0);
+
             matchContext.innerHTML = `
                 <div class="text-center py-3">
-                    <button class="btn btn-primary btn-lg" onclick="loadMatchContext(currentMatchData)">
+                    <button id="load-match-context-btn" class="btn btn-primary btn-lg" onclick="loadMatchContext(currentMatchData)">
                         <i class="fas fa-chart-bar me-2"></i>Show Match Context
                     </button>
                     <p class="text-muted small mt-2 mb-0">
@@ -1236,7 +1241,7 @@
                 </div>
             `;
         }
-        
+
         // Loading tips carousel
         const loadingTips = [
             "💡 <strong>xG (Expected Goals)</strong> measures shot quality, not just quantity. A 0.5 xG shot has a 50% chance of being scored.",
@@ -1258,6 +1263,8 @@
         let currentTipIndex = 0;
         let tipRotationInterval = null;
         let currentProgressValue = 0;
+        let matchContextProgressInterval = null;
+        let isMatchContextLoading = false;
 
         function getProgress() {
             return currentProgressValue;
@@ -1275,34 +1282,36 @@
             }
         }
 
-        // ---- T29a: tiny progress trickle helper ----
-        function startTrickle(getter, setter, {
-            ceiling = 0.7,
-            step = 0.01,
-            minInterval = 350,
-            maxInterval = 900,
-        } = {}) {
-            let stopped = false;
-            function tick() {
-                if (stopped) return;
-                const nextValue = Math.min(getter() + step, ceiling);
-                setter(nextValue);
-                const jitter = minInterval + Math.random() * (maxInterval - minInterval);
-                setTimeout(tick, jitter);
+        function stopMatchContextTrickle() {
+            if (matchContextProgressInterval) {
+                clearInterval(matchContextProgressInterval);
+                matchContextProgressInterval = null;
             }
-            setTimeout(tick, 250);
-            return {
-                stop() {
-                    stopped = true;
-                }
-            };
         }
-        // ---- end T29a helper ----
-        
-        function updateProgressStatus(message, icon = 'database', step = 1, totalSteps = 5) {
+
+        function startMatchContextTrickle() {
+            stopMatchContextTrickle();
+            const schedule = () => {
+                const delay = 700 + Math.random() * 200;
+                matchContextProgressInterval = setInterval(() => {
+                    const current = getProgress();
+                    if (current >= 0.95) {
+                        stopMatchContextTrickle();
+                        return;
+                    }
+                    const increment = 0.08 + Math.random() * 0.02;
+                    const next = Math.min(current + increment, 0.95);
+                    setProgress(next);
+                    stopMatchContextTrickle();
+                    schedule();
+                }, delay);
+            };
+            schedule();
+        }
+
+        function updateProgressStatus(message, icon = 'database') {
             const matchContext = document.getElementById('match-context');
-            currentProgressValue = step / totalSteps;
-            const percentage = Math.round(currentProgressValue * 100);
+            const percentage = Math.round(getProgress() * 100);
 
             // Select appropriate icon
             const iconClass = icon === 'database' ? 'fa-database' :
@@ -1355,24 +1364,39 @@
             }
             currentTipIndex = 0;
         }
-        
+
         function loadMatchContext(match) {
             const matchContext = document.getElementById('match-context');
             if (!match || !match.league) {
                 matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
                 return;
             }
-            
+
+            if (isMatchContextLoading) {
+                return;
+            }
+            isMatchContextLoading = true;
+
             // Clear xG data from previous match to prevent stale data
             currentXgData = null;
 
+            const triggerButton = document.getElementById('load-match-context-btn');
+            if (triggerButton) {
+                triggerButton.disabled = true;
+                triggerButton.classList.add('disabled');
+            }
+
+            const t0 = performance.now();
+
             // Show initial progress
-            updateProgressStatus('Initiating data fetch...', 'database', 1, 5);
-            let trickleController = null;
-            
+            updateProgressStatus('Initiating data fetch...', 'database');
+            setProgress(0.55);
+            console.debug('[context] open modal, progress=55%');
+            startMatchContextTrickle();
+
             // Use league_code from match data (added in odds_api_client.py)
             const leagueCode = match.league_code || match.league;
-            
+
             // Fallback mapping for older data without league_code
             const leagueMapFallback = {
                 'UEFA Champions League': 'CL',
@@ -1395,59 +1419,58 @@
                 'Ligue 1 - France': 'FL1',
                 'UEFA Europa League': 'EL'
             };
-            
+
             // Apply fallback mapping if league code is a display name
             const finalLeagueCode = leagueMapFallback[leagueCode] || leagueCode;
-            
-            // Update progress: Fetching from Understat
-            setTimeout(() => updateProgressStatus('Fetching standings from Understat...', 'database', 2, 5), 100);
 
-            const startContextProgress = () => {
-                if (trickleController || getProgress() >= 0.8) {
-                    return;
-                }
-                updateProgressStatus('Fetching match context insights...', 'database', 3, 5);
-                setProgress(0.6);
-                trickleController = startTrickle(getProgress, setProgress, { ceiling: 0.7 });
-            };
-            setTimeout(startContextProgress, 180);
-            
+            // Update progress: Fetching from Understat
+            setTimeout(() => updateProgressStatus('Fetching standings from Understat...', 'database'), 100);
+            setTimeout(() => updateProgressStatus('Fetching match context insights...', 'database'), 180);
+
             // Add timeout to prevent endless loading (increased to 40s for Understat)
-            const timeoutPromise = new Promise((_, reject) => 
+            const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('Request timeout')), 40000)
             );
-            
+
             // Start context fetch
             const contextFetch = fetch(`/match/${match.id}/context?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}&event_id=${encodeURIComponent(match.id)}`)
                 .then(r => r.json())
                 .then(data => {
-                    updateProgressStatus('Calculating xG metrics from FBref...', 'chart-line', 4, 5);
+                    updateProgressStatus('Calculating xG metrics from FBref...', 'chart-line');
                     return data;
                 });
-            
+
             // Start xG fetch after context starts
             const xgFetch = fetch(`/match/${match.id}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`)
                 .then(r => r.json())
                 .then(data => {
-                    updateProgressStatus('Processing PPDA coefficients...', 'bullseye', 4, 5);
+                    updateProgressStatus('Processing PPDA coefficients...', 'bullseye');
                     return data;
                 });
-            
+
+            console.debug('[context] request sent');
+
             // Fetch essential data only (career xG now loads on-demand to prevent timeouts)
             Promise.race([
                 Promise.all([contextFetch, xgFetch]),
                 timeoutPromise
             ])
             .then(([contextData, xgData]) => {
-                updateProgressStatus('Finalizing data...', 'check-circle', 5, 5);
+                stopMatchContextTrickle();
+                updateProgressStatus('Finalizing data...', 'check-circle');
                 setProgress(1);
+                console.debug('[context] response received in', (performance.now() - t0).toFixed(0), 'ms');
 
                 if (contextData.error) {
                     clearTipRotation();
                     matchContext.innerHTML = `<p class="text-muted">${contextData.narrative || 'Context unavailable'}</p>`;
+                    console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
+                    requestAnimationFrame(() => {
+                        console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
+                    });
                     return;
                 }
-                
+
                 // Merge xG data into context data
                 contextData.xg = xgData.xg || null;
                 // Career xG will be loaded separately on demand
@@ -1456,18 +1479,20 @@
                 
                 // Store globally for career stats access
                 currentContextData = contextData;
-                
+
                 setTimeout(() => {
                     clearTipRotation();
                     displayMatchContextData(currentContextData);
+                    console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
+                    requestAnimationFrame(() => {
+                        console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
+                    });
                 }, 300);
             })
             .catch(error => {
                 console.error('Error loading context:', error);
-                if (trickleController) {
-                    trickleController.stop();
-                    trickleController = null;
-                }
+                stopMatchContextTrickle();
+                console.debug('[context] response received in', (performance.now() - t0).toFixed(0), 'ms');
                 setProgress(1);
                 clearTipRotation();
                 const errorMsg = error.message === 'Request timeout'
@@ -1481,13 +1506,20 @@
                         </button>
                     </div>
                 `;
+                console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
+                requestAnimationFrame(() => {
+                    console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
+                });
             })
             .finally(() => {
-                if (trickleController) {
-                    trickleController.stop();
-                    trickleController = null;
-                }
+                stopMatchContextTrickle();
                 setProgress(1);
+                isMatchContextLoading = false;
+                const reloadButton = document.getElementById('load-match-context-btn');
+                if (reloadButton) {
+                    reloadButton.disabled = false;
+                    reloadButton.classList.remove('disabled');
+                }
             });
         }
         
