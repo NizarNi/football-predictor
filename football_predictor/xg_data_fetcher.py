@@ -23,8 +23,8 @@ from .constants import (
     CAREER_XG_CACHE_TTL,
     LEAGUE_MAPPING,
     MATCH_LOGS_CACHE_TTL,
-    TEAM_NAME_MAP_FBREF as TEAM_NAME_MAPPING,
 )
+from .name_resolver import resolve_team_name
 
 CACHE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "processed_data", "xg_cache")
@@ -63,6 +63,18 @@ MATCH_LOGS_CACHE = {}
 
 # Career xG cache (team+league -> {data, timestamp})
 CAREER_XG_CACHE = {}
+
+
+def _resolve_fbref_team_name(raw_name: str, context: str) -> str:
+    canonical = resolve_team_name(raw_name, provider="fbref")
+    if raw_name and canonical != raw_name:
+        logger.info(
+            "🔁 %s: resolved '%s' → '%s' for FBref",
+            context,
+            raw_name,
+            canonical,
+        )
+    return canonical
 
 
 def set_request_memo_id(request_id: Optional[str]) -> None:
@@ -155,17 +167,6 @@ def _safe_soccerdata_call(func, context: str, *args, **kwargs):
         logger.error("❌ %s parse error: %s", context, error_msg)
         raise APIError("FBRefAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg) from exc
 
-
-def normalize_team_name_for_fbref(team_name):
-    """Normalize team names to match FBref's naming conventions"""
-    # Check if we have a direct mapping
-    if team_name in TEAM_NAME_MAPPING:
-        return TEAM_NAME_MAPPING[team_name]
-    
-    # Return original if no mapping found
-    return team_name
-
-
 def get_cache_key(league_code, season):
     """Generate cache key for xG data"""
     return f"{league_code}_{season}"
@@ -187,6 +188,12 @@ def load_from_cache(cache_key):
             if 'xg_overperformance' in team_data and 'scoring_clinicality' not in team_data:
                 team_data['scoring_clinicality'] = team_data['xg_overperformance']
                 logger.info("🔄 Migrated %s: xg_overperformance → scoring_clinicality", team_name)
+
+        canonicalized_data = {}
+        for team_name, team_data in data.items():
+            canonical_name = resolve_team_name(team_name, provider="fbref")
+            canonicalized_data[canonical_name] = team_data
+        data = canonicalized_data
 
         age_seconds = time.time() - os.path.getmtime(cache_file)
         return data, age_seconds
@@ -222,10 +229,13 @@ def fetch_career_xg_stats(team_name, league_code):
         logger.warning("⚠️  League %s not supported for career xG", league_code)
         return None
     
+    canonical_team_name = _resolve_fbref_team_name(team_name, "career_xg")
+
     # Check cache first
-    cache_key = f"{team_name}_{league_code}_career"
+    cache_key = f"{canonical_team_name}_{league_code}_career"
+    legacy_cache_key = f"{team_name}_{league_code}_career"
     current_time = datetime.now().timestamp()
-    
+
     if cache_key in CAREER_XG_CACHE:
         cached_data = CAREER_XG_CACHE[cache_key]
         cache_age = current_time - cached_data['timestamp']
@@ -236,9 +246,21 @@ def fetch_career_xg_stats(team_name, league_code):
                 cache_age / 86400,
             )
             return cached_data['data']
-    
+
+    if legacy_cache_key in CAREER_XG_CACHE:
+        cached_data = CAREER_XG_CACHE.pop(legacy_cache_key)
+        CAREER_XG_CACHE[cache_key] = cached_data
+        cache_age = current_time - cached_data['timestamp']
+        if cache_age < CAREER_XG_CACHE_TTL:
+            logger.info(
+                "✅ Using cached career xG for %s (age: %.1f days)",
+                canonical_team_name,
+                cache_age / 86400,
+            )
+            return cached_data['data']
+
     league_name = LEAGUE_MAPPING[league_code]
-    normalized_name = normalize_team_name_for_fbref(team_name)
+    lookup_name = canonical_team_name
     
     # Collect xG data across seasons
     seasons_data = []
@@ -275,8 +297,8 @@ def fetch_career_xg_stats(team_name, league_code):
                     team_in_row = idx[-1]
                 else:
                     team_in_row = str(idx)
-                
-                if team_in_row == normalized_name or team_in_row == team_name:
+
+                if resolve_team_name(team_in_row, provider="fbref") == lookup_name:
                     team_stats = row
                     break
             
@@ -434,7 +456,8 @@ def _fetch_and_cache_league_xg_stats(league_code, season, cache_key):
     xg_data = {}
 
     for idx, row in shooting_stats.iterrows():
-        team_name = idx[2] if isinstance(idx, tuple) and len(idx) >= 3 else str(idx)
+        raw_team_name = idx[2] if isinstance(idx, tuple) and len(idx) >= 3 else str(idx)
+        team_name = _resolve_fbref_team_name(raw_team_name, "league_xg_fetch")
 
         try:
             xg_for = float(row[('Expected', 'xG')])
@@ -599,20 +622,24 @@ def get_team_xg_stats(team_name, league_code, season=None):
         return None
     
     # Normalize team name for FBref
-    normalized_name = normalize_team_name_for_fbref(team_name)
-    
+    canonical_name = _resolve_fbref_team_name(team_name, "team_xg_lookup")
+
     # Try to find team with exact match
-    if normalized_name in league_stats:
-        return league_stats[normalized_name]
-    
+    if canonical_name in league_stats:
+        return league_stats[canonical_name]
+
     # Try original name
     if team_name in league_stats:
         return league_stats[team_name]
-    
+
     # Try fuzzy matching (case-insensitive partial match)
     team_name_lower = team_name.lower()
     for fbref_team, stats in league_stats.items():
-        if team_name_lower in fbref_team.lower() or fbref_team.lower() in team_name_lower:
+        if (
+            team_name_lower in fbref_team.lower()
+            or fbref_team.lower() in team_name_lower
+            or resolve_team_name(fbref_team, provider="fbref") == canonical_name
+        ):
             return stats
     
     logger.warning("⚠️  Team '%s' not found in %s xG stats", team_name, league_code)
@@ -632,8 +659,11 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     Returns:
         dict: Match xG prediction with expected goals, over/under likelihood, rolling averages, and form
     """
-    home_stats = get_team_xg_stats(home_team, league_code, season)
-    away_stats = get_team_xg_stats(away_team, league_code, season)
+    canonical_home = _resolve_fbref_team_name(home_team, "match_xg_home")
+    canonical_away = _resolve_fbref_team_name(away_team, "match_xg_away")
+
+    home_stats = get_team_xg_stats(canonical_home, league_code, season)
+    away_stats = get_team_xg_stats(canonical_away, league_code, season)
     
     if not home_stats or not away_stats:
         # Provide specific messaging for unsupported leagues
@@ -649,8 +679,8 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         }
     
     # Get FBref team names for match logs
-    home_fbref_name = normalize_team_name_for_fbref(home_team)
-    away_fbref_name = normalize_team_name_for_fbref(away_team)
+    home_fbref_name = canonical_home
+    away_fbref_name = canonical_away
     
     # Fetch rolling averages, form, and recent matches (if available)
     home_rolling = {'xg_for_rolling': None, 'xg_against_rolling': None, 'matches_count': 0}
@@ -879,14 +909,20 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
 
     league_name = LEAGUE_MAPPING[league_code]
 
+    original_team_name = team_name
+    team_name = _resolve_fbref_team_name(team_name, "match_logs_lookup")
+
     memo_id = request_memo_id or get_current_request_memo_id()
     resolved_season = season or get_xg_season()
     memo_bucket = _get_request_memo_bucket(memo_id)
     memo_key = (team_name, league_code, resolved_season)
+    legacy_memo_key = (original_team_name, league_code, resolved_season)
     memo_future: Optional[Future] = None
 
     if memo_bucket is not None:
         existing = memo_bucket.get(memo_key)
+        if existing is None and legacy_memo_key in memo_bucket:
+            existing = memo_bucket[legacy_memo_key]
         if isinstance(existing, Future):
             logger.debug("🔁 Awaiting in-flight match log fetch for %s (%s %s)", team_name, league_code, resolved_season)
             return existing.result()
@@ -895,6 +931,8 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
             return existing
         memo_future = Future()
         memo_bucket[memo_key] = memo_future
+        if legacy_memo_key in memo_bucket:
+            memo_bucket.pop(legacy_memo_key, None)
 
     def _memo_resolve_success(result):
         if memo_bucket is None:
@@ -902,6 +940,7 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
         if memo_future and not memo_future.done():
             memo_future.set_result(result)
         memo_bucket[memo_key] = result
+        memo_bucket.pop(legacy_memo_key, None)
 
     def _memo_resolve_error(exc: Exception):
         if memo_bucket is None:
@@ -909,15 +948,26 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
         if memo_future and not memo_future.done():
             memo_future.set_exception(exc)
         memo_bucket.pop(memo_key, None)
+        memo_bucket.pop(legacy_memo_key, None)
 
     season = resolved_season
 
     # Check cache first
     cache_key = f"{team_name}_{league_code}_{season}"
+    legacy_cache_key = f"{original_team_name}_{league_code}_{season}"
     current_time = datetime.now().timestamp()
 
     if cache_key in MATCH_LOGS_CACHE:
         cached_data = MATCH_LOGS_CACHE[cache_key]
+        cache_age = current_time - cached_data['timestamp']
+        if cache_age < MATCH_LOGS_CACHE_TTL:
+            logger.info("✅ Using cached match logs for %s (age: %.1fs)", team_name, cache_age)
+            _memo_resolve_success(cached_data['data'])
+            return cached_data['data']
+
+    if legacy_cache_key in MATCH_LOGS_CACHE:
+        cached_data = MATCH_LOGS_CACHE.pop(legacy_cache_key)
+        MATCH_LOGS_CACHE[cache_key] = cached_data
         cache_age = current_time - cached_data['timestamp']
         if cache_age < MATCH_LOGS_CACHE_TTL:
             logger.info("✅ Using cached match logs for %s (age: %.1fs)", team_name, cache_age)
@@ -933,17 +983,23 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
             f"FBref schedule ({league_code} {season})",
         )
         
-        # Normalize team name for matching
-        normalized_name = normalize_team_name_for_fbref(team_name)
-        
+        schedule = schedule.assign(
+            home_team_canonical=schedule['home_team'].apply(
+                lambda value: resolve_team_name(value, provider="fbref")
+            ),
+            away_team_canonical=schedule['away_team'].apply(
+                lambda value: resolve_team_name(value, provider="fbref")
+            ),
+        )
+
         # Get home and away matches
-        home_matches = schedule[schedule['home_team'] == normalized_name].copy()
-        away_matches = schedule[schedule['away_team'] == normalized_name].copy()
-        
-        # If no matches found with normalized name, try original name
+        home_matches = schedule[schedule['home_team_canonical'] == team_name].copy()
+        away_matches = schedule[schedule['away_team_canonical'] == team_name].copy()
+
+        # If no matches found with canonical name, try original name
         if len(home_matches) == 0 and len(away_matches) == 0:
-            home_matches = schedule[schedule['home_team'] == team_name].copy()
-            away_matches = schedule[schedule['away_team'] == team_name].copy()
+            home_matches = schedule[schedule['home_team'] == original_team_name].copy()
+            away_matches = schedule[schedule['away_team'] == original_team_name].copy()
         
         # Process matches
         matches = []

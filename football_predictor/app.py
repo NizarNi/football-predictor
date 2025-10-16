@@ -27,6 +27,7 @@ from .xg_data_fetcher import (
     set_request_memo_id,
 )
 from .utils import get_current_season, fuzzy_team_match
+from .name_resolver import resolve_team_name
 from .errors import APIError
 from .validators import (
     validate_league,
@@ -838,28 +839,37 @@ def get_match_btts(event_id):
         btts_xg = None
         if home_team and away_team and league_code:
             try:
+                resolved_home = resolve_team_name(home_team, provider="fbref")
+                resolved_away = resolve_team_name(away_team, provider="fbref")
+                if resolved_home != home_team:
+                    logger.info("🔁 BTTS: resolved home '%s' → '%s' for FBref", home_team, resolved_home)
+                if resolved_away != away_team:
+                    logger.info("🔁 BTTS: resolved away '%s' → '%s' for FBref", away_team, resolved_away)
+
                 # Get offensive xG from FBref
-                xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
-                
+                xg_prediction = get_match_xg_prediction(resolved_home, resolved_away, league_code)
+
                 # Get defensive xGA from Understat context (TRUE defensive metric, not goalkeeper PSxGA)
                 from .understat_client import fetch_understat_standings
                 current_season = get_current_season()
                 standings = fetch_understat_standings(league_code, current_season)
-                
+
                 home_xg_per_game = None
                 away_xg_per_game = None
                 home_xga_per_game = None
                 away_xga_per_game = None
-                
+
                 # Get offensive xG/game from FBref
                 if xg_prediction.get('available') and xg_prediction.get('xg'):
                     home_xg_per_game = xg_prediction['xg'].get('home_stats', {}).get('xg_for_per_game')
                     away_xg_per_game = xg_prediction['xg'].get('away_stats', {}).get('xg_for_per_game')
-                
+
                 # Get defensive xGA/game from Understat standings (NOT PSxGA)
                 if standings:
-                    home_standings = next((team for team in standings if fuzzy_team_match(team['name'], home_team)), None)
-                    away_standings = next((team for team in standings if fuzzy_team_match(team['name'], away_team)), None)
+                    home_lookup = resolved_home or home_team
+                    away_lookup = resolved_away or away_team
+                    home_standings = next((team for team in standings if fuzzy_team_match(team['name'], home_lookup)), None)
+                    away_standings = next((team for team in standings if fuzzy_team_match(team['name'], away_lookup)), None)
                     
                     if home_standings and home_standings.get('xGA') is not None and home_standings.get('played', 0) > 0:
                         home_xga_per_game = home_standings['xGA'] / home_standings['played']
