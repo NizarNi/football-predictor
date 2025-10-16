@@ -6,6 +6,7 @@ Shared helper functions used across multiple modules
 from datetime import datetime
 from typing import Any, Callable, Iterable, Optional
 
+import logging
 import requests
 import time
 from requests.adapters import HTTPAdapter
@@ -55,6 +56,87 @@ def get_xg_season():
     """
     now = datetime.now()
     return now.year if now.month >= SEASON_START_MONTH else now.year - 1
+
+
+_UNDERSTAT_CANONICAL_LEAGUES: frozenset[str] = frozenset({
+    "PL",
+    "PD",
+    "BL1",
+    "SA",
+    "FL1",
+    "RFPL",
+})
+
+_UNDERSTAT_LEAGUE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "PL": (
+        "EPL",
+        "PREMIER LEAGUE",
+        "PREMIER_LEAGUE",
+        "PREMIERLEAGUE",
+        "ENGLISH PREMIER LEAGUE",
+        "ENGLISH_PREMIER_LEAGUE",
+        "ENGLISHPREMIERLEAGUE",
+    ),
+    "PD": (
+        "LA LIGA",
+        "LA_LIGA",
+        "LALIGA",
+        "SPANISH LA LIGA",
+        "SPANISH_LA_LIGA",
+    ),
+    "BL1": (
+        "BUNDESLIGA",
+        "GERMAN BUNDESLIGA",
+        "GERMAN_BUNDESLIGA",
+    ),
+    "SA": (
+        "SERIE A",
+        "SERIE_A",
+        "SERIEA",
+        "ITALIAN SERIE A",
+        "ITALIAN_SERIE_A",
+    ),
+    "FL1": (
+        "LIGUE 1",
+        "LIGUE_1",
+        "LIGUE1",
+        "FRENCH LIGUE 1",
+        "FRENCH_LIGUE_1",
+        "FRENCHLIGUE1",
+    ),
+    "RFPL": (
+        "RPL",
+        "RUSSIAN PREMIER LEAGUE",
+        "RUSSIAN_PREMIER_LEAGUE",
+    ),
+}
+
+
+def normalize_league_code(code: Optional[str]) -> Optional[str]:
+    """Normalize common league descriptors to canonical Understat codes."""
+
+    if not code:
+        return None
+
+    raw = str(code).strip()
+    if not raw:
+        return None
+
+    upper = raw.upper()
+    normalized_spaces = " ".join(upper.replace("-", " ").replace(".", " ").split())
+    alias_key = normalized_spaces.replace(" ", "_")
+
+    if normalized_spaces in _UNDERSTAT_CANONICAL_LEAGUES:
+        return normalized_spaces
+
+    if alias_key in _UNDERSTAT_CANONICAL_LEAGUES:
+        return alias_key
+
+    for canonical, synonyms in _UNDERSTAT_LEAGUE_SYNONYMS.items():
+        if normalized_spaces in synonyms or alias_key in synonyms:
+            return canonical
+
+    return None
 
 
 def normalize_team_name(name):
@@ -355,6 +437,8 @@ def request_with_retries(
     logger,
     context: str,
     sanitize: Optional[Callable[[str], str]] = None,
+    attempt_log_level: int | None = logging.WARNING,
+    failure_log_level: int = logging.ERROR,
     **kwargs: Any,
 ) -> requests.Response:
     """Perform an HTTP request with retry and logging support."""
@@ -406,21 +490,37 @@ def request_with_retries(
             )
             backoff = retry_state.get_backoff_time()
 
-            logger.warning(
-                "Retrying %s (%d/%d): %s - %s",
-                context,
+            logger.debug(
+                "Retry attempt %d/%d for %s due to %s",
                 attempts,
                 max_retries,
-                _sanitize_value(url, sanitize),
+                context,
                 _sanitize_value(exc, sanitize),
             )
 
+            if attempt_log_level is not None:
+                logger.log(
+                    attempt_log_level,
+                    "Retrying %s (%d/%d): %s - %s",
+                    context,
+                    attempts,
+                    max_retries,
+                    _sanitize_value(url, sanitize),
+                    _sanitize_value(exc, sanitize),
+                )
+
             if backoff > 0:
+                logger.debug(
+                    "Sleeping %.2fs before retrying %s",
+                    backoff,
+                    context,
+                )
                 time.sleep(backoff)
 
     if last_exception is not None:
         if attempted_retries > 0 or attempts >= max_retries:
-            logger.error(
+            logger.log(
+                failure_log_level,
                 "Failed %s after %d attempts: %s",
                 context,
                 max_retries,

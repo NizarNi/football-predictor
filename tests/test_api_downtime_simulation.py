@@ -1,7 +1,7 @@
 import asyncio
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -166,15 +166,11 @@ def test_xg_invalid_response_raises_apierror():
 
 
 # Understat client tests
-@patch("football_predictor.understat_client.asyncio.wait_for")
-def test_understat_timeout_raises_apierror(mock_wait_for):
+@patch("football_predictor.understat_client.request_with_retries")
+def test_understat_timeout_raises_apierror(mock_request):
     understat_client._standings_cache.clear()
 
-    def _raise_timeout(coro, timeout):
-        coro.close()
-        raise asyncio.TimeoutError("Understat timeout")
-
-    mock_wait_for.side_effect = _raise_timeout
+    mock_request.side_effect = requests.Timeout("Understat timeout")
 
     with pytest.raises(APIError) as exc:
         understat_client.fetch_understat_standings("PL")
@@ -182,24 +178,20 @@ def test_understat_timeout_raises_apierror(mock_wait_for):
     assert exc.value.code == "TIMEOUT"
 
 
-def test_understat_invalid_response_raises_apierror():
+@patch("football_predictor.understat_client.request_with_retries")
+def test_understat_invalid_response_raises_apierror(mock_request):
     understat_client._standings_cache.clear()
 
-    class DummySession:
-        async def __aenter__(self):
-            return self
+    class BadResponse:
+        def raise_for_status(self):
+            return None
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
+        def json(self):
+            raise ValueError("Invalid JSON")
 
-    with patch("football_predictor.understat_client.aiohttp.ClientSession", return_value=DummySession()):
-        with patch("football_predictor.understat_client.Understat") as mock_understat:
-            understat_instance = MagicMock()
-            understat_instance.get_teams = AsyncMock(side_effect=ValueError("Invalid JSON"))
-            understat_instance.get_league_results = AsyncMock(return_value=[])
-            mock_understat.return_value = understat_instance
+    mock_request.return_value = BadResponse()
 
-            with pytest.raises(APIError) as exc:
-                asyncio.run(understat_client._fetch_league_standings("PL"))
+    with pytest.raises(APIError) as exc:
+        understat_client.fetch_understat_standings("PL")
 
     assert exc.value.code == "PARSE_ERROR"
