@@ -5,7 +5,7 @@ Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 import json
 import os
@@ -69,6 +69,7 @@ def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) ->
             return code
     return None
 
+
 # Ensure cache directory exists
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -80,7 +81,21 @@ if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
 # Background worker pool (league + logs refresh)
 _executor = ThreadPoolExecutor(max_workers=4)
 
-# Background refresh guard
+# ----------------------------------------------------------------------
+# Debounce state (T35d): per (league, team) cooldown + single stacktrace window
+# ----------------------------------------------------------------------
+_refresh_attempt_lock = threading.Lock()
+_last_refresh_attempt: Dict[Tuple[str, str], float] = {}
+REFRESH_COOLDOWN_S = 120  # 2 minutes
+
+def _clear_refresh_attempt(league_code: str, canonical_team: str) -> None:
+    with _refresh_attempt_lock:
+        _last_refresh_attempt.pop((league_code, canonical_team), None)
+
+_stacktrace_guard_lock = threading.Lock()
+_last_stacktrace_log: Dict[Tuple[str, str], float] = {}
+
+# Background refresh guard (single-flight per (league, season) for league tables)
 _background_refreshes = set()
 
 # Adaptive timeout controller for FBref calls
@@ -93,6 +108,10 @@ adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT, max_timeo
 _request_memo_id: ContextVar[Optional[str]] = ContextVar("xg_request_memo_id", default=None)
 _request_memo_store: Dict[str, Dict[Tuple[str, str, int], Any]] = {}
 _request_memo_lock = threading.Lock()
+
+_league_alias_summary: ContextVar[Optional[List[Tuple[str, str]]]] = ContextVar(
+    "xg_league_alias_summary", default=None
+)
 
 def set_request_memo_id(request_id: Optional[str]) -> None:
     """Register the active request memo identifier for match log reuse."""
@@ -279,7 +298,15 @@ def _save_team_match_logs_to_disk(
 def _resolve_fbref_team_name(raw_name: str, context: str) -> str:
     canonical = resolve_team_name(raw_name, provider="fbref")
     if raw_name and canonical != raw_name:
-        logger.info("🔁 %s: resolved '%s' → '%s' for FBref", context, raw_name, canonical)
+        if context == "league_xg_fetch":
+            logger.debug(
+                "league_xg_fetch: resolved '%s' → '%s' for FBref", raw_name, canonical
+            )
+            bucket = _league_alias_summary.get()
+            if bucket is not None:
+                bucket.append((raw_name, canonical))
+        else:
+            logger.info("🔁 %s: resolved '%s' → '%s' for FBref", context, raw_name, canonical)
     return canonical
 
 def _configure_fbref_client(fbref_client):
@@ -302,39 +329,53 @@ def _configure_fbref_client(fbref_client):
 
 def _safe_soccerdata_call(func, context: str, *args, **kwargs):
     """Execute a soccerdata call and wrap network errors with adaptive timeout updates."""
-    timeout = adaptive_timeout.get_timeout()
-    bound_client = getattr(func, "__self__", None)
-    if bound_client is not None and hasattr(bound_client, "timeout"):
-        try:
-            setattr(bound_client, "timeout", timeout)
-        except Exception:
-            pass
+    for attempt in range(3):
+        timeout = adaptive_timeout.get_timeout()
+        bound_client = getattr(func, "__self__", None)
+        if bound_client is not None and hasattr(bound_client, "timeout"):
+            try:
+                setattr(bound_client, "timeout", timeout)
+            except Exception:
+                pass
 
-    try:
-        result = func(*args, **kwargs)
-        adaptive_timeout.record_success()
-        return result
-    except requests.exceptions.Timeout as exc:
-        adaptive_timeout.record_failure()
-        logger.warning("[Resilience] API timeout or network issue: %s", exc)
-        logger.error("❌ %s timed out", context)
-        raise APIError("FBRefAPI", "TIMEOUT", "The FBRef API did not respond in time.") from exc
-    except requests.exceptions.ConnectionError as exc:
-        adaptive_timeout.record_failure()
-        error_msg = str(exc)
-        logger.warning("[Resilience] API timeout or network issue: %s", exc)
-        logger.error("❌ %s: %s", context, error_msg)
-        raise APIError("FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
-    except requests.exceptions.RequestException as exc:
-        adaptive_timeout.record_failure()
-        error_msg = str(exc)
-        logger.warning("[Resilience] API request failure detected: %s", exc)
-        logger.error("❌ %s: %s", context, error_msg)
-        raise APIError("FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from exc
-    except ValueError as exc:
-        error_msg = str(exc)
-        logger.error("❌ %s parse error: %s", context, error_msg)
-        raise APIError("FBRefAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg) from exc
+        try:
+            result = func(*args, **kwargs)
+            adaptive_timeout.record_success()
+            return result
+        except requests.exceptions.Timeout as exc:
+            adaptive_timeout.record_failure()
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
+            logger.error("❌ %s timed out", context)
+            if attempt == 2:
+                raise APIError("FBRefAPI", "TIMEOUT", "The FBRef API did not respond in time.") from exc
+        except requests.exceptions.ConnectionError as exc:
+            adaptive_timeout.record_failure()
+            error_msg = str(exc)
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
+            logger.error("❌ %s: %s", context, error_msg)
+            if attempt == 2:
+                raise APIError(
+                    "FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg
+                ) from exc
+        except requests.exceptions.RequestException as exc:
+            adaptive_timeout.record_failure()
+            error_msg = str(exc)
+            logger.warning("[Resilience] API request failure detected: %s", exc)
+            logger.error("❌ %s: %s", context, error_msg)
+            if attempt == 2:
+                raise APIError(
+                    "FBRefAPI", "NETWORK_ERROR", "A network error occurred.", error_msg
+                ) from exc
+        except ValueError as exc:
+            error_msg = str(exc)
+            logger.error("❌ %s parse error: %s", context, error_msg)
+            raise APIError(
+                "FBRefAPI", "PARSE_ERROR", "Failed to parse API response.", error_msg
+            ) from exc
+
+        if attempt < 2:
+            backoff = 0.8 * (2 ** attempt)
+            time.sleep(backoff)
 
 # ----------------------------------------------------------------------
 # League xG cache (league-wide) with stale-while-revalidate
@@ -359,6 +400,15 @@ def _set_mem_cache(league_code: str, season: int, data: Dict[str, Any]) -> None:
     key = (league_code, season)
     with _LEAGUE_MEM_CACHE_LOCK:
         _LEAGUE_MEM_CACHE[key] = (time.time(), data)
+    # Clear any per-league debounce/stacktrace guards when we successfully refreshed
+    with _refresh_attempt_lock:
+        stale_keys = [k for k in _last_refresh_attempt if k[0] == league_code]
+        for entry in stale_keys:
+            _last_refresh_attempt.pop(entry, None)
+    with _stacktrace_guard_lock:
+        stale_logs = [k for k in _last_stacktrace_log if k[0] == league_code]
+        for entry in stale_logs:
+            _last_stacktrace_log.pop(entry, None)
 
 
 def _is_stale(age_seconds: Optional[float]) -> bool:
@@ -396,7 +446,17 @@ def _refresh_league_async(league_code: str, season: int) -> None:
     _executor.submit(_task)
 
 
-def _refresh_logs_async(league_code: str, canonical_team: str, season: Optional[int] = None) -> None:
+def _refresh_logs_async(
+    league_code: str, canonical_team: str, season: Optional[int] = None
+) -> None:
+    # Debounce per (league, team)
+    now = time.monotonic()
+    key = (league_code, canonical_team)
+    with _refresh_attempt_lock:
+        last = _last_refresh_attempt.get(key, 0.0)
+        if now - last < REFRESH_COOLDOWN_S:
+            return
+        _last_refresh_attempt[key] = now
     _executor.submit(_ensure_team_logs_fresh, league_code, canonical_team, season)
 
 def get_cache_key(league_code, season):
@@ -632,80 +692,93 @@ def _fetch_and_cache_league_xg_stats(league_code, season, cache_key):
 
     xg_data = {}
 
-    for idx, row in shooting_stats.iterrows():
-        raw_team_name = idx[2] if isinstance(idx, tuple) and len(idx) >= 3 else str(idx)
-        team_name = _resolve_fbref_team_name(raw_team_name, "league_xg_fetch")
+    alias_token = _league_alias_summary.set([])
+    try:
+        for idx, row in shooting_stats.iterrows():
+            raw_team_name = idx[2] if isinstance(idx, tuple) and len(idx) >= 3 else str(idx)
+            team_name = _resolve_fbref_team_name(raw_team_name, "league_xg_fetch")
 
-        try:
-            xg_for = float(row[('Expected', 'xG')])
-        except (KeyError, ValueError, TypeError):
-            xg_for = 0
+            try:
+                xg_for = float(row[('Expected', 'xG')])
+            except (KeyError, ValueError, TypeError):
+                xg_for = 0
 
-        try:
-            goals_for = int(row[('Standard', 'Gls')])
-        except (KeyError, ValueError, TypeError):
-            goals_for = 0
+            try:
+                goals_for = int(row[('Standard', 'Gls')])
+            except (KeyError, ValueError, TypeError):
+                goals_for = 0
 
-        matches_played = 0
-        try:
-            if idx in standard_stats.index:
-                std_row = standard_stats.loc[idx]
-                try:
-                    matches_played = int(std_row[('Playing Time', 'MP')])
-                except (KeyError, ValueError, TypeError):
+            matches_played = 0
+            try:
+                if idx in standard_stats.index:
+                    std_row = standard_stats.loc[idx]
                     try:
-                        matches_played = int(std_row[('Playing Time', '90s')])
-                    except Exception:
-                        matches_played = 0
-        except Exception:
-            pass
+                        matches_played = int(std_row[('Playing Time', 'MP')])
+                    except (KeyError, ValueError, TypeError):
+                        try:
+                            matches_played = int(std_row[('Playing Time', '90s')])
+                        except Exception:
+                            matches_played = 0
+            except Exception:
+                pass
 
-        goals_against = 0
-        ps_xg_against = 0
-        try:
-            if idx in keeper_adv_stats.index:
-                keeper_row = keeper_adv_stats.loc[idx]
-                try:
-                    goals_against = int(keeper_row[('Goals', 'GA')])
-                except (KeyError, ValueError, TypeError):
-                    pass
-                try:
-                    ps_xg_against = float(keeper_row[('Expected', 'PSxG')])
-                except (KeyError, ValueError, TypeError):
-                    pass
-        except Exception:
-            pass
+            goals_against = 0
+            ps_xg_against = 0
+            try:
+                if idx in keeper_adv_stats.index:
+                    keeper_row = keeper_adv_stats.loc[idx]
+                    try:
+                        goals_against = int(keeper_row[('Goals', 'GA')])
+                    except (KeyError, ValueError, TypeError):
+                        pass
+                    try:
+                        ps_xg_against = float(keeper_row[('Expected', 'PSxG')])
+                    except (KeyError, ValueError, TypeError):
+                        pass
+            except Exception:
+                pass
 
-        xg_data[team_name] = {
-            'xg_for': xg_for,
-            'xg_against': ps_xg_against,
-            'ps_xg_against': ps_xg_against,
-            'matches_played': int(matches_played) if matches_played > 0 else 1,
-            'goals_for': goals_for,
-            'goals_against': goals_against,
-        }
+            xg_data[team_name] = {
+                'xg_for': xg_for,
+                'xg_against': ps_xg_against,
+                'ps_xg_against': ps_xg_against,
+                'matches_played': int(matches_played) if matches_played > 0 else 1,
+                'goals_for': goals_for,
+                'goals_against': goals_against,
+            }
 
-        if xg_data[team_name]['matches_played'] > 0:
-            matches = xg_data[team_name]['matches_played']
-            xg_data[team_name]['xg_for_per_game'] = round(xg_data[team_name]['xg_for'] / matches, 2)
-            xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)
-            xg_data[team_name]['ps_xg_against_per_game'] = round(xg_data[team_name]['ps_xg_against'] / matches, 2)
-            xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
-            xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
+            if xg_data[team_name]['matches_played'] > 0:
+                matches = xg_data[team_name]['matches_played']
+                xg_data[team_name]['xg_for_per_game'] = round(xg_data[team_name]['xg_for'] / matches, 2)
+                xg_data[team_name]['xg_against_per_game'] = round(xg_data[team_name]['xg_against'] / matches, 2)
+                xg_data[team_name]['ps_xg_against_per_game'] = round(xg_data[team_name]['ps_xg_against'] / matches, 2)
+                xg_data[team_name]['goals_for_per_game'] = round(xg_data[team_name]['goals_for'] / matches, 2)
+                xg_data[team_name]['goals_against_per_game'] = round(xg_data[team_name]['goals_against'] / matches, 2)
 
-            scoring_clinicality_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
-            xg_data[team_name]['scoring_clinicality'] = round(scoring_clinicality_total / matches, 2)
+                scoring_clinicality_total = xg_data[team_name]['goals_for'] - xg_data[team_name]['xg_for']
+                xg_data[team_name]['scoring_clinicality'] = round(scoring_clinicality_total / matches, 2)
 
-            ps_xg_performance = xg_data[team_name]['ps_xg_against'] - xg_data[team_name]['goals_against']
-            xg_data[team_name]['ps_xg_performance'] = round(ps_xg_performance / matches, 2)
-        else:
-            xg_data[team_name]['xg_for_per_game'] = 0
-            xg_data[team_name]['xg_against_per_game'] = 0
-            xg_data[team_name]['ps_xg_against_per_game'] = 0
-            xg_data[team_name]['goals_for_per_game'] = 0
-            xg_data[team_name]['goals_against_per_game'] = 0
-            xg_data[team_name]['scoring_clinicality'] = 0
-            xg_data[team_name]['ps_xg_performance'] = 0
+                ps_xg_performance = xg_data[team_name]['ps_xg_against'] - xg_data[team_name]['goals_against']
+                xg_data[team_name]['ps_xg_performance'] = round(ps_xg_performance / matches, 2)
+            else:
+                xg_data[team_name]['xg_for_per_game'] = 0
+                xg_data[team_name]['xg_against_per_game'] = 0
+                xg_data[team_name]['ps_xg_against_per_game'] = 0
+                xg_data[team_name]['goals_for_per_game'] = 0
+                xg_data[team_name]['goals_against_per_game'] = 0
+                xg_data[team_name]['scoring_clinicality'] = 0
+                xg_data[team_name]['ps_xg_performance'] = 0
+    finally:
+        alias_changes = _league_alias_summary.get() or []
+        if alias_changes:
+            sample_old, sample_new = alias_changes[0]
+            logger.info(
+                "league_xg_fetch: applied %d alias normalizations (e.g. '%s' → '%s')",
+                len(alias_changes),
+                sample_old,
+                sample_new,
+            )
+        _league_alias_summary.reset(alias_token)
 
     save_to_cache(cache_key, xg_data)
     logger.info("✅ Fetched xG stats for %d teams in %s", len(xg_data), league_name)
@@ -1049,16 +1122,32 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
             return []
 
 
+def _should_log_stacktrace_once(league_code: str, canonical_team: str) -> bool:
+    now = time.monotonic()
+    key = (league_code, canonical_team)
+    with _stacktrace_guard_lock:
+        last = _last_stacktrace_log.get(key, 0.0)
+        if now - last >= REFRESH_COOLDOWN_S:
+            _last_stacktrace_log[key] = now
+            return True
+        return False
+
+
 def _ensure_team_logs_fresh(league_code: str, canonical_team: str, season: Optional[int] = None) -> None:
     try:
         fetch_team_match_logs(canonical_team, league_code, season)
+        _clear_refresh_attempt(league_code, canonical_team)
     except Exception as exc:
-        logger.warning(
-            "match-logs refresh failed for %s/%s: %s",
-            league_code,
-            canonical_team,
-            exc,
-        )
+        if _should_log_stacktrace_once(league_code, canonical_team):
+            logger.exception("Error fetching match logs for %s/%s", league_code, canonical_team)
+        else:
+            logger.warning(
+                "Match logs retry scheduled (cooldown %ss) for %s/%s: %s",
+                REFRESH_COOLDOWN_S,
+                league_code,
+                canonical_team,
+                exc,
+            )
 
 def get_team_xg_stats(team_name, league_code, season=None, league_stats=None):
     """
@@ -1342,6 +1431,7 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         away_matches or [],
     )
 
+    # Non-blocking background warmers (debounced)
     _refresh_logs_async(effective_league, canonical_home, resolved_season)
     _refresh_logs_async(effective_league, canonical_away, resolved_season)
 
