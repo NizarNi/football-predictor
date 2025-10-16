@@ -6,6 +6,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from time import monotonic
 from typing import Optional
 
 from .config import setup_logger, API_TIMEOUT_CONTEXT
@@ -20,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from .odds_api_client import get_upcoming_matches_with_odds, LEAGUE_CODE_MAPPING
 from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import get_match_xg_prediction
-from .utils import get_current_season, normalize_team_name, fuzzy_team_match
+from .utils import get_current_season, fuzzy_team_match
 from .errors import APIError
 from .validators import (
     validate_league,
@@ -35,6 +36,68 @@ app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 logger = setup_logger(__name__)
+
+# ---- T29c: small Elo reuse caches (in-process) ----
+_RECENT_ELO_TTL_SEC = 30 * 60  # 30 minutes
+_recent_elo: dict[str, tuple[float, float]] = {}
+
+_recent_match_elo_ttl_sec = 30 * 60
+_recent_match_elo: dict[str, tuple[tuple[Optional[float], Optional[float]], float]] = {}
+
+
+def _norm_team_key(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    from .utils import normalize_team_name
+
+    return normalize_team_name(name).strip().lower()
+
+
+def _elo_cache_get(team_name: Optional[str]) -> Optional[float]:
+    key = _norm_team_key(team_name)
+    if not key:
+        return None
+    rec = _recent_elo.get(key)
+    if not rec:
+        return None
+    elo, ts = rec
+    if monotonic() - ts > _RECENT_ELO_TTL_SEC:
+        _recent_elo.pop(key, None)
+        return None
+    return elo
+
+
+def _elo_cache_put(team_name: Optional[str], elo: Optional[float]) -> None:
+    if elo is None:
+        return
+    key = _norm_team_key(team_name)
+    if not key:
+        return
+    _recent_elo[key] = (elo, monotonic())
+
+
+def _match_elo_cache_put(
+    event_id: Optional[str], home_elo: Optional[float], away_elo: Optional[float]
+) -> None:
+    if not event_id:
+        return
+    _recent_match_elo[event_id] = ((home_elo, away_elo), monotonic())
+
+
+def _match_elo_cache_get(event_id: Optional[str]) -> tuple[Optional[float], Optional[float]] | None:
+    if not event_id:
+        return None
+    rec = _recent_match_elo.get(event_id)
+    if not rec:
+        return None
+    (home_elo, away_elo), ts = rec
+    if monotonic() - ts > _recent_match_elo_ttl_sec:
+        _recent_match_elo.pop(event_id, None)
+        return None
+    return (home_elo, away_elo)
+
+
+# ---- end T29c helpers ----
 
 # Logo helpers
 
@@ -136,7 +199,10 @@ def upcoming():
 
             if odds_matches:
                 # Import Elo client for predictions
-                from .elo_client import get_team_elo, calculate_elo_probabilities
+                from .elo_client import calculate_elo_probabilities
+
+                # Per-request Elo memo (avoid repeating slow lookups in the same response)
+                _request_elo: dict[str, Optional[float]] = {}
 
                 # Calculate predictions from odds for each match
                 for match in odds_matches:
@@ -152,22 +218,48 @@ def upcoming():
                     match["home_logo_url"] = home_logo_url
                     match["away_logo_url"] = away_logo_url
 
-                    # Add Elo predictions (non-blocking)
+                    # ---- T29c: Elo per-request dedupe + reuse + stash for context ----
                     home_team_name = match.get("home_team")
                     away_team_name = match.get("away_team")
-                    if home_team_name and away_team_name:
+
+                    def _get_elo_once(team: Optional[str]) -> Optional[float]:
+                        key = _norm_team_key(team)
+                        if not key:
+                            return None
+                        if key in _request_elo:
+                            return _request_elo[key]
+
+                        cached = _elo_cache_get(team)
+                        if cached is not None:
+                            _request_elo[key] = cached
+                            return cached
+
                         try:
-                            home_elo = get_team_elo(home_team_name)
-                            away_elo = get_team_elo(away_team_name)
-                            if home_elo and away_elo:
-                                match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
+                            from .elo_client import get_team_elo
+
+                            value = get_team_elo(team)
+                            _request_elo[key] = value
+                            _elo_cache_put(team, value)
+                            return value
                         except Exception as elo_err:
                             logger.warning(
-                                "Elo unavailable in /upcoming for %s vs %s: %s",
-                                home_team_name,
-                                away_team_name,
+                                "Elo unavailable in /upcoming for %s: %s",
+                                team,
                                 getattr(elo_err, "code", type(elo_err).__name__),
                             )
+                            _request_elo[key] = None
+                            return None
+
+                    home_elo = _get_elo_once(home_team_name)
+                    away_elo = _get_elo_once(away_team_name)
+
+                    event_id = str(match.get("event_id") or match.get("id") or "")
+                    if event_id:
+                        _match_elo_cache_put(event_id, home_elo, away_elo)
+
+                    if home_elo is not None and away_elo is not None:
+                        match["elo_predictions"] = calculate_elo_probabilities(home_elo, away_elo)
+                    # ---- end T29c block ----
 
                     # Add predictions in the expected format
                     match["predictions"] = {
@@ -599,7 +691,22 @@ def get_match_context(match_id):
                 )
 
         from .understat_client import fetch_understat_standings
-        from .elo_client import get_team_elo, calculate_elo_probabilities
+        from .elo_client import calculate_elo_probabilities
+
+        # ---- T29c: try to reuse Elo from recent caches BEFORE calling ClubElo ----
+        event_id = request.args.get("event_id") or None
+        home_elo = None
+        away_elo = None
+
+        cached_pair = _match_elo_cache_get(event_id)
+        if cached_pair is not None:
+            home_elo, away_elo = cached_pair
+
+        if home_elo is None and home_team:
+            home_elo = _elo_cache_get(home_team)
+        if away_elo is None and away_team:
+            away_elo = _elo_cache_get(away_team)
+        # ---- end T29c reuse ----
 
         try:
             # Use Understat as primary source for standings with dynamic season
@@ -608,24 +715,36 @@ def get_match_context(match_id):
 
             start_time = time.monotonic()
             standings = None
-            home_elo = None
-            away_elo = None
             source = None
             missing_sources = []
             timeout_missing = []
 
             def fetch_elos():
-                logger.info("🎯 Fetching Elo ratings from ClubElo")
-                return (
-                    get_team_elo(home_team) if home_team else None,
-                    get_team_elo(away_team) if away_team else None,
-                )
+                from .elo_client import get_team_elo
+
+                he = home_elo
+                ae = away_elo
+                try:
+                    if he is None and home_team:
+                        he = get_team_elo(home_team)
+                        _elo_cache_put(home_team, he)
+                    if ae is None and away_team:
+                        ae = get_team_elo(away_team)
+                        _elo_cache_put(away_team, ae)
+                except Exception as elo_err:
+                    logger.warning(
+                        "Context: Elo fetch issue: %s",
+                        getattr(elo_err, "code", type(elo_err).__name__),
+                    )
+                return (he, ae)
 
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = {
                     "understat": executor.submit(fetch_understat_standings, league, current_season),
-                    "elo": executor.submit(fetch_elos),
                 }
+                if home_elo is None or away_elo is None:
+                    futures["elo"] = executor.submit(fetch_elos)
+
                 done, not_done = wait(futures.values(), timeout=API_TIMEOUT_CONTEXT)
 
                 for key, future in futures.items():
@@ -665,6 +784,9 @@ def get_match_context(match_id):
                 logger.warning("[ContextFetcher] Timeout after %.2fs – served partial data.", elapsed)
             elif missing_sources:
                 logger.warning("[ContextFetcher] Partial data due to errors: %s", missing_sources)
+
+            if event_id:
+                _match_elo_cache_put(event_id, home_elo, away_elo)
 
             # Calculate Elo-based probabilities
             elo_probs = calculate_elo_probabilities(home_elo, away_elo) if home_elo and away_elo else None
