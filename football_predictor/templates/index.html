@@ -811,6 +811,39 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // ---- ELO hint plumbing (T30b client side) ----
+        window.ELO_SNAPSHOT = null;
+
+        /** Persist a snapshot from /upcoming so context can be cache-only server-side */
+        function stashEloSnapshotFromUpcoming(upcomingPayload) {
+            const ratings = {};
+
+            // Prefer server-provided map if present
+            if (upcomingPayload && upcomingPayload.elo_table && typeof upcomingPayload.elo_table === 'object') {
+                Object.assign(ratings, upcomingPayload.elo_table);
+            } else if (Array.isArray(upcomingPayload?.matches)) {
+                // Derive from match rows as a fallback
+                for (const m of upcomingPayload.matches) {
+                    if (m?.home_team && typeof m.home_elo === 'number') ratings[m.home_team] = m.home_elo;
+                    if (m?.away_team && typeof m.away_elo === 'number') ratings[m.away_team] = m.away_elo;
+                }
+            }
+
+            const keys = Object.keys(ratings);
+            window.ELO_SNAPSHOT = keys.length ? { ts: Date.now(), ratings } : null;
+        }
+
+        /** Build the minimal per-match Elo hint expected by the server (embed in POST body as `elo_hint`) */
+        function buildEloHintForMatch(match /*, matchIdentifier */) {
+            if (!window.ELO_SNAPSHOT || !match) return null;
+
+            const { ratings, ts } = window.ELO_SNAPSHOT;
+            const out = {};
+            if (match.home_team && ratings[match.home_team] != null) out[match.home_team] = ratings[match.home_team];
+            if (match.away_team && ratings[match.away_team] != null) out[match.away_team] = ratings[match.away_team];
+
+            return Object.keys(out).length ? { ts, ratings: out } : null;
+        }
         // Global variables for theme toggle access
         let currentMatchData = null;
         let currentContextData = null;  // Store context data globally for career stats access
@@ -1026,14 +1059,34 @@
         
         const GENERIC_TEAM_LOGO = '/static/team_logos/generic_shield.svg';
 
-        function getLogoUrlOrFallback(url) {
-            if (!url || typeof url !== 'string') {
-                return GENERIC_TEAM_LOGO;
+        // ---- Logos: allowlist trusted external sources ----
+        const ALLOWED_LOGO_PREFIXES = [
+            'https://raw.githubusercontent.com/luukhopman/football-logos/',
+            // add more trusted CDNs here if needed
+        ];
+
+        function isAllowedExternal(url) {
+            return ALLOWED_LOGO_PREFIXES.some(prefix => typeof url === 'string' && url.startsWith(prefix));
+        }
+
+        function getLogoUrlOrFallback(teamName, maybeExternalUrl) {
+            if (maybeExternalUrl && isAllowedExternal(maybeExternalUrl)) {
+                // trusted external — no warning
+                return maybeExternalUrl;
             }
-            if (url.startsWith('http')) {
-                console.warn('Unexpected external logo URL', url);
+            if (maybeExternalUrl && !/^https?:\/\//.test(maybeExternalUrl)) {
+                // local or relative path provided by backend
+                return maybeExternalUrl;
             }
-            return url;
+            if (maybeExternalUrl && /^https?:\/\//.test(maybeExternalUrl)) {
+                // unknown external — keep your warning + fallback
+                console.warn('Unexpected external logo URL', maybeExternalUrl);
+            }
+            const safe = (teamName || 'unknown').replace(/[^\w]+/g, '_').toLowerCase();
+            if (safe && safe !== 'unknown') {
+                return `/static/team_logos/${safe}.svg`;
+            }
+            return GENERIC_TEAM_LOGO;
         }
 
         // Calculate WCAG contrast ratio
@@ -1422,7 +1475,7 @@
             currentTipIndex = 0;
         }
 
-        async function loadMatchContext(match) {
+        async function loadMatchContext(match, matchIdentifier, finalLeagueCode) {
             const matchContext = document.getElementById('match-context');
             if (!match || !match.league) {
                 matchContext.innerHTML = '<p class="text-muted">Match context unavailable</p>';
@@ -1450,7 +1503,7 @@
             console.debug('[context] open modal, progress=55%');
             startMatchContextTrickle();
 
-            const leagueCode = match.league_code || match.league;
+            const leagueCode = finalLeagueCode || match.league_code || match.league;
             const leagueMapFallback = {
                 'UEFA Champions League': 'CL',
                 'EPL': 'PL',
@@ -1473,23 +1526,23 @@
                 'UEFA Europa League': 'EL'
             };
 
-            const finalLeagueCode = leagueMapFallback[leagueCode] || leagueCode;
+            const leagueCodeForContext = leagueMapFallback[leagueCode] || leagueCode;
 
             setTimeout(() => updateProgressStatus('Fetching standings from Understat...', 'database'), 100);
             setTimeout(() => updateProgressStatus('Fetching match context insights...', 'database'), 180);
 
-            const matchIdentifier = match.id ?? match.event_id ?? match.eventId ?? '';
-            const coreUrl = `/match/${matchIdentifier}/context_core`;
-            const xgUrl = `/match/${matchIdentifier}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`;
+            const matchIdentifierValue = matchIdentifier ?? match.id ?? match.event_id ?? match.eventId ?? '';
+            const coreUrl = `/match/${matchIdentifierValue}/context_core`;
+            const xgUrl = `/match/${matchIdentifierValue}/xg?league=${leagueCodeForContext}&home_team=${encodeURIComponent(match.home_team)}&away_team=${encodeURIComponent(match.away_team)}`;
 
             const corePayload = {
-                league: finalLeagueCode,
+                league: leagueCodeForContext,
                 home_team: match.home_team || null,
                 away_team: match.away_team || null,
-                event_id: matchIdentifier || null,
+                event_id: matchIdentifierValue || null,
             };
 
-            const eloHint = buildEloHintForMatch(match, matchIdentifier);
+            const eloHint = buildEloHintForMatch(match, matchIdentifierValue);
             if (eloHint) {
                 corePayload.elo_hint = eloHint;
             }
@@ -1499,13 +1552,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(corePayload)
             };
-
-            if (eloHint) {
-                const encodedHint = encodeEloHintHeader(eloHint);
-                if (encodedHint) {
-                    coreRequestOptions.headers['X-Elo-Hint'] = encodedHint;
-                }
-            }
 
             const finalize = () => {
                 stopMatchContextTrickle();
@@ -1779,7 +1825,10 @@
                 
                 // Home team column
                 html += `<div class="col-md-6 ${hasAwayData ? 'border-end' : ''}">`;
-                const homeLogoUrl = getLogoUrlOrFallback(contextData.home_team?.logo_url || currentMatchData?.home_logo_url);
+                const homeLogoUrl = getLogoUrlOrFallback(
+                    currentMatchData.home_team,
+                    contextData.home_team?.logo_url || currentMatchData?.home_logo_url
+                );
                 const homeBrandColor = getTeamBrandColor(currentMatchData.home_team);
                 const homeColorData = homeBrandColor ? ensureColorContrast(homeBrandColor, isDarkTheme()) : { color: 'var(--primary-color)', shadow: '' };
                 html += `<h6 class="fw-bold mb-2" style="color: ${homeColorData.color}; ${homeColorData.shadow}"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
@@ -1807,7 +1856,10 @@
                 
                 // Away team column
                 html += `<div class="col-md-6">`;
-                const awayLogoUrl = getLogoUrlOrFallback(contextData.away_team?.logo_url || currentMatchData?.away_logo_url);
+                const awayLogoUrl = getLogoUrlOrFallback(
+                    currentMatchData.away_team,
+                    contextData.away_team?.logo_url || currentMatchData?.away_logo_url
+                );
                 const awayBrandColor = getTeamBrandColor(currentMatchData.away_team);
                 const awayColorData = awayBrandColor ? ensureColorContrast(awayBrandColor, isDarkTheme()) : { color: '#ef4444', shadow: '' };
                 html += `<h6 class="fw-bold mb-2" style="color: ${awayColorData.color}; ${awayColorData.shadow}"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
@@ -2613,114 +2665,7 @@
                 });
             }
 
-            function buildEloHintForMatch(match, eventId) {
-                if (!match) {
-                    return null;
-                }
-
-                const snapshot = window.__eloSnapshot;
-                const homeTeam = match.home_team || null;
-                const awayTeam = match.away_team || null;
-                const normalizedHome = normalizeSnapshotTeamKey(homeTeam);
-                const normalizedAway = normalizeSnapshotTeamKey(awayTeam);
-                const eventKey = eventId ? String(eventId) : null;
-
-                let homeRating = resolveEloNumeric(match.elo_home);
-                let awayRating = resolveEloNumeric(match.elo_away);
-                let timestampMs = parseEloTimestamp(match.elo_ts);
-
-                if (snapshot) {
-                    if (homeRating === null && normalizedHome && snapshot.teams[normalizedHome]) {
-                        const entry = snapshot.teams[normalizedHome];
-                        homeRating = resolveEloNumeric(entry.rating);
-                        if (!timestampMs && entry.ts) {
-                            timestampMs = typeof entry.ts === 'number' ? entry.ts : parseEloTimestamp(entry.ts);
-                        }
-                    }
-                    if (awayRating === null && normalizedAway && snapshot.teams[normalizedAway]) {
-                        const entry = snapshot.teams[normalizedAway];
-                        awayRating = resolveEloNumeric(entry.rating);
-                        if (!timestampMs && entry.ts) {
-                            timestampMs = typeof entry.ts === 'number' ? entry.ts : parseEloTimestamp(entry.ts);
-                        }
-                    }
-                    if (eventKey && snapshot.events[eventKey]) {
-                        const eventEntry = snapshot.events[eventKey];
-                        if (homeRating === null) {
-                            homeRating = resolveEloNumeric(eventEntry.home);
-                        }
-                        if (awayRating === null) {
-                            awayRating = resolveEloNumeric(eventEntry.away);
-                        }
-                        if (!timestampMs && eventEntry.ts) {
-                            timestampMs = typeof eventEntry.ts === 'number' ? eventEntry.ts : parseEloTimestamp(eventEntry.ts);
-                        }
-                    }
-                    if (!timestampMs && snapshot.updatedAt) {
-                        timestampMs = parseEloTimestamp(snapshot.updatedAt);
-                    }
-                }
-
-                if (homeRating === null && awayRating === null) {
-                    return null;
-                }
-
-                const hint = {
-                    version: 1,
-                    home_team: homeTeam,
-                    away_team: awayTeam,
-                };
-
-                if (eventKey) {
-                    hint.event_id = eventKey;
-                }
-                if (homeRating !== null) {
-                    hint.home = homeRating;
-                }
-                if (awayRating !== null) {
-                    hint.away = awayRating;
-                }
-                if (timestampMs) {
-                    hint.ts = new Date(timestampMs).toISOString();
-                }
-                if (snapshot) {
-                    if (snapshot.fingerprint) {
-                        hint.fingerprint = snapshot.fingerprint;
-                    }
-                    if (snapshot.updatedAt) {
-                        hint.snapshot_ts = snapshot.updatedAt;
-                    }
-                }
-
-                return hint;
-            }
-
-            function encodeEloHintHeader(hint) {
-                if (!hint) {
-                    return null;
-                }
-                if (typeof btoa !== 'function') {
-                    return null;
-                }
-                try {
-                    const json = JSON.stringify(hint);
-                    if (typeof TextEncoder !== 'undefined') {
-                        const encoder = new TextEncoder();
-                        const bytes = encoder.encode(json);
-                        let binary = '';
-                        bytes.forEach(byte => {
-                            binary += String.fromCharCode(byte);
-                        });
-                        return btoa(binary);
-                    }
-                    return btoa(unescape(encodeURIComponent(json)));
-                } catch (err) {
-                    console.warn('Failed to encode Elo hint header', err);
-                    return null;
-                }
-            }
-
-            function getUpcomingMatches(league) {
+            async function getUpcomingMatches(league) {
                 matchesList.innerHTML = `
                     <div class="loading">
                         <div class="spinner-border text-primary" role="status">
@@ -2728,21 +2673,24 @@
                         </div>
                     </div>
                 `;
-                
-                fetch(`/upcoming?league=${encodeURIComponent(league)}`)
-                .then(response => response.json())
-                .then(data => {
+
+                try {
+                    const resp = await fetch(`/upcoming?league=${encodeURIComponent(league)}`);
+                    const data = await resp.json();
+
+                    // NEW: store Elo snapshot for T30b
+                    stashEloSnapshotFromUpcoming(data);
+
                     if (data.error) {
                         matchesList.innerHTML = `<p class="text-danger">${data.error}</p>`;
                         return;
                     }
-                    
+
                     displayMatches(data.matches);
-                })
-                .catch(error => {
+                } catch (error) {
                     console.error('Error:', error);
                     matchesList.innerHTML = `<p class="text-danger">Error getting upcoming matches: ${error.message}</p>`;
-                });
+                }
             }
             
             // Update the filter badge with match counts
@@ -2827,8 +2775,8 @@
                         m.commence_time === match.commence_time
                     );
                     
-                    const homeLogo = getLogoUrlOrFallback(match.home_logo_url);
-                    const awayLogo = getLogoUrlOrFallback(match.away_logo_url);
+                    const homeLogo = getLogoUrlOrFallback(match.home_team, match.home_logo_url);
+                    const awayLogo = getLogoUrlOrFallback(match.away_team, match.away_logo_url);
                     const eloHomeAttr = resolveEloNumeric(match.elo_home);
                     const eloAwayAttr = resolveEloNumeric(match.elo_away);
                     const eloTsAttr = match.elo_ts ?? '';
@@ -2883,8 +2831,8 @@
                 currentMatchData = match;
                 
                 // Update match details with logos
-                const homeLogo = getLogoUrlOrFallback(match.home_logo_url);
-                const awayLogo = getLogoUrlOrFallback(match.away_logo_url);
+                const homeLogo = getLogoUrlOrFallback(match.home_team, match.home_logo_url);
+                const awayLogo = getLogoUrlOrFallback(match.away_team, match.away_logo_url);
                 matchTeams.innerHTML = `
                     <div class="d-flex align-items-center justify-content-center gap-3">
                         <div class="d-flex align-items-center">
@@ -3147,7 +3095,10 @@
                     
                     // Home team column  
                     html += `<div class="col-12 col-md-6 mb-3 mb-md-0 ${hasAwayData ? 'border-md-end' : ''}">`;
-                    const homeLogoUrl = getLogoUrlOrFallback(contextData.home_team?.logo_url || currentMatchData?.home_logo_url);
+                    const homeLogoUrl = getLogoUrlOrFallback(
+                        currentMatchData.home_team,
+                        contextData.home_team?.logo_url || currentMatchData?.home_logo_url
+                    );
                     const homeBrandColor = getTeamBrandColor(currentMatchData.home_team);
                     const homeColorData = homeBrandColor ? ensureColorContrast(homeBrandColor, isDarkTheme()) : { color: 'var(--primary-color)', shadow: '' };
                     html += `<h6 class="fw-bold mb-2 text-truncate" style="color: ${homeColorData.color}; ${homeColorData.shadow}"><i class="fas fa-home me-1"></i><img src="${homeLogoUrl}" alt="${currentMatchData.home_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.home_team}</h6>`;
@@ -3235,7 +3186,10 @@
                     
                     // Away team column
                     html += `<div class="col-12 col-md-6">`;
-                    const awayLogoUrl = getLogoUrlOrFallback(contextData.away_team?.logo_url || currentMatchData?.away_logo_url);
+                    const awayLogoUrl = getLogoUrlOrFallback(
+                        currentMatchData.away_team,
+                        contextData.away_team?.logo_url || currentMatchData?.away_logo_url
+                    );
                     const awayBrandColor = getTeamBrandColor(currentMatchData.away_team);
                     const awayColorData = awayBrandColor ? ensureColorContrast(awayBrandColor, isDarkTheme()) : { color: '#ef4444', shadow: '' };
                     html += `<h6 class="fw-bold mb-2 text-truncate" style="color: ${awayColorData.color}; ${awayColorData.shadow}"><i class="fas fa-plane-departure me-1"></i><img src="${awayLogoUrl}" alt="${currentMatchData.away_team}" style="height: 20px; width: 20px; object-fit: contain; margin-right: 8px;" onerror="this.style.display='none'">${currentMatchData.away_team}</h6>`;
