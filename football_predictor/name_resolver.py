@@ -23,6 +23,8 @@ _alias_providers: ContextVar[Optional[Set[str]]] = ContextVar(
     "alias_providers", default=None
 )
 
+_resolver_ready_logged = False
+
 
 def _register_alias_mapping(raw: str, canonical: str, provider: str) -> None:
     mapping = (raw, canonical, provider)
@@ -139,6 +141,28 @@ def _build_lookup_structures() -> Tuple[Dict[str, str], Dict[str, Dict[str, str]
                 lookup[canonicalize_team(alias)] = canonical
 
     return canonical_by_norm, provider_lookup
+
+
+def warm_alias_resolver() -> List[str]:
+    """Preload alias providers at startup and log readiness once."""
+
+    aliases = load_aliases()
+    # Trigger lookup cache population to ensure providers are ready.
+    _build_lookup_structures()
+
+    providers: Set[str] = set()
+    for buckets in aliases.values():
+        providers.update(provider.lower() for provider in buckets.keys())
+
+    ordered = sorted(providers, key=lambda key: (key != "fbref", key))
+
+    global _resolver_ready_logged
+    if not _resolver_ready_logged:
+        providers_display = ", ".join(ordered) if ordered else "none"
+        logger.info("Resolver ready: providers=%s", providers_display)
+        _resolver_ready_logged = True
+
+    return ordered
 
 
 def resolve_team_name(raw: str, provider: str | None = None) -> str:

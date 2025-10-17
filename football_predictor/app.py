@@ -31,7 +31,11 @@ from .xg_data_fetcher import (
     set_request_memo_id,
 )
 from .utils import get_current_season, fuzzy_team_match
-from .name_resolver import resolve_team_name, alias_logging_context
+from .name_resolver import (
+    alias_logging_context,
+    resolve_team_name,
+    warm_alias_resolver,
+)
 from .errors import APIError
 from .validators import (
     validate_league,
@@ -47,6 +51,9 @@ app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 logger = setup_logger(__name__)
+
+# Warm alias resolver at startup to avoid lazy initialization gaps (T37).
+_ALIAS_PROVIDERS = warm_alias_resolver()
 
 
 def _apply_recent_xg_context(
@@ -1191,6 +1198,14 @@ def get_match_xg(event_id):
                 home_team, away_team, league_code, request_memo=memo
             )
 
+            metadata_keys = (
+                "fast_path",
+                "completeness",
+                "refresh_status",
+                "availability",
+                "reason",
+            )
+
             if not xg_prediction.get('available'):
                 elapsed_ms = (time.monotonic() - start_time) * 1000
                 logger.info(
@@ -1205,6 +1220,12 @@ def get_match_xg(event_id):
                     "error": xg_prediction.get('error', 'xG data not available'),
                     "source": "FBref via soccerdata"
                 }
+                for key in metadata_keys:
+                    value = xg_prediction.get(key)
+                    if value is not None:
+                        payload[key] = value
+                if "availability" not in payload:
+                    payload["availability"] = "unavailable"
                 _ensure_rolling_fields(memo, league_code, home_team, away_team, payload)
                 return make_ok(payload)
 
@@ -1220,6 +1241,12 @@ def get_match_xg(event_id):
                 "xg": xg_prediction,
                 "source": "FBref via soccerdata"
             }
+            for key in metadata_keys:
+                value = xg_prediction.get(key)
+                if value is not None:
+                    payload[key] = value
+            if "availability" not in payload:
+                payload["availability"] = "available"
             _ensure_rolling_fields(memo, league_code, home_team, away_team, payload)
             return make_ok(payload)
 

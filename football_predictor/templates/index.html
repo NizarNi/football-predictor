@@ -849,6 +849,13 @@
         let currentContextData = null;  // Store context data globally for career stats access
         let currentOverUnderData = null;
         let currentXgData = null;
+        let currentXgMeta = null;
+        let xgDetailsExpanded = false;
+        let lastXgUrl = null;
+        let lastXgRequestToken = null;
+        let xgRepollTimeoutId = null;
+        let xgRepollScheduled = false;
+        let xgRepollAttempted = false;
         
         // Theme-aware color helper functions (global scope for theme toggle)
         function isDarkTheme() {
@@ -1475,6 +1482,142 @@
             currentTipIndex = 0;
         }
 
+        const XG_REPOLL_DELAY_MS = 125000;
+
+        function resetXgState() {
+            if (xgRepollTimeoutId) {
+                clearTimeout(xgRepollTimeoutId);
+                xgRepollTimeoutId = null;
+            }
+            xgRepollScheduled = false;
+            xgRepollAttempted = false;
+            currentXgData = null;
+            currentXgMeta = null;
+            xgDetailsExpanded = false;
+            lastXgUrl = null;
+            lastXgRequestToken = null;
+        }
+
+        function cancelXgRepoll() {
+            if (xgRepollTimeoutId) {
+                clearTimeout(xgRepollTimeoutId);
+                xgRepollTimeoutId = null;
+            }
+            xgRepollScheduled = false;
+        }
+
+        function scheduleXgRepoll(requestToken) {
+            if (xgRepollScheduled || xgRepollAttempted || !lastXgUrl) {
+                return;
+            }
+            xgRepollScheduled = true;
+            xgRepollTimeoutId = setTimeout(() => {
+                xgRepollTimeoutId = null;
+                xgRepollScheduled = false;
+                xgRepollAttempted = true;
+                if (!lastXgUrl || requestToken !== contextRequestToken) {
+                    return;
+                }
+                fetchMatchXg(lastXgUrl, requestToken, { silent: true });
+            }, XG_REPOLL_DELAY_MS);
+        }
+
+        function applyXgPayload(xgData, requestToken, { silent = false } = {}) {
+            if (!currentContextData) {
+                return;
+            }
+
+            currentXgMeta = {
+                fast_path: Boolean(xgData?.fast_path),
+                completeness: xgData?.completeness || null,
+                refresh_status: xgData?.refresh_status || 'ready',
+                availability: xgData?.availability || (xgData?.xg ? 'available' : 'unavailable'),
+                reason: xgData?.reason || null,
+            };
+
+            currentContextData.xg_meta = currentXgMeta;
+
+            if (currentXgMeta.availability === 'available' && xgData?.xg) {
+                currentContextData.xg = xgData.xg;
+                currentContextData.xg_error = null;
+                currentXgData = xgData.xg;
+            } else if (currentXgMeta.availability === 'available') {
+                currentContextData.xg = null;
+                currentContextData.xg_error = xgData?.error || 'xG data not available for this match.';
+                currentXgData = null;
+            } else {
+                currentContextData.xg = null;
+                currentContextData.xg_error = currentXgMeta.reason || xgData?.error || 'xG data not available for this competition.';
+                currentXgData = null;
+            }
+
+            currentContextData.home_career = null;
+            currentContextData.away_career = null;
+            currentContextData.xg_loading = false;
+
+            if (currentXgMeta.availability === 'available' && currentXgMeta.refresh_status !== 'ready') {
+                scheduleXgRepoll(requestToken);
+            } else {
+                cancelXgRepoll();
+            }
+
+            displayMatchContextData(currentContextData);
+        }
+
+        async function fetchMatchXg(url, requestToken, { silent = false, perfStart = null } = {}) {
+            lastXgUrl = url;
+            lastXgRequestToken = requestToken;
+            try {
+                const xgData = await fetchJsonWithTimeout(url, {}, 40000, 'context_xg');
+                if (typeof perfStart === 'number') {
+                    console.debug('[context] context_xg response in', (performance.now() - perfStart).toFixed(0), 'ms');
+                }
+                if (requestToken !== contextRequestToken) {
+                    return;
+                }
+                applyXgPayload(xgData, requestToken, { silent });
+            } catch (xgError) {
+                if (requestToken !== contextRequestToken) {
+                    return;
+                }
+                console.error('Error loading xG context:', xgError);
+                cancelXgRepoll();
+                currentXgData = null;
+                currentXgMeta = currentXgMeta || null;
+                if (currentContextData) {
+                    currentContextData.xg = null;
+                    currentContextData.xg_error = xgError.name === 'TimeoutError'
+                        ? 'xG data timed out. Showing standings & Elo only.'
+                        : 'xG data unavailable at the moment.';
+                    currentContextData.xg_loading = false;
+                    currentContextData.xg_meta = currentXgMeta;
+                    clearTipRotation();
+                    displayMatchContextData(currentContextData);
+                }
+            }
+        }
+
+        window.toggleXgDetails = function toggleXgDetails() {
+            xgDetailsExpanded = !xgDetailsExpanded;
+            if (!currentContextData) {
+                return;
+            }
+            if (
+                xgDetailsExpanded &&
+                currentXgMeta &&
+                currentXgMeta.availability === 'available' &&
+                currentXgMeta.completeness !== 'season+logs'
+            ) {
+                currentContextData.xg_loading = true;
+                displayMatchContextData(currentContextData);
+                if (lastXgUrl && lastXgRequestToken !== null) {
+                    fetchMatchXg(lastXgUrl, lastXgRequestToken, { silent: true });
+                }
+            } else {
+                displayMatchContextData(currentContextData);
+            }
+        };
+
         async function loadMatchContext(match, matchIdentifier, finalLeagueCode) {
             const matchContext = document.getElementById('match-context');
             if (!match || !match.league) {
@@ -1487,6 +1630,7 @@
             }
             isMatchContextLoading = true;
             const requestToken = ++contextRequestToken;
+            resetXgState();
 
             currentXgData = null;
 
@@ -1586,6 +1730,8 @@
                 currentContextData.xg_error = null;
                 currentContextData.home_career = null;
                 currentContextData.away_career = null;
+                currentContextData.xg_meta = null;
+                xgDetailsExpanded = false;
 
                 if (coreData?.elo) {
                     const { home_rating, away_rating, predictions } = coreData.elo;
@@ -1608,50 +1754,18 @@
                 displayMatchContextData(currentContextData);
                 console.debug('[context] DOM (core) filled in', (performance.now() - t0).toFixed(0), 'ms');
 
-                try {
-                    const xgStart = performance.now();
-                    const xgData = await fetchJsonWithTimeout(xgUrl, {}, 40000, 'context_xg');
-                    console.debug('[context] context_xg response in', (performance.now() - xgStart).toFixed(0), 'ms');
-
-                    if (requestToken !== contextRequestToken) {
-                        return;
-                    }
-
-                    if (xgData && xgData.xg) {
-                        currentContextData.xg = xgData.xg;
-                        currentContextData.xg_error = null;
-                        currentXgData = xgData.xg;
-                    } else {
-                        currentContextData.xg = null;
-                        currentContextData.xg_error = xgData?.error || 'xG data not available for this match.';
-                        currentXgData = null;
-                    }
-
-                    currentContextData.home_career = null;
-                    currentContextData.away_career = null;
-                    currentContextData.xg_loading = false;
-
-                    clearTipRotation();
-                    displayMatchContextData(currentContextData);
-                    console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
-                    requestAnimationFrame(() => {
-                        console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
-                    });
-                } catch (xgError) {
-                    console.error('Error loading xG context:', xgError);
-                    currentContextData.xg = null;
-                    currentContextData.xg_error = xgError.name === 'TimeoutError'
-                        ? 'xG data timed out. Showing standings & Elo only.'
-                        : 'xG data unavailable at the moment.';
-                    currentContextData.xg_loading = false;
-                    currentXgData = null;
-                    clearTipRotation();
-                    displayMatchContextData(currentContextData);
-                    console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
-                    requestAnimationFrame(() => {
-                        console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
-                    });
+                const xgStart = performance.now();
+                await fetchMatchXg(xgUrl, requestToken, { perfStart: xgStart });
+                if (requestToken !== contextRequestToken) {
+                    return;
                 }
+
+                clearTipRotation();
+                displayMatchContextData(currentContextData);
+                console.debug('[context] DOM filled in', (performance.now() - t0).toFixed(0), 'ms');
+                requestAnimationFrame(() => {
+                    console.debug('[context] complete', (performance.now() - t0).toFixed(0), 'ms');
+                });
             } catch (error) {
                 console.error('Error loading context:', error);
                 clearTipRotation();
@@ -1891,24 +2005,66 @@
                 }
                 
                 // Add xG trend charts
-                if (contextData.xg) {
-                    html += displayXgCharts(contextData.xg);
-                } else if (contextData.xg_loading) {
+                const xgMeta = contextData.xg_meta || currentXgMeta || null;
+                const availability = xgMeta ? xgMeta.availability : null;
+
+                if (availability === 'unavailable') {
+                    const reason = xgMeta?.reason || contextData.xg_error || 'No per-match xG logs for this competition.';
                     html += `
                         <div class="card mt-3">
                             <div class="card-body text-center text-muted small">
-                                <i class="fas fa-spinner fa-spin me-2"></i>Loading xG trends...
+                                <i class="fas fa-info-circle me-2"></i>${reason}
                             </div>
                         </div>
                     `;
-                } else if (contextData.xg_error) {
-                    html += `
-                        <div class="card mt-3">
-                            <div class="card-body text-center text-muted small">
-                                <i class="fas fa-info-circle me-2"></i>${contextData.xg_error}
+                } else {
+                    if (xgMeta) {
+                        const toggleLabel = xgDetailsExpanded ? 'Hide xG details' : 'Show xG details';
+                        const toggleClass = xgDetailsExpanded ? 'btn-primary' : 'btn-outline-primary';
+                        const note = xgMeta.refresh_status !== 'ready'
+                            ? `<div class="text-muted small mt-2"><i class="fas fa-hourglass-half me-1"></i>${xgMeta.refresh_status === 'debounced' ? 'Warming detailed logs… (cooldown active)' : 'Warming detailed logs… (refresh in progress)'}</div>`
+                            : '';
+                        html += `
+                            <div class="card mt-3">
+                                <div class="card-body text-center">
+                                    <button class="btn btn-sm ${toggleClass}" onclick="toggleXgDetails()">
+                                        <i class="fas fa-chart-line me-1"></i>${toggleLabel}
+                                    </button>
+                                    ${note}
+                                </div>
                             </div>
-                        </div>
-                    `;
+                        `;
+                    }
+
+                    if (xgDetailsExpanded) {
+                        if (contextData.xg_loading) {
+                            html += `
+                                <div class="card mt-3">
+                                    <div class="card-body text-center text-muted small">
+                                        <i class="fas fa-spinner fa-spin me-2"></i>Loading xG trends...
+                                    </div>
+                                </div>
+                            `;
+                        } else if (contextData.xg) {
+                            html += displayXgCharts(contextData.xg);
+                        } else if (contextData.xg_error) {
+                            html += `
+                                <div class="card mt-3">
+                                    <div class="card-body text-center text-muted small">
+                                        <i class="fas fa-info-circle me-2"></i>${contextData.xg_error}
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    } else if (!xgMeta && contextData.xg_error) {
+                        html += `
+                            <div class="card mt-3">
+                                <div class="card-body text-center text-muted small">
+                                    <i class="fas fa-info-circle me-2"></i>${contextData.xg_error}
+                                </div>
+                            </div>
+                        `;
+                    }
                 }
             }
             
@@ -2990,12 +3146,20 @@
                     fetch(`/match/${currentMatchData.id}/xg?league=${finalLeagueCode}&home_team=${encodeURIComponent(currentMatchData.home_team)}&away_team=${encodeURIComponent(currentMatchData.away_team)}`)
                     .then(r => r.json())
                     .then(xgData => {
-                        currentXgData = xgData.xg || null;
+                        currentXgMeta = {
+                            fast_path: Boolean(xgData?.fast_path),
+                            completeness: xgData?.completeness || null,
+                            refresh_status: xgData?.refresh_status || 'ready',
+                            availability: xgData?.availability || (xgData?.xg ? 'available' : 'unavailable'),
+                            reason: xgData?.reason || null,
+                        };
+                        currentXgData = currentXgMeta.availability === 'available' ? (xgData.xg || null) : null;
                         displayOddsBasedAnalysis(currentMatchData);
                     })
                     .catch(error => {
                         console.error('Error fetching xG:', error);
                         currentXgData = null;
+                        currentXgMeta = null;
                         displayOddsBasedAnalysis(currentMatchData);
                     });
                 } else {

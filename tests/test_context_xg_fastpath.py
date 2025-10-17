@@ -93,6 +93,10 @@ def test_fastpath_returns_cached_season_xg(monkeypatch, immediate_executor):
     )
 
     assert result['available'] is True
+    assert result['fast_path'] is True
+    assert result['completeness'] == 'season_only'
+    assert result['refresh_status'] == 'warming'
+    assert result['availability'] == 'available'
     assert 'home_xg' in result and 'away_xg' in result
     assert any(word in result.get('note', '').lower() for word in ['season xg', 'warming'])
 
@@ -123,6 +127,8 @@ def test_cold_cache_returns_warming(monkeypatch, immediate_executor):
 
     assert result['available'] is False
     assert 'warming' in result['error'].lower()
+    assert result['refresh_status'] == 'warming'
+    assert result['availability'] == 'unavailable'
     # _refresh_league_async submits the fetch task to the (immediate) executor
     assert fetch_calls == [('PL', season)]
 
@@ -159,10 +165,38 @@ def test_cross_competition_fastpath(monkeypatch, immediate_executor):
         'away_stats',
         'over_under_2_5',
         'result_prediction',
+        'fast_path',
+        'completeness',
+        'refresh_status',
+        'availability',
     }
 
     assert result['available'] is True
+    assert result['fast_path'] is True
+    assert result['completeness'] == 'season_only'
+    assert result['refresh_status'] == 'warming'
+    assert result['availability'] == 'available'
     assert expected_keys <= set(result.keys()) <= expected_keys | {'note'}
     assert len(refresh_calls) == 2
     assert refresh_calls == [('PL', 'Arsenal', season), ('PL', 'Chelsea', season)]
     assert result.get('note')
+
+
+def test_league_mismatch_returns_guardrail(monkeypatch):
+    season = xg_data_fetcher.get_xg_season()
+    table = {
+        'Arsenal': _sample_team_stats(1.9, 1.0),
+    }
+    xg_data_fetcher._set_mem_cache('PL', season, table)
+
+    monkeypatch.setattr(xg_data_fetcher, "_get_cached_team_logs_in_memory", lambda *args, **kwargs: [])
+    monkeypatch.setattr(xg_data_fetcher, "_refresh_logs_async", lambda *args, **kwargs: "debounced")
+
+    result = xg_data_fetcher.get_match_xg_prediction(
+        'Sunderland', 'Arsenal', 'PL', season=season
+    )
+
+    assert result['available'] is False
+    assert result['availability'] == 'unavailable'
+    assert result['reason'] == 'No per-match xG logs for this competition'
+    assert result['refresh_status'] == 'ready'

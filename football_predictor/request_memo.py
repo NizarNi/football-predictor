@@ -62,6 +62,41 @@ class RequestMemo:
 
         return (league_key, canonical_team)
 
+    def prime_rolling(
+        self,
+        team: str,
+        league: Optional[str],
+        payload: Dict[str, Any],
+        *,
+        cache_source: Optional[str] = None,
+        window: Optional[int] = None,
+    ) -> None:
+        """Seed a precomputed rolling payload for later reuse."""
+
+        key = self._resolve_existing_key(league, team)
+        if key is None:
+            return
+
+        actual_league, canonical_team = key
+        league_key = actual_league or ""
+
+        requested_window = int(window or 0)
+        if requested_window <= 0:
+            requested_window = int(payload.get("window_len") or 0)
+        if requested_window <= 0:
+            requested_window = 5
+
+        cache_key = (league_key, canonical_team, requested_window)
+        seeded = dict(payload)
+        if cache_source is not None:
+            seeded["cache_source"] = cache_source
+        else:
+            seeded.setdefault(
+                "cache_source",
+                self.cache_source.get((league_key, canonical_team)),
+            )
+        self.rolling_xg[cache_key] = seeded
+
     def get_or_compute_rolling(
         self,
         team: str,

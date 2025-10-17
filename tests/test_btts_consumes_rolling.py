@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 
 import pytest
 
-sys.modules.setdefault("pandas", types.ModuleType("pandas"))
 sys.modules.setdefault("soccerdata", types.ModuleType("soccerdata"))
 
 from football_predictor import app as app_module
