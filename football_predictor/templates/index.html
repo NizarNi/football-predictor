@@ -4224,9 +4224,17 @@
                 const leaningYes = yesAvg >= 0.5;
                 const label = leaningYes ? 'YES' : 'NO';
                 const percent = (leaningYes ? yesAvg : (1 - yesAvg)) * 100;
+
+                const marketPercent = market && typeof market.yes_probability === 'number'
+                    ? (leaningYes ? market.yes_probability : (1 - market.yes_probability)) * 100
+                    : null;
+                const xgPercent = xgModel && typeof xgModel.yes_probability === 'number'
+                    ? (leaningYes ? xgModel.yes_probability : (1 - xgModel.yes_probability)) * 100
+                    : null;
+
                 const details = [
-                    market && typeof market.yes_probability === 'number' ? `Market: ${(market.yes_probability * 100).toFixed(1)}%` : null,
-                    xgModel && typeof xgModel.yes_probability === 'number' ? `xG: ${(xgModel.yes_probability * 100).toFixed(1)}%` : null
+                    marketPercent != null ? `Market: ${marketPercent.toFixed(1)}%` : null,
+                    xgPercent != null ? `xG: ${xgPercent.toFixed(1)}%` : null
                 ].filter(Boolean).join(' · ');
 
                 const alertClass = leaningYes ? 'alert-success' : 'alert-secondary';
