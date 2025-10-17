@@ -26,6 +26,7 @@ from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import (
     clear_request_memo_id,
     get_match_xg_prediction,
+    get_team_recent_xg_snapshot,
     set_request_memo_id,
 )
 from .utils import get_current_season, fuzzy_team_match
@@ -932,6 +933,17 @@ def get_match_btts(event_id):
         
         # Get xG-based prediction if xG data available
         # NOTE: BTTS needs TRUE defensive xGA from Understat, not FBref's PSxGA (goalkeeper metric)
+        def _default_snapshot() -> dict[str, Any]:
+            return {
+                "xg_for_sum": 0.0,
+                "xg_against_sum": 0.0,
+                "window_len": 0,
+                "source": "rolling",
+            }
+
+        rolling_home = _default_snapshot()
+        rolling_away = _default_snapshot()
+
         btts_xg = None
         if home_team and away_team and league_code:
             try:
@@ -945,9 +957,22 @@ def get_match_btts(event_id):
                 # Get offensive xG from FBref
                 xg_prediction = get_match_xg_prediction(resolved_home, resolved_away, league_code)
 
+                current_season = get_current_season()
+                rolling_home = get_team_recent_xg_snapshot(
+                    resolved_home,
+                    league_code,
+                    current_season,
+                    window=4,
+                )
+                rolling_away = get_team_recent_xg_snapshot(
+                    resolved_away,
+                    league_code,
+                    current_season,
+                    window=4,
+                )
+
                 # Get defensive xGA from Understat context (TRUE defensive metric, not goalkeeper PSxGA)
                 from .understat_client import fetch_understat_standings
-                current_season = get_current_season()
                 standings = fetch_understat_standings(league_code, current_season)
 
                 home_xg_per_game = None
@@ -983,12 +1008,14 @@ def get_match_btts(event_id):
             except Exception as e:
                 logger.warning("⚠️  Could not calculate xG-based BTTS: %s", e)
                 btts_xg = None
-        
+
         return make_ok({
             "btts": {
                 "market": btts_market,
                 "xg_model": btts_xg
             },
+            "rolling_xg_home": rolling_home,
+            "rolling_xg_away": rolling_away,
             "source": "The Odds API + xG Analysis"
         })
 
