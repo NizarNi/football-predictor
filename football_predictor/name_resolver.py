@@ -5,14 +5,56 @@ import json
 import os
 import re
 import unicodedata
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from .config import setup_logger
 
 ALIASES_PATH = os.path.join(os.path.dirname(__file__), "data", "aliases_fbref_seed.json")
 
 logger = setup_logger(__name__)
+
+_alias_dedupe: ContextVar[Optional[Set[Tuple[str, str, str]]]] = ContextVar(
+    "alias_dedupe", default=None
+)
+_alias_providers: ContextVar[Optional[Set[str]]] = ContextVar(
+    "alias_providers", default=None
+)
+
+
+def _register_alias_mapping(raw: str, canonical: str, provider: str) -> None:
+    mapping = (raw, canonical, provider)
+    bucket = _alias_dedupe.get()
+    if bucket is not None:
+        bucket.add(mapping)
+    provider_bucket = _alias_providers.get()
+    if provider_bucket is not None:
+        provider_bucket.add(provider)
+    logger.debug("✅ alias '%s' → '%s' (provider=%s)", raw, canonical, provider)
+
+
+@contextmanager
+def alias_logging_context() -> None:
+    """Context manager to aggregate alias normalization summaries."""
+
+    token_bucket = _alias_dedupe.set(set())
+    token_providers = _alias_providers.set(set())
+    try:
+        yield
+    finally:
+        mappings = _alias_dedupe.get()
+        providers = _alias_providers.get()
+        provider_list = sorted(providers) if providers else []
+        providers_display = ", ".join(provider_list) if provider_list else "none"
+        logger.info(
+            "alias_normalizer: applied %d unique mappings (providers: %s)",
+            len(mappings) if mappings is not None else 0,
+            providers_display,
+        )
+        _alias_dedupe.reset(token_bucket)
+        _alias_providers.reset(token_providers)
 
 
 def _norm(value: str) -> str:
@@ -128,14 +170,14 @@ def resolve_team_name(raw: str, provider: str | None = None) -> str:
         provider_aliases = provider_lookup.get(provider_key, {})
         canonical = provider_aliases.get(normalized_raw)
         if canonical:
-            logger.info("✅ alias '%s' → '%s' (provider=%s)", raw, canonical, provider_key)
+            _register_alias_mapping(raw, canonical, provider_key)
             return canonical
 
     # Global aliases
     global_aliases = provider_lookup.get("_", {})
     canonical = global_aliases.get(normalized_raw)
     if canonical:
-        logger.info("✅ alias '%s' → '%s' (provider=_)", raw, canonical)
+        _register_alias_mapping(raw, canonical, "_")
         return canonical
 
     # Fuzzy match against canonical names and provider aliases
@@ -168,6 +210,7 @@ def resolve_team_name(raw: str, provider: str | None = None) -> str:
 
 __all__ = [
     "canonicalize_team",
+    "alias_logging_context",
     "get_all_aliases_for",
     "load_aliases",
     "resolve_team_name",
