@@ -747,6 +747,22 @@
                                             <i class="fas fa-info-circle ms-2" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" data-bs-title="<b>Match Context Data Sources</b><br><br>• League standings → <b>Understat</b><br>• xG trends → <b>FBref</b> (2025/26 season)<br>• PPDA metrics → <b>Understat</b><br>• Team form → <b>FBref</b> with opponents<br><br>Provides comprehensive statistical context for informed betting decisions." style="cursor: help; font-size: 0.9em;"></i>
                                         </div>
                                         <div class="card-body">
+                                            <div class="d-flex align-items-center gap-2 mb-2" id="xg-controls">
+                                                <button id="xg-toggle-button"
+                                                        type="button"
+                                                        class="btn btn-outline-primary btn-sm d-none"
+                                                        aria-controls="xg-analysis"
+                                                        aria-pressed="false"
+                                                        onclick="toggleXgDetails()">
+                                                    <i class="fas fa-chart-line me-1"></i> Show xG details
+                                                </button>
+                                                <span class="small text-muted xg-state-card d-none">xG status: <span id="xg-status-text">…</span></span>
+                                            </div>
+
+                                            <div id="xg-analysis" class="d-none">
+                                                <canvas id="home-xg-chart" height="140"></canvas>
+                                                <canvas id="away-xg-chart" height="140" class="mt-3"></canvas>
+                                            </div>
                                             <div id="match-context">
                                                 <p class="text-muted">Select a match to view context</p>
                                             </div>
@@ -831,6 +847,37 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        /* ---------- Team color resolver (REUSE if present) ---------- */
+        function resolveTeamColor(team) {
+            if (!team) {
+                return '#0d6efd';
+            }
+            if (typeof window.getTeamBrandColor === 'function') return window.getTeamBrandColor(team);
+            if (typeof window.teamBrandColor === 'function') return window.teamBrandColor(team);
+            if (typeof window.getTeamColor === 'function') return window.getTeamColor(team);
+            if (window.__palette && window.__palette[team]) return window.__palette[team];
+
+            const selector = typeof CSS !== 'undefined' && CSS.escape ? `[data-team-badge="${CSS.escape(team)}"]` : `[data-team-badge="${team}"]`;
+            const badge = document.querySelector(selector);
+            if (badge) {
+                const s = getComputedStyle(badge);
+                const color = s.color || s.getPropertyValue('--team-color');
+                if (color) return color;
+            }
+
+            return '#0d6efd';
+        }
+
+        function completeBttsProgress() {
+            const bars = document.querySelectorAll('.btts-progress .progress-bar');
+            if (!bars.length) return;
+            bars.forEach(b => {
+                b.classList.remove('bg-secondary', 'progress-bar-animated', 'progress-bar-striped');
+                b.classList.add('bg-success');
+                if (!b.style.width) b.style.width = '33%';
+            });
+        }
+
         // ---- ELO hint plumbing (T30b client side) ----
         window.ELO_SNAPSHOT = null;
 
@@ -876,6 +923,51 @@
         let xgRepollTimeoutId = null;
         let xgRepollScheduled = false;
         let xgRepollAttempted = false;
+        let xgAutoRefreshTimer = null;
+        let xgAutoRefreshAttempted = false;
+
+        function ensureXgToggleVisible() {
+            const btn = document.getElementById('xg-toggle-button');
+            if (btn) btn.classList.remove('d-none');
+            const legacy = document.getElementById('xg-toggle-section') || document.getElementById('xg-toggle-container');
+            if (legacy) legacy.classList.remove('d-none', 'invisible');
+            const card = document.querySelector('.xg-state-card');
+            if (card) card.classList.remove('d-none');
+        }
+
+        function updateXgToggleButtonState(meta, statusLabel) {
+            const btn = document.getElementById('xg-toggle-button');
+            const panel = document.getElementById('xg-analysis');
+            const hasPanel = Boolean(panel);
+            const isAvailable = Boolean(meta && meta.availability === 'available');
+            const showingDetails = Boolean(hasPanel && !panel.classList.contains('d-none') && xgDetailsExpanded);
+
+            if (btn) {
+                btn.disabled = !isAvailable;
+                btn.classList.toggle('disabled', !isAvailable);
+                btn.setAttribute('aria-pressed', showingDetails ? 'true' : 'false');
+                const label = showingDetails ? 'Hide xG details' : 'Show xG details';
+                btn.innerHTML = `<i class="fas fa-chart-line me-1"></i> ${label}`;
+                if (!isAvailable && meta && meta.reason) {
+                    btn.setAttribute('title', meta.reason);
+                } else if (btn.hasAttribute('title')) {
+                    btn.removeAttribute('title');
+                }
+            }
+
+            const statusText = document.getElementById('xg-status-text');
+            if (statusText) {
+                if (statusLabel) {
+                    statusText.textContent = statusLabel;
+                } else if (meta) {
+                    if (meta.availability === 'unavailable') {
+                        statusText.textContent = 'unavailable';
+                    } else {
+                        statusText.textContent = meta.refresh_status === 'ready' ? 'ready' : 'warming…';
+                    }
+                }
+            }
+        }
         
         // Theme-aware color helper functions (global scope for theme toggle)
         function isDarkTheme() {
@@ -1504,6 +1596,22 @@
 
         const XG_REPOLL_DELAY_MS = 125000;
 
+        function scheduleXgOneShotRefresh(fetchFn, delayMs = 2000) {
+            if (xgAutoRefreshTimer || xgAutoRefreshAttempted || typeof fetchFn !== 'function') {
+                return;
+            }
+            xgAutoRefreshAttempted = true;
+            xgAutoRefreshTimer = setTimeout(() => {
+                const fn = fetchFn;
+                xgAutoRefreshTimer = null;
+                try {
+                    fn();
+                } catch (err) {
+                    console.error('xG auto-refresh failed:', err);
+                }
+            }, delayMs);
+        }
+
         function resetXgState() {
             if (xgRepollTimeoutId) {
                 clearTimeout(xgRepollTimeoutId);
@@ -1511,11 +1619,29 @@
             }
             xgRepollScheduled = false;
             xgRepollAttempted = false;
+            if (xgAutoRefreshTimer) {
+                clearTimeout(xgAutoRefreshTimer);
+                xgAutoRefreshTimer = null;
+            }
+            xgAutoRefreshAttempted = false;
             currentXgData = null;
             currentXgMeta = null;
             xgDetailsExpanded = false;
             lastXgUrl = null;
             lastXgRequestToken = null;
+            const panel = document.getElementById('xg-analysis');
+            if (panel) {
+                panel.classList.add('d-none');
+            }
+            if (window.homeXgChart) {
+                window.homeXgChart.destroy();
+                window.homeXgChart = null;
+            }
+            if (window.awayXgChart) {
+                window.awayXgChart.destroy();
+                window.awayXgChart = null;
+            }
+            updateXgToggleButtonState(null);
         }
 
         function cancelXgRepoll() {
@@ -1588,12 +1714,27 @@
             currentContextData.away_career = null;
             currentContextData.xg_loading = false;
 
+            const status = (xgData && (xgData.refresh_status || xgData.status)) || 'ready';
+            const completeness = xgData && xgData.completeness;
+            const statusLabel = currentXgMeta.availability === 'available'
+                ? (status === 'ready' ? 'ready' : 'warming…')
+                : 'unavailable';
+
+            const st = document.getElementById('xg-status-text');
+            if (st) st.textContent = status === 'ready' ? 'ready' : 'warming…';
+
+            if ((status !== 'ready' || (completeness && completeness !== 'full')) && lastXgUrl) {
+                scheduleXgOneShotRefresh(() => fetchMatchXg(lastXgUrl, requestToken, { silent: true }), 2000);
+            }
+
             if (currentXgMeta.availability === 'available' && currentXgMeta.refresh_status === 'debounced') {
                 scheduleXgRepoll(requestToken);
             } else {
                 cancelXgRepoll();
             }
 
+            updateXgToggleButtonState(currentXgMeta, statusLabel);
+            renderXgAnalysisSection(currentContextData);
             displayMatchContextData(currentContextData);
         }
 
@@ -1625,6 +1766,8 @@
                     currentContextData.xg_loading = false;
                     currentContextData.xg_meta = currentXgMeta;
                     clearTipRotation();
+                    updateXgToggleButtonState(currentXgMeta, 'error');
+                    renderXgAnalysisSection(currentContextData);
                     displayMatchContextData(currentContextData);
                 }
             }
@@ -1633,6 +1776,8 @@
         window.toggleXgDetails = function toggleXgDetails() {
             xgDetailsExpanded = !xgDetailsExpanded;
             if (!currentContextData) {
+                renderXgAnalysisSection(null);
+                updateXgToggleButtonState(currentXgMeta);
                 return;
             }
             if (
@@ -1642,13 +1787,16 @@
                 currentXgMeta.completeness !== 'season+logs'
             ) {
                 currentContextData.xg_loading = true;
-                displayMatchContextData(currentContextData);
+                renderXgAnalysisSection(currentContextData);
+                updateXgToggleButtonState(currentXgMeta);
                 if (lastXgUrl && lastXgRequestToken !== null) {
                     fetchMatchXg(lastXgUrl, lastXgRequestToken, { silent: true });
                 }
             } else {
-                displayMatchContextData(currentContextData);
+                renderXgAnalysisSection(currentContextData);
+                updateXgToggleButtonState(currentXgMeta);
             }
+            displayMatchContextData(currentContextData);
         };
 
         async function loadMatchContext(match, matchIdentifier, finalLeagueCode) {
@@ -2045,9 +2193,6 @@
                 const shouldRenderToggle = Boolean(xgMeta && (fastPath || availability === 'available'));
 
                 if (shouldRenderToggle) {
-                    const toggleLabel = xgDetailsExpanded ? 'Hide xG details' : 'Show xG details';
-                    const toggleClass = xgDetailsExpanded ? 'btn-primary' : 'btn-outline-primary';
-                    const toggleDisabled = availability === 'available' ? '' : ' disabled';
                     let noteHtml = '';
                     if (phase === 'warming') {
                         noteHtml = '<div class="text-muted small mt-2"><i class="fas fa-hourglass-half me-1"></i>Warming detailed logs… (cooldown active)</div>';
@@ -2056,16 +2201,15 @@
                     } else if (xgMeta?.note) {
                         noteHtml = `<div class="text-muted small mt-2"><i class="fas fa-info-circle me-1"></i>${xgMeta.note}</div>`;
                     }
+                    const helperText = '<div class="text-muted small mt-2"><i class="fas fa-chart-line me-1"></i>Use the xG toggle above to view charts.</div>';
                     const seedBadge = xgMeta?.resolver_seed ? '<span class="text-muted small ms-2">(seed)</span>' : '';
                     const phaseBadge = `<span class="badge bg-light text-muted border xg-phase-badge">${phase.replace(/_/g, ' ').toUpperCase()}</span>`;
                     html += `
                         <div class="card mt-3 xg-state-card state-${phase}" data-xg-phase="${phase}">
                             <div class="card-body text-center">
-                                <button class="btn btn-sm ${toggleClass}" onclick="toggleXgDetails()"${toggleDisabled}>
-                                    <i class="fas fa-chart-line me-1"></i>${toggleLabel}
-                                </button>
                                 ${phaseBadge}
                                 ${seedBadge}
+                                ${helperText}
                                 ${noteHtml}
                             </div>
                         </div>
@@ -2081,59 +2225,31 @@
                             </div>
                         </div>
                     `;
-                } else if (availability === 'available') {
-                    if (xgDetailsExpanded) {
-                        if (contextData.xg_loading) {
-                            html += `
-                                <div class="card mt-3">
-                                    <div class="card-body text-center text-muted small">
-                                        <i class="fas fa-spinner fa-spin me-2"></i>Loading xG trends...
-                                    </div>
-                                </div>
-                            `;
-                        } else if (contextData.xg) {
-                            html += displayXgCharts(contextData.xg);
-                        } else if (contextData.xg_error) {
-                            html += `
-                                <div class="card mt-3">
-                                    <div class="card-body text-center text-muted small">
-                                        <i class="fas fa-info-circle me-2"></i>${contextData.xg_error}
-                                    </div>
-                                </div>
-                            `;
-                        }
-                    } else if (!xgMeta && contextData.xg_error) {
-                        html += `
-                            <div class="card mt-3">
-                                <div class="card-body text-center text-muted small">
-                                    <i class="fas fa-info-circle me-2"></i>${contextData.xg_error}
-                                </div>
+                } else if (!xgMeta && contextData.xg_error) {
+                    html += `
+                        <div class="card mt-3">
+                            <div class="card-body text-center text-muted small">
+                                <i class="fas fa-info-circle me-2"></i>${contextData.xg_error}
                             </div>
-                        `;
-                    }
+                        </div>
+                    `;
                 }
             }
 
             matchContext.innerHTML = html;
-            
-            // Destroy old charts if they exist
-            if (window.homeXgChart) {
-                window.homeXgChart.destroy();
-                window.homeXgChart = null;
+
+            ensureXgToggleVisible();
+            let statusLabel = null;
+            if (currentXgMeta) {
+                if (currentXgMeta.availability === 'unavailable') {
+                    statusLabel = 'unavailable';
+                } else {
+                    statusLabel = currentXgMeta.refresh_status === 'ready' ? 'ready' : 'warming…';
+                }
             }
-            if (window.awayXgChart) {
-                window.awayXgChart.destroy();
-                window.awayXgChart = null;
-            }
-            
-            // Create xG trend charts if data available
-            if (contextData.xg && contextData.xg.home_stats && contextData.xg.home_stats.recent_matches && contextData.xg.home_stats.recent_matches.length > 0) {
-                window.homeXgChart = createXgTrendChart('home-xg-chart', contextData.xg.home_stats.recent_matches, currentMatchData.home_team);
-            }
-            if (contextData.xg && contextData.xg.away_stats && contextData.xg.away_stats.recent_matches && contextData.xg.away_stats.recent_matches.length > 0) {
-                window.awayXgChart = createXgTrendChart('away-xg-chart', contextData.xg.away_stats.recent_matches, currentMatchData.away_team);
-            }
-            
+            updateXgToggleButtonState(currentXgMeta, statusLabel);
+            renderXgAnalysisSection(contextData);
+
             // Tooltips will be auto-initialized by the global MutationObserver
         }
         
@@ -2392,63 +2508,102 @@
             return html;
         }
         
-        function displayXgCharts(xgData) {
-            const hasHomeXgChart = xgData.home_stats && xgData.home_stats.recent_matches && xgData.home_stats.recent_matches.length > 0;
-            const hasAwayXgChart = xgData.away_stats && xgData.away_stats.recent_matches && xgData.away_stats.recent_matches.length > 0;
-            
+        function renderXgAnalysisSection(contextData) {
+            const panel = document.getElementById('xg-analysis');
+            if (!panel) {
+                return;
+            }
+
+            if (!xgDetailsExpanded) {
+                panel.classList.add('d-none');
+                return;
+            }
+
+            panel.classList.remove('d-none');
+
+            const context = contextData || currentContextData || {};
+            if (context.xg_loading) {
+                panel.innerHTML = '<div class="text-center text-muted small py-3"><i class="fas fa-spinner fa-spin me-2"></i>Loading xG trends…</div>';
+                if (window.homeXgChart) { window.homeXgChart.destroy(); window.homeXgChart = null; }
+                if (window.awayXgChart) { window.awayXgChart.destroy(); window.awayXgChart = null; }
+                return;
+            }
+
+            if (context.xg_error) {
+                panel.innerHTML = `<div class="alert alert-warning small mb-0"><i class="fas fa-info-circle me-1"></i>${context.xg_error}</div>`;
+                if (window.homeXgChart) { window.homeXgChart.destroy(); window.homeXgChart = null; }
+                if (window.awayXgChart) { window.awayXgChart.destroy(); window.awayXgChart = null; }
+                return;
+            }
+
+            const xgData = context.xg || currentXgData;
+            if (!xgData) {
+                panel.innerHTML = '<div class="alert alert-secondary small mb-0"><i class="fas fa-info-circle me-1"></i>Detailed xG logs not available yet.</div>';
+                if (window.homeXgChart) { window.homeXgChart.destroy(); window.homeXgChart = null; }
+                if (window.awayXgChart) { window.awayXgChart.destroy(); window.awayXgChart = null; }
+                return;
+            }
+
+            const hasHomeXgChart = Array.isArray(xgData.home_stats?.recent_matches) && xgData.home_stats.recent_matches.length > 0;
+            const hasAwayXgChart = Array.isArray(xgData.away_stats?.recent_matches) && xgData.away_stats.recent_matches.length > 0;
+
             if (!hasHomeXgChart && !hasAwayXgChart) {
-                return '';
+                panel.innerHTML = '<div class="alert alert-secondary small mb-0"><i class="fas fa-info-circle me-1"></i>Detailed xG logs not available yet.</div>';
+                if (window.homeXgChart) { window.homeXgChart.destroy(); window.homeXgChart = null; }
+                if (window.awayXgChart) { window.awayXgChart.destroy(); window.awayXgChart = null; }
+                return;
             }
-            
-            let html = `
-                <hr class="my-3">
-                <div class="row mb-3">
-                    <div class="col-12">
-                        <h6 class="text-center mb-3">
-                            <i class="fas fa-chart-area me-2"></i>xG Trends (FBref)
-                            <i class="fas fa-info-circle ms-1" data-bs-toggle="tooltip" data-bs-title="Rolling 5-match average of Expected Goals - Shows attacking/defensive performance trends over recent games" style="cursor: help; font-size: 0.8em;"></i>
-                        </h6>
-                    </div>
+
+            const homeTeam = currentMatchData?.home_team || 'Home';
+            const awayTeam = currentMatchData?.away_team || 'Away';
+
+            panel.innerHTML = `
+                <div class="mb-3">
+                    <h6 class="text-center mb-3">
+                        <i class="fas fa-chart-area me-2"></i>xG Trends (FBref)
+                        <i class="fas fa-info-circle ms-1" data-bs-toggle="tooltip" data-bs-title="Rolling 5-match average of Expected Goals - Shows attacking/defensive performance trends over recent games" style="cursor: help; font-size: 0.8em;"></i>
+                    </h6>
                 </div>
-                <div class="row">
+                <div class="row g-3">
+                    ${hasHomeXgChart ? `
+                        <div class="col-md-${hasAwayXgChart ? '5' : '12'}">
+                            <div class="text-center mb-2">
+                                <span class="badge bg-primary" data-team-badge="${homeTeam}">${homeTeam}</span>
+                            </div>
+                            <div class="position-relative" style="max-height: 320px; overflow: hidden;">
+                                <canvas id="home-xg-chart" height="140"></canvas>
+                            </div>
+                        </div>
+                    ` : ''}
+                    ${hasHomeXgChart && hasAwayXgChart ? `
+                        <div class="col-md-2 d-flex align-items-center justify-content-center">
+                            <h4 class="text-muted mb-0">VS</h4>
+                        </div>
+                    ` : ''}
+                    ${hasAwayXgChart ? `
+                        <div class="col-md-${hasHomeXgChart ? '5' : '12'}">
+                            <div class="text-center mb-2">
+                                <span class="badge bg-danger" data-team-badge="${awayTeam}">${awayTeam}</span>
+                            </div>
+                            <div class="position-relative" style="max-height: 320px; overflow: hidden;">
+                                <canvas id="away-xg-chart" height="140" class="mt-${hasHomeXgChart ? '0' : '3'}"></canvas>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
             `;
-            
+
+            if (window.homeXgChart) { window.homeXgChart.destroy(); window.homeXgChart = null; }
+            if (window.awayXgChart) { window.awayXgChart.destroy(); window.awayXgChart = null; }
+
             if (hasHomeXgChart) {
-                html += `
-                    <div class="col-md-${hasAwayXgChart ? '5' : '12'}">
-                        <div class="text-center mb-2">
-                            <span class="badge bg-primary">${currentMatchData.home_team}</span>
-                        </div>
-                        <div style="max-height: 320px; overflow: hidden; position: relative;">
-                            <canvas id="home-xg-chart" style="height: 300px;"></canvas>
-                        </div>
-                    </div>
-                `;
+                window.homeXgChart = createXgTrendChart('home-xg-chart', xgData.home_stats.recent_matches, homeTeam);
             }
-            
-            if (hasHomeXgChart && hasAwayXgChart) {
-                html += `
-                    <div class="col-md-2 d-flex align-items-center justify-content-center">
-                        <h4 class="text-muted mb-0">VS</h4>
-                    </div>
-                `;
-            }
-            
             if (hasAwayXgChart) {
-                html += `
-                    <div class="col-md-${hasHomeXgChart ? '5' : '12'}">
-                        <div class="text-center mb-2">
-                            <span class="badge bg-danger">${currentMatchData.away_team}</span>
-                        </div>
-                        <div style="max-height: 320px; overflow: hidden; position: relative;">
-                            <canvas id="away-xg-chart" style="height: 300px;"></canvas>
-                        </div>
-                    </div>
-                `;
+                window.awayXgChart = createXgTrendChart('away-xg-chart', xgData.away_stats.recent_matches, awayTeam);
             }
-            
-            html += `</div>`;
-            return html;
+
+            initTooltips();
         }
         
         document.addEventListener('DOMContentLoaded', function() {
@@ -4197,15 +4352,19 @@
                 const homeLabel = homeAvg != null ? Number(homeAvg).toFixed(2) : '—';
                 const awayLabel = awayAvg != null ? Number(awayAvg).toFixed(2) : '—';
 
-                return `
-                    <div class="alert alert-light border mb-3 small text-center">
+                const homeColor = resolveTeamColor(currentMatchData?.home_team);
+                const awayColor = resolveTeamColor(currentMatchData?.away_team);
+
+                const seasonSnapshotHtml = `
+                    <div class="small mb-3 text-center">
                         <i class="fas fa-bolt me-1"></i>Season snapshot:
-                        <span class="fw-bold text-primary">${currentMatchData.home_team}</span>
+                        <span class="fw-semibold" style="color:${homeColor}">${currentMatchData?.home_team ?? 'Home'}</span>
                         ${homeLabel} xG / match ·
-                        <span class="fw-bold text-danger">${currentMatchData.away_team}</span>
+                        <span class="fw-semibold" style="color:${awayColor}">${currentMatchData?.away_team ?? 'Away'}</span>
                         ${awayLabel} xG / match
-                    </div>
-                `;
+                    </div>`;
+
+                return seasonSnapshotHtml;
             }
 
             function buildBttsSummaryHtml(market, xgModel) {
@@ -4325,6 +4484,9 @@
                     renderSummary: (html) => {
                         if (summarySection) {
                             summarySection.innerHTML = html;
+                            if (html) {
+                                completeBttsProgress();
+                            }
                         }
                     }
                 };
