@@ -3,7 +3,8 @@ xG Data Fetcher Module
 Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 """
 from contextvars import ContextVar
-from datetime import datetime, timedelta
+import copy
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, Optional, Tuple, List, TYPE_CHECKING
 from dataclasses import dataclass
@@ -41,7 +42,13 @@ import soccerdata as sd
 
 from .app_utils import AdaptiveTimeoutController
 from .utils import create_retry_session, get_xg_season
-from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
+from .config import (
+    API_MAX_RETRIES,
+    API_TIMEOUT,
+    XG_CANONICALIZE_LEAGUE,
+    XG_READY_PAYLOAD_ON_LOGS,
+    setup_logger,
+)
 from .errors import APIError
 from .constants import (
     CAREER_XG_CACHE_TTL,
@@ -73,6 +80,67 @@ DOMESTIC_MAPPING_FALLBACK_MESSAGE = (
 )
 
 SUPPORTED_DOMESTIC = ["PL", "PD", "SA", "BL1", "FL1"]
+
+
+CANON_LEAGUE_KEYS = {
+    LEAGUE_MAPPING["PL"]: {
+        "PL",
+        "Premier League",
+        "English Premier League",
+        "ENG",
+        LEAGUE_MAPPING["PL"],
+    },
+    LEAGUE_MAPPING["SA"]: {
+        "SA",
+        "Serie A",
+        "Italian Serie A",
+        "ITA",
+        LEAGUE_MAPPING["SA"],
+    },
+    LEAGUE_MAPPING["PD"]: {
+        "PD",
+        "La Liga",
+        "Primera Division",
+        "ESP",
+        LEAGUE_MAPPING["PD"],
+    },
+    LEAGUE_MAPPING["BL1"]: {
+        "BL1",
+        "Bundesliga",
+        "GER",
+        "German Bundesliga",
+        LEAGUE_MAPPING["BL1"],
+    },
+    LEAGUE_MAPPING["FL1"]: {
+        "FL1",
+        "Ligue 1",
+        "FRA",
+        "French Ligue 1",
+        LEAGUE_MAPPING["FL1"],
+    },
+}
+
+SUPPORTED_CANONICAL_LEAGUES = set(CANON_LEAGUE_KEYS.keys())
+
+_CANON_ALIAS_LOOKUP: dict[str, str] = {}
+for _canon_key, _aliases in CANON_LEAGUE_KEYS.items():
+    for _alias in _aliases:
+        _CANON_ALIAS_LOOKUP[_alias] = _canon_key
+        _CANON_ALIAS_LOOKUP[_alias.upper()] = _canon_key
+    _CANON_ALIAS_LOOKUP[_canon_key.upper()] = _canon_key
+
+
+def canonicalize_league(league: Optional[str]) -> Optional[str]:
+    if not league:
+        return league
+    candidate = str(league).strip()
+    if not candidate:
+        return candidate
+    direct = _CANON_ALIAS_LOOKUP.get(candidate)
+    if direct:
+        return direct
+    upper = candidate.upper()
+    return _CANON_ALIAS_LOOKUP.get(upper, candidate)
 
 
 _CANONICAL_TO_LEAGUE_CODE = {value: key for key, value in LEAGUE_MAPPING.items()}
@@ -182,7 +250,14 @@ def _normalize_league_code(raw: Optional[str]) -> Tuple[Optional[str], Optional[
     if not league:
         return None, None
 
-    canonical = LEAGUE_ALIASES.get(league)
+    canonical = None
+    if XG_CANONICALIZE_LEAGUE:
+        candidate = canonicalize_league(league)
+        if candidate in SUPPORTED_CANONICAL_LEAGUES:
+            canonical = candidate
+
+    if canonical is None:
+        canonical = LEAGUE_ALIASES.get(league)
     if canonical is None:
         canonical = LEAGUE_ALIASES.get(league.upper())
     if canonical is None and league in LEAGUE_MAPPING:
@@ -1945,6 +2020,90 @@ def _build_prediction_payload(
     }
 
 
+def _clone_stats(stats: Optional[Dict[str, Any]], *, include_recent: bool) -> Optional[Dict[str, Any]]:
+    if not stats:
+        return None
+    cloned = copy.deepcopy(stats)
+    if not include_recent:
+        cloned.pop("recent_matches", None)
+    return cloned
+
+
+def _build_season_snapshot(prediction: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    snapshot: Dict[str, Any] = {}
+    home_snapshot = _clone_stats(prediction.get("home_stats"), include_recent=False)
+    away_snapshot = _clone_stats(prediction.get("away_stats"), include_recent=False)
+    if home_snapshot:
+        snapshot["home_stats"] = home_snapshot
+    if away_snapshot:
+        snapshot["away_stats"] = away_snapshot
+    return snapshot or None
+
+
+def _current_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _build_context_payload_from_prediction(
+    prediction: Dict[str, Any],
+    *,
+    league: Optional[str],
+) -> Dict[str, Any]:
+    fast_path = bool(prediction.get("fast_path"))
+    refresh_status = prediction.get("refresh_status") or ("warming" if fast_path else "ready")
+    availability = prediction.get("availability")
+    if not availability:
+        availability = "available" if prediction.get("available") else "unavailable"
+    completeness = prediction.get("completeness")
+    if not completeness:
+        completeness = "season_only" if fast_path else "season_plus_rolling"
+    elif not fast_path and completeness in {"season+logs", "season_logs"}:
+        completeness = "season_plus_rolling"
+
+    payload: Dict[str, Any] = {
+        "refresh_status": refresh_status,
+        "availability": availability,
+        "fast_path": fast_path,
+        "completeness": completeness,
+    }
+
+    season_snapshot = _build_season_snapshot(prediction)
+    if season_snapshot:
+        payload["season"] = season_snapshot
+
+    if prediction.get("note"):
+        payload["note"] = prediction["note"]
+    if prediction.get("reason"):
+        payload["reason"] = prediction["reason"]
+    if prediction.get("error"):
+        payload["error"] = prediction["error"]
+    if prediction.get("resolver_seed") is not None:
+        payload["resolver_seed"] = prediction.get("resolver_seed")
+
+    if availability == "available" and not fast_path:
+        home_ready = _clone_stats(prediction.get("home_stats"), include_recent=True)
+        away_ready = _clone_stats(prediction.get("away_stats"), include_recent=True)
+        if home_ready:
+            payload["home_stats"] = home_ready
+        if away_ready:
+            payload["away_stats"] = away_ready
+
+        if prediction.get("rolling_xg_home") is not None:
+            payload["rolling_xg_home"] = copy.deepcopy(prediction.get("rolling_xg_home"))
+        if prediction.get("rolling_xg_away") is not None:
+            payload["rolling_xg_away"] = copy.deepcopy(prediction.get("rolling_xg_away"))
+
+    normalized_code, canonical_label = _normalize_league_code(league)
+    league_label = canonical_label or canonicalize_league(league) or league
+    payload["meta"] = {
+        "league": league_label,
+        "updated_at": _current_timestamp(),
+    }
+
+    payload["xg"] = copy.deepcopy(prediction)
+    return payload
+
+
 def _build_unavailable_response(
     error: str,
     *,
@@ -2217,6 +2376,29 @@ def get_match_xg_prediction(
             )
 
     return payload
+
+# ----------------------------------------------------------------------
+
+
+def get_context_xg(
+    home_team: str,
+    away_team: str,
+    league_code: str,
+    season: Optional[int] = None,
+    request_memo: "RequestMemo | None" = None,
+) -> Dict[str, Any]:
+    prediction = get_match_xg_prediction(
+        home_team,
+        away_team,
+        league_code,
+        season=season,
+        request_memo=request_memo,
+    )
+
+    if not XG_READY_PAYLOAD_ON_LOGS:
+        return prediction
+
+    return _build_context_payload_from_prediction(prediction, league=league_code)
 
 # ----------------------------------------------------------------------
 # Manual test

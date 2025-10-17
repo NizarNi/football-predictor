@@ -4,6 +4,11 @@ Centralizes all magic numbers and configuration values for maintainability
 """
 
 USE_LEGACY_RESPONSES = True  # Toggle for global response format
+XG_CANONICALIZE_LEAGUE = True
+"""Feature flag: normalize league aliases to canonical FBref keys for xG."""
+
+XG_READY_PAYLOAD_ON_LOGS = True
+"""Feature flag: emit consolidated context_xg payloads when logs are ready."""
 
 import logging
 import os

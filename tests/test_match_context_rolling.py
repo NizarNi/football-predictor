@@ -105,14 +105,21 @@ def test_match_context_rolling_arrays_and_logs(client):
 
     assert response.status_code == 200
     payload = response.get_json()
-    assert payload["completeness"] == "season+logs"
+    assert payload["completeness"] == "season_plus_rolling"
     assert payload["refresh_status"] == "ready"
     assert payload["availability"] == "available"
     assert payload["fast_path"] is False
-    xg_payload = payload["xg"]
+    assert payload["meta"]["league"] == "ENG-Premier League"
+    assert "home_stats" in payload
+    assert "away_stats" in payload
 
-    home_rolling = xg_payload["rolling_xg_home"]
-    away_rolling = xg_payload["rolling_xg_away"]
+    home_recent = payload["home_stats"]["recent_matches"]
+    away_recent = payload["away_stats"]["recent_matches"]
+    assert len(home_recent) == 3
+    assert len(away_recent) == 3
+
+    home_rolling = payload["rolling_xg_home"]
+    away_rolling = payload["rolling_xg_away"]
 
     assert home_rolling["window_len"] == 3
     assert away_rolling["window_len"] == 3
@@ -152,3 +159,10 @@ def test_match_context_fast_path_metadata(client, monkeypatch):
     assert payload["refresh_status"] == "warming"
     assert payload["availability"] == "available"
     assert payload["fast_path"] is True
+    assert payload["meta"]["league"] == "ENG-Premier League"
+    assert "home_stats" not in payload
+    assert "away_stats" not in payload
+    season_snapshot = payload.get("season")
+    assert season_snapshot is not None
+    assert "home_stats" in season_snapshot
+    assert "away_stats" in season_snapshot

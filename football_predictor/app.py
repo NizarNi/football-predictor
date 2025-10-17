@@ -14,7 +14,7 @@ from time import monotonic
 from typing import Any, Optional
 from types import SimpleNamespace
 
-from .config import setup_logger, API_TIMEOUT_CONTEXT
+from .config import setup_logger, API_TIMEOUT_CONTEXT, XG_READY_PAYLOAD_ON_LOGS
 
 from .app_utils import make_ok, make_error, legacy_endpoint, update_server_context
 from .logo_resolver import resolve_logo
@@ -27,6 +27,7 @@ from .odds_api_client import get_upcoming_matches_with_odds, LEAGUE_CODE_MAPPING
 from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import (
     clear_request_memo_id,
+    get_context_xg,
     get_match_xg_prediction,
     get_team_recent_xg_snapshot,
     set_request_memo_id,
@@ -1304,8 +1305,31 @@ def get_match_xg(event_id):
 
             start_time = time.monotonic()
 
-            # Use request memo and attach rolling arrays (internal fields)
             memo = _get_request_memo()
+
+            if XG_READY_PAYLOAD_ON_LOGS:
+                context_payload = get_context_xg(
+                    home_team,
+                    away_team,
+                    league_code,
+                    request_memo=memo,
+                )
+                elapsed_ms = (time.monotonic() - start_time) * 1000
+                availability = context_payload.get("availability")
+                log_message = (
+                    "context_xg ready in %.0f ms"
+                    if availability == "available"
+                    else "context_xg ready in %.0f ms (partial)"
+                )
+                logger.info(
+                    log_message,
+                    elapsed_ms,
+                    extra={"event_id": event_id},
+                )
+                _apply_recent_xg_context(home_team, away_team, league_code)
+                return make_ok(context_payload)
+
+            # Legacy response path
             xg_prediction = get_match_xg_prediction(
                 home_team, away_team, league_code, request_memo=memo
             )
@@ -1319,7 +1343,6 @@ def get_match_xg(event_id):
                 )
                 _apply_recent_xg_context(home_team, away_team, league_code)
                 metadata = _normalize_xg_metadata(xg_prediction)
-                # Even on partial, try to include rolling fields if memo had logs
                 payload = {
                     "xg": None,
                     "error": xg_prediction.get('error', 'xG data not available'),

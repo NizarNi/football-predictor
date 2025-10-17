@@ -1527,8 +1527,6 @@
             currentTipIndex = 0;
         }
 
-        const XG_REPOLL_DELAY_MS = 125000;
-
         function resetXgState() {
             if (xgRepollTimeoutId) {
                 clearTimeout(xgRepollTimeoutId);
@@ -1562,20 +1560,124 @@
             xgRepollScheduled = false;
         }
 
-        function scheduleXgRepoll(requestToken) {
+        function scheduleXgRepollOnce(requestToken, delayMs = 1200) {
             if (xgRepollScheduled || xgRepollAttempted || !lastXgUrl) {
                 return;
             }
+
             xgRepollScheduled = true;
+            xgRepollAttempted = true;
+
+            if (xgRepollTimeoutId) {
+                clearTimeout(xgRepollTimeoutId);
+            }
+
             xgRepollTimeoutId = setTimeout(() => {
                 xgRepollTimeoutId = null;
                 xgRepollScheduled = false;
-                xgRepollAttempted = true;
                 if (!lastXgUrl || requestToken !== contextRequestToken) {
                     return;
                 }
-                fetchMatchXg(lastXgUrl, requestToken, { silent: true });
-            }, XG_REPOLL_DELAY_MS);
+                fetchMatchXg(lastXgUrl, requestToken, {
+                    silent: true,
+                    perfStart: typeof performance !== 'undefined' ? performance.now() : null,
+                });
+            }, delayMs);
+        }
+
+        function hideXgWarmingMessage() {
+            setXgHint(null);
+            setXgStateCard('ready');
+            updateXgStatusMessage({ refresh_status: 'ready' });
+        }
+
+        function showXgWarmingMessage() {
+            setXgStateCard('warming');
+            setXgHint('Warming detailed match logs… (cooldown active)');
+        }
+
+        function showXgUnavailableMessage(message) {
+            setXgUnavailable(message || 'xG unavailable for this competition.');
+        }
+
+        function renderSeasonSnapshot(snapshot) {
+            if (!snapshot) {
+                return;
+            }
+            updateXgSnapshot({ season_snapshot: snapshot });
+        }
+
+        function renderRecentCharts(homeMatches, awayMatches) {
+            const home = Array.isArray(homeMatches) ? homeMatches : [];
+            const away = Array.isArray(awayMatches) ? awayMatches : [];
+
+            if (!home.length && !away.length) {
+                return;
+            }
+
+            if (window.homeXgChart) {
+                try { window.homeXgChart.destroy(); } catch (error) { console.warn('home chart destroy failed', error); }
+                window.homeXgChart = null;
+            }
+            if (window.awayXgChart) {
+                try { window.awayXgChart.destroy(); } catch (error) { console.warn('away chart destroy failed', error); }
+                window.awayXgChart = null;
+            }
+
+            if (home.length) {
+                ensureXgCanvasExists('home-xg-chart');
+                window.homeXgChart = createXgTrendChart(
+                    'home-xg-chart',
+                    home,
+                    currentMatchData?.home_team || 'Home',
+                );
+            }
+
+            if (away.length) {
+                ensureXgCanvasExists('away-xg-chart');
+                window.awayXgChart = createXgTrendChart(
+                    'away-xg-chart',
+                    away,
+                    currentMatchData?.away_team || 'Away',
+                );
+            }
+        }
+
+        function renderXgContext(xg, requestToken) {
+            const status = xg?.refresh_status;
+            const availability = xg?.availability;
+            const seasonSnapshot = xg?.season || xg?.season_snapshot || null;
+
+            if (status === 'ready' && availability === 'available') {
+                hideXgWarmingMessage();
+                if (seasonSnapshot) {
+                    renderSeasonSnapshot(seasonSnapshot);
+                }
+                renderRecentCharts(
+                    xg?.home_stats?.recent_matches,
+                    xg?.away_stats?.recent_matches,
+                );
+                return;
+            }
+
+            if (status === 'warming' || status === 'debounced') {
+                if (seasonSnapshot) {
+                    renderSeasonSnapshot(seasonSnapshot);
+                }
+                showXgWarmingMessage();
+                scheduleXgRepollOnce(requestToken);
+                return;
+            }
+
+            if (availability === 'unavailable') {
+                showXgUnavailableMessage(xg?.reason || xg?.error);
+                return;
+            }
+
+            if (seasonSnapshot) {
+                renderSeasonSnapshot(seasonSnapshot);
+                setXgStateCard('snapshot-ready');
+            }
         }
 
         function applyXgPayload(xgData, requestToken, { silent = false } = {}) {
@@ -1583,40 +1685,75 @@
                 return;
             }
 
-            const fastPath = Boolean(xgData?.fast_path);
-            const refreshStatus = xgData?.refresh_status || (fastPath ? 'warming' : 'ready');
-            const availability = xgData?.availability || (xgData?.xg ? 'available' : 'unavailable');
-            const refreshPhase = xgData?.refresh_phase
-                || (!fastPath
+            const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+            const isContextContract = Boolean(
+                xgData
+                && (
+                    hasOwn(xgData, 'season')
+                    || hasOwn(xgData, 'meta')
+                    || hasOwn(xgData, 'home_stats')
+                    || hasOwn(xgData, 'away_stats')
+                ),
+            );
+
+            const payload = isContextContract ? (xgData || null) : (xgData?.xg || null);
+            const metaSource = xgData || {};
+            const dataSource = payload || {};
+            const pick = (field, fallback) => {
+                if (hasOwn(metaSource, field)) {
+                    return metaSource[field];
+                }
+                if (hasOwn(dataSource, field)) {
+                    return dataSource[field];
+                }
+                return fallback;
+            };
+
+            const fastPath = Boolean(pick('fast_path', false));
+            const refreshStatus = pick('refresh_status', fastPath ? 'warming' : 'ready') || 'ready';
+            const availability = pick('availability', payload ? 'available' : 'unavailable');
+            const refreshPhase = pick(
+                'refresh_phase',
+                !fastPath
                     ? 'ready'
                     : refreshStatus !== 'ready'
                         ? 'warming'
-                        : 'season_snapshot');
+                        : 'season_snapshot',
+            );
+            const completenessFallback = fastPath ? 'season_only' : 'season_plus_rolling';
+            const completeness = pick('completeness', completenessFallback) || completenessFallback;
+            const note = pick('note', null);
+            const reason = pick('reason', null);
+            const resolverSeed = Boolean(pick('resolver_seed', false));
 
             currentXgMeta = {
                 fast_path: fastPath,
-                completeness: xgData?.completeness || (fastPath ? 'season_only' : 'season+logs'),
+                completeness,
                 refresh_status: refreshStatus,
                 availability,
-                reason: xgData?.reason || null,
+                reason,
                 refresh_phase: refreshPhase,
-                resolver_seed: Boolean(xgData?.resolver_seed),
-                note: xgData?.note || null,
+                resolver_seed: resolverSeed,
+                note,
             };
 
             currentContextData.xg_meta = currentXgMeta;
 
-            if (currentXgMeta.availability === 'available' && xgData?.xg) {
-                currentContextData.xg = xgData.xg;
+            if (availability === 'available' && payload) {
+                currentContextData.xg = payload;
                 currentContextData.xg_error = null;
-                currentXgData = xgData.xg;
-            } else if (currentXgMeta.availability === 'available') {
+                currentXgData = payload;
+            } else if (availability === 'unavailable') {
                 currentContextData.xg = null;
-                currentContextData.xg_error = xgData?.error || 'xG data not available for this match.';
+                currentContextData.xg_error = reason || pick('error', 'xG data not available for this competition.');
                 currentXgData = null;
+            } else if (payload) {
+                currentContextData.xg = payload;
+                currentContextData.xg_error = null;
+                currentXgData = payload;
             } else {
                 currentContextData.xg = null;
-                currentContextData.xg_error = currentXgMeta.reason || xgData?.error || 'xG data not available for this competition.';
+                currentContextData.xg_error = pick('error', 'xG data not available for this match.');
                 currentXgData = null;
             }
 
@@ -1624,11 +1761,31 @@
             currentContextData.away_career = null;
             currentContextData.xg_loading = false;
 
-            if (currentXgMeta.availability === 'available' && currentXgMeta.refresh_status === 'debounced') {
-                scheduleXgRepoll(requestToken);
+            if (refreshStatus === 'warming' || refreshStatus === 'debounced') {
+                scheduleXgRepollOnce(requestToken);
             } else {
                 cancelXgRepoll();
             }
+
+            const renderPayload = payload ? { ...payload } : {};
+            if (!hasOwn(renderPayload, 'season') && hasOwn(metaSource, 'season')) {
+                renderPayload.season = metaSource.season;
+            }
+            if (!hasOwn(renderPayload, 'meta') && hasOwn(metaSource, 'meta')) {
+                renderPayload.meta = metaSource.meta;
+            }
+            renderPayload.refresh_status = refreshStatus;
+            renderPayload.availability = availability;
+            renderPayload.fast_path = fastPath;
+            renderPayload.completeness = completeness;
+            if (note) {
+                renderPayload.note = note;
+            }
+            if (reason) {
+                renderPayload.reason = reason;
+            }
+
+            renderXgContext(renderPayload, requestToken);
 
             displayMatchContextData(currentContextData);
         }
@@ -2004,10 +2161,14 @@
                 currentContextData.xg_loading = false;
             }
 
-            updateXgSnapshot(payload);
-            updateXgCharts();
+            const renderPayload = { ...payload };
+            renderPayload.refresh_status = 'ready';
+            renderPayload.availability = 'available';
+            renderPayload.fast_path = Boolean(payload.fast_path);
+            renderPayload.completeness = payload.completeness || 'season_plus_rolling';
+
+            renderXgContext(renderPayload, contextRequestToken);
             updateXgStatusMessage({ refresh_status: 'ready' });
-            setXgStateCard('ready');
         }
 
         async function fetchXg(matchId) {

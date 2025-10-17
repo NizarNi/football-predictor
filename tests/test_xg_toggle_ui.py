@@ -33,7 +33,7 @@ def test_xg_toggle_snapshot_renders():
 
 
 def test_xg_toggle_ready_state():
-    data = {"fast_path": True, "completeness": "season+logs", "refresh_status": "ready"}
+    data = {"fast_path": True, "completeness": "season_plus_rolling", "refresh_status": "ready"}
     html = render_xg_toggle_html(data)
     assert "Show xG details" in html
     assert "Warming" not in html
