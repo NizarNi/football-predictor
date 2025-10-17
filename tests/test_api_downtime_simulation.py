@@ -71,7 +71,9 @@ from football_predictor import elo_client, odds_api_client, understat_client, xg
 # Odds API client tests
 @patch("football_predictor.odds_api_client.request_with_retries")
 def test_timeout_raises_apierror(mock_request):
-    odds_api_client.API_KEYS = ["test_key"]
+    odds_api_client.API_KEYS = [
+        odds_api_client.APIKeyEntry("TEST_KEY", "test_key", 0)
+    ]
     odds_api_client.invalid_keys.clear()
     odds_api_client.current_key_index = 0
     mock_request.side_effect = requests.Timeout("Simulated timeout")
@@ -85,7 +87,9 @@ def test_timeout_raises_apierror(mock_request):
 
 @patch("football_predictor.odds_api_client.request_with_retries")
 def test_network_error_raises_apierror(mock_request):
-    odds_api_client.API_KEYS = ["test_key"]
+    odds_api_client.API_KEYS = [
+        odds_api_client.APIKeyEntry("TEST_KEY", "test_key", 0)
+    ]
     odds_api_client.invalid_keys.clear()
     odds_api_client.current_key_index = 0
     mock_request.side_effect = requests.RequestException("Connection aborted")
@@ -98,7 +102,9 @@ def test_network_error_raises_apierror(mock_request):
 
 @patch("football_predictor.odds_api_client.request_with_retries")
 def test_invalid_json_raises_apierror(mock_request):
-    odds_api_client.API_KEYS = ["test_key"]
+    odds_api_client.API_KEYS = [
+        odds_api_client.APIKeyEntry("TEST_KEY", "test_key", 0)
+    ]
     odds_api_client.invalid_keys.clear()
     odds_api_client.current_key_index = 0
 
