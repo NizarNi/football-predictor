@@ -29,6 +29,7 @@ from .xg_data_fetcher import (
     get_match_xg_prediction,
     get_team_recent_xg_snapshot,
     set_request_memo_id,
+    _warn_partial_window_once,
 )
 from .utils import get_current_season, fuzzy_team_match
 from .name_resolver import resolve_team_name, alias_logging_context
@@ -54,13 +55,73 @@ def _apply_recent_xg_context(
     away_team: Optional[str],
     league_code: Optional[str],
     season: Optional[int] = None,
+    *,
+    window: Optional[int] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     if not home_team or not away_team or not league_code:
         return None, None
 
+    window_size = int(window) if window is not None else 5
+    memo = _get_request_memo()
+
     try:
-        home_snapshot = get_team_recent_xg_snapshot(home_team, league_code, season=season)
-        away_snapshot = get_team_recent_xg_snapshot(away_team, league_code, season=season)
+        if memo is not None:
+            home_payload = memo.get_or_compute_rolling(
+                home_team,
+                league_code,
+                N=window_size,
+                season=season,
+            )
+            away_payload = memo.get_or_compute_rolling(
+                away_team,
+                league_code,
+                N=window_size,
+                season=season,
+            )
+
+            def _snapshot_from_payload(payload: dict[str, Any], fallback_team: str) -> dict[str, Any]:
+                snapshot = {
+                    "team": payload.get("team") or fallback_team,
+                    "league": league_code,
+                    "season": season,
+                    "window": window_size,
+                    "window_len": payload.get("window_len", 0) or 0,
+                    "xg_for_sum": float(payload.get("xg_for_sum", 0.0) or 0.0),
+                    "xg_against_sum": float(payload.get("xg_against_sum", 0.0) or 0.0),
+                    "source": payload.get("source") or "match_logs",
+                }
+                return snapshot
+
+            home_snapshot = _snapshot_from_payload(home_payload, home_team)
+            away_snapshot = _snapshot_from_payload(away_payload, away_team)
+
+            if home_snapshot["window_len"] == 0:
+                home_snapshot = get_team_recent_xg_snapshot(
+                    home_team,
+                    league_code,
+                    season=season,
+                    window=window_size,
+                )
+            if away_snapshot["window_len"] == 0:
+                away_snapshot = get_team_recent_xg_snapshot(
+                    away_team,
+                    league_code,
+                    season=season,
+                    window=window_size,
+                )
+        else:
+            home_snapshot = get_team_recent_xg_snapshot(
+                home_team,
+                league_code,
+                season=season,
+                window=window_size,
+            )
+            away_snapshot = get_team_recent_xg_snapshot(
+                away_team,
+                league_code,
+                season=season,
+                window=window_size,
+            )
     except Exception:
         logger.debug("recent_xg_context: snapshot fetch failed", exc_info=True)
         return None, None
@@ -291,12 +352,28 @@ def _ensure_rolling_fields(
     home_team: Optional[str],
     away_team: Optional[str],
     target: dict,
+    *,
+    season: Optional[int] = None,
+    window: int = 5,
+    league_only: bool = True,
 ) -> None:
     if memo is None or not league or not home_team or not away_team:
         return
 
-    home = memo.get_or_compute_rolling(home_team, league)
-    away = memo.get_or_compute_rolling(away_team, league)
+    home = memo.get_or_compute_rolling(
+        home_team,
+        league,
+        N=window,
+        season=season,
+        league_only=league_only,
+    )
+    away = memo.get_or_compute_rolling(
+        away_team,
+        league,
+        N=window,
+        season=season,
+        league_only=league_only,
+    )
 
     target.setdefault(
         "rolling_xg_home",
@@ -304,8 +381,10 @@ def _ensure_rolling_fields(
             "for": [],
             "against": [],
             "dates": [],
+            "series": {"dates": [], "xg_for": [], "xg_against": []},
+            "window": window,
             "window_len": 0,
-            "source_label": "league_only",
+            "source": "league_only",
         },
     )
     target.setdefault(
@@ -314,30 +393,48 @@ def _ensure_rolling_fields(
             "for": [],
             "against": [],
             "dates": [],
+            "series": {"dates": [], "xg_for": [], "xg_against": []},
+            "window": window,
             "window_len": 0,
-            "source_label": "league_only",
+            "source": "league_only",
         },
     )
 
     if home:
+        home_series = home.get("series") or {}
         target["rolling_xg_home"] = {
-            "for": home.get("for", []),
-            "against": home.get("against", []),
-            "dates": home.get("dates", []),
+            "for": home_series.get("xg_for", home.get("for", [])),
+            "against": home_series.get("xg_against", home.get("against", [])),
+            "dates": home_series.get("dates", home.get("dates", [])),
+            "series": home_series,
+            "window": home.get("window", window),
             "window_len": home.get("window_len", 0),
-            "source_label": home.get("source_label"),
+            "xg_for_sum": home.get("xg_for_sum"),
+            "xg_against_sum": home.get("xg_against_sum"),
+            "source": home.get("source"),
         }
         target["xg_cache_source_home"] = home.get("cache_source")
+        home_window = target["rolling_xg_home"].get("window_len", 0)
+        if league_only and window > 0 and 0 < home_window < window:
+            _warn_partial_window_once(league, home.get("team"), window, home_window)
 
     if away:
+        away_series = away.get("series") or {}
         target["rolling_xg_away"] = {
-            "for": away.get("for", []),
-            "against": away.get("against", []),
-            "dates": away.get("dates", []),
+            "for": away_series.get("xg_for", away.get("for", [])),
+            "against": away_series.get("xg_against", away.get("against", [])),
+            "dates": away_series.get("dates", away.get("dates", [])),
+            "series": away_series,
+            "window": away.get("window", window),
             "window_len": away.get("window_len", 0),
-            "source_label": away.get("source_label"),
+            "xg_for_sum": away.get("xg_for_sum"),
+            "xg_against_sum": away.get("xg_against_sum"),
+            "source": away.get("source"),
         }
         target["xg_cache_source_away"] = away.get("cache_source")
+        away_window = target["rolling_xg_away"].get("window_len", 0)
+        if league_only and window > 0 and 0 < away_window < window:
+            _warn_partial_window_once(league, away.get("team"), window, away_window)
 
 
 def _assemble_match_context_core(
@@ -1067,46 +1164,68 @@ def get_match_btts(event_id):
             btts_xg = None
             home_snapshot: Optional[dict[str, Any]] = None
             away_snapshot: Optional[dict[str, Any]] = None
-
-            # Keep server-context averages warm (internal only)
-            if home_team and away_team and league_code:
-                home_snapshot, away_snapshot = _apply_recent_xg_context(home_team, away_team, league_code)
-                if home_snapshot is None:
-                    home_snapshot = get_team_recent_xg_snapshot(home_team, league_code)
-                if away_snapshot is None:
-                    away_snapshot = get_team_recent_xg_snapshot(away_team, league_code)
-
-            def _avg(snapshot: Optional[dict[str, Any]], field: str) -> Optional[float]:
-                if not snapshot:
-                    return None
-                wl = snapshot.get("window_len") or 0
-                if wl <= 0:
-                    return None
-                try:
-                    return float(snapshot.get(field, 0.0)) / wl
-                except (TypeError, ZeroDivisionError):
-                    return None
-
-            home_xg_per_game = _avg(home_snapshot, "xg_for_sum")
-            away_xg_per_game = _avg(away_snapshot, "xg_for_sum")
-            home_xga_per_game = _avg(home_snapshot, "xg_against_sum")
-            away_xga_per_game = _avg(away_snapshot, "xg_against_sum")
-
-            # Enrich with FBref/Understat if league/team provided
+            home_xg_per_game: Optional[float] = None
+            away_xg_per_game: Optional[float] = None
+            home_xga_per_game: Optional[float] = None
+            away_xga_per_game: Optional[float] = None
             rolling_payload: dict[str, Any] = {}
+
             if home_team and away_team and league_code:
                 try:
                     memo = _get_request_memo()
                     resolved_home = resolve_team_name(home_team, provider="fbref")
                     resolved_away = resolve_team_name(away_team, provider="fbref")
+                    current_season = get_current_season()
 
                     # FBref offense (via our xG prediction path)
                     xg_prediction = get_match_xg_prediction(
-                        resolved_home, resolved_away, league_code, request_memo=memo
+                        resolved_home,
+                        resolved_away,
+                        league_code,
+                        request_memo=memo,
+                        include_rolling=False,
                     )
 
+                    # Reuse rolling memo for context averages
+                    home_snapshot, away_snapshot = _apply_recent_xg_context(
+                        home_team,
+                        away_team,
+                        league_code,
+                        season=current_season,
+                        window=4,
+                    )
+                    if home_snapshot is None:
+                        home_snapshot = get_team_recent_xg_snapshot(home_team, league_code)
+                    if away_snapshot is None:
+                        away_snapshot = get_team_recent_xg_snapshot(away_team, league_code)
+
+                    def _avg(snapshot: Optional[dict[str, Any]], field: str) -> Optional[float]:
+                        if not snapshot:
+                            return None
+                        wl = snapshot.get("window_len") or 0
+                        if wl <= 0:
+                            return None
+                        try:
+                            return float(snapshot.get(field, 0.0)) / wl
+                        except (TypeError, ZeroDivisionError):
+                            return None
+
+                    home_xg_per_game = _avg(home_snapshot, "xg_for_sum")
+                    away_xg_per_game = _avg(away_snapshot, "xg_for_sum")
+                    home_xga_per_game = _avg(home_snapshot, "xg_against_sum")
+                    away_xga_per_game = _avg(away_snapshot, "xg_against_sum")
+
                     # Attach rolling arrays to response (internal fields)
-                    _ensure_rolling_fields(memo, league_code, resolved_home, resolved_away, rolling_payload)
+                    _ensure_rolling_fields(
+                        memo,
+                        league_code,
+                        resolved_home,
+                        resolved_away,
+                        rolling_payload,
+                        season=current_season,
+                        window=4,
+                        league_only=True,
+                    )
 
                     # Use FBref offense per-game if available
                     if xg_prediction.get('available') and xg_prediction.get('xg'):
@@ -1115,7 +1234,6 @@ def get_match_btts(event_id):
 
                     # Understat true defensive xGA per game
                     from .understat_client import fetch_understat_standings
-                    current_season = get_current_season()
                     standings = fetch_understat_standings(league_code, current_season)
                     if standings:
                         home_lookup = resolved_home or home_team

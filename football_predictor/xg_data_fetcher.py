@@ -5,7 +5,7 @@ Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, Optional, Tuple, List, TYPE_CHECKING
+from typing import Any, Dict, Iterable, Optional, Tuple, List, TYPE_CHECKING
 from dataclasses import dataclass
 
 import json
@@ -28,7 +28,7 @@ from .constants import (
     MATCH_LOGS_CACHE_TTL,
 )
 from .name_resolver import resolve_team_name, get_all_aliases_for
-from .logging_utils import RateLimitedLogger, warn_once
+from .logging_utils import RateLimitedLogger
 
 if TYPE_CHECKING:  # pragma: no cover
     from .request_memo import RequestMemo
@@ -84,6 +84,19 @@ if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
     logger.warning("xg_data_fetcher: ignoring legacy cache dir at %s", LEGACY_CACHE_DIR)
 
 _MATCH_LOG_SUMMARY = RateLimitedLogger(logger, window_seconds=60.0)
+
+_PARTIAL_WINDOW_WARNINGS: set[tuple[str, str, int]] = set()
+
+
+def _parse_date(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
 
 # Background worker pool (league + logs refresh)
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -1017,7 +1030,12 @@ def _is_league_log(entry: Dict[str, Any], league_only: bool) -> bool:
         return True
     gameweek = entry.get('gameweek')
     if gameweek is None:
-        return False
+        competition = entry.get('competition') or entry.get('comp')
+        if competition is None:
+            return True
+        if isinstance(competition, str):
+            return 'league' in competition.lower()
+        return True
     competition = entry.get('competition') or entry.get('comp')
     if competition is None:
         return True
@@ -1026,68 +1044,123 @@ def _is_league_log(entry: Dict[str, Any], league_only: bool) -> bool:
     return True
 
 
-# NEW unified (T35f/T35g) — returns arrays for graph + metadata
 def compute_rolling_xg(
     team_logs: Optional[List[Dict[str, Any]]],
-    N: int = 5,
-    league_only: bool = True,
+    N: int,
     *,
-    league: Optional[str] = None,
-    team: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Compute rolling xG arrays for last N **completed league** matches (newest first).
+    league_only: bool = True,
+    **_: Any,
+) -> Tuple[float, float, int, str]:
+    """Compute rolling xG sums for the most recent N matches.
 
-    Returns:
-        {
-          "for": [float, ...],
-          "against": [float, ...],
-          "dates": [str, ...],
-          "window_len": int,
-          "source_label": "league_only" | "all_matches",
-        }
+    Returns a tuple of ``(xg_for_sum, xg_against_sum, window_len, source)``.
     """
+
+    if not team_logs:
+        return 0.0, 0.0, 0, "all_matches" if not league_only else "match_logs"
+
     logs = list(team_logs or [])
 
-    # keep completed matches only
-    filtered: List[Dict[str, Any]] = []
+    completed: List[Dict[str, Any]] = []
     for entry in logs:
         if not isinstance(entry, dict):
             continue
-        if entry.get("result") not in {"W", "D", "L"}:
+        if not _is_league_log(entry, league_only):
+            continue
+        result = entry.get("result")
+        if result not in {"W", "D", "L"}:
+            continue
+        completed.append(entry)
+
+    logs_sorted = sorted(
+        completed,
+        key=lambda record: (_parse_date(record.get("date")) or datetime.min),
+        reverse=True,
+    )
+
+    window_size = max(int(N or 0), 0)
+    window = logs_sorted[:window_size]
+    window_len = len(window)
+
+    def _safe_total(key: str) -> float:
+        total = 0.0
+        for entry in window:
+            value = entry.get(key)
+            try:
+                total += float(value if value is not None else 0.0)
+            except (TypeError, ValueError):
+                continue
+        return float(total)
+
+    xg_for_sum = _safe_total("xg_for")
+    xg_against_sum = _safe_total("xg_against")
+    source = "all_matches" if not league_only else "match_logs"
+    return xg_for_sum, xg_against_sum, window_len, source
+
+
+def _warn_partial_window_once(league: Optional[str], team: Optional[str], N: int, have: int) -> None:
+    key = (league or "", team or "", int(N))
+    if key in _PARTIAL_WINDOW_WARNINGS:
+        return
+    _PARTIAL_WINDOW_WARNINGS.add(key)
+    logger.warning("rolling_xg: partial window %s/%s (league-only)", have, N)
+
+
+def _series_from_logs(
+    logs: Iterable[Dict[str, Any]],
+    N: int,
+    league_only: bool = True,
+) -> Dict[str, List[Any]]:
+    parsed = []
+    for entry in logs:
+        if not isinstance(entry, dict):
             continue
         if not _is_league_log(entry, league_only):
             continue
-        filtered.append(entry)
+        result = entry.get("result")
+        if result not in {"W", "D", "L"}:
+            continue
+        parsed.append(entry)
 
-    # newest first by date field
-    filtered.sort(key=lambda m: m.get("date") or "", reverse=True)
+    parsed.sort(
+        key=lambda record: (_parse_date(record.get("date")) or datetime.min),
+        reverse=True,
+    )
+    window = parsed[: max(int(N or 0), 0)]
 
-    window_logs = filtered[: N if N and N > 0 else 5]
-
-    def _fmt_date(v: Any) -> str:
-        if v is None:
-            return ""
-        if isinstance(v, str):
-            return v
-        if hasattr(v, "isoformat"):
-            try:
-                return v.isoformat()
-            except Exception:
-                return str(v)
-        return str(v)
-
-    series_for = [round(float(m.get("xg_for", 0.0)), 2) for m in window_logs]
-    series_against = [round(float(m.get("xg_against", 0.0)), 2) for m in window_logs]
-    series_dates = [_fmt_date(m.get("date")) for m in window_logs]
+    dates: List[str] = []
+    xg_for_vals: List[float] = []
+    xg_against_vals: List[float] = []
+    for entry in window:
+        dt = _parse_date(entry.get("date"))
+        if dt is None:
+            date_str = ""
+        else:
+            date_str = dt.date().isoformat()
+        dates.append(date_str)
+        try:
+            xg_for_vals.append(float(entry.get("xg_for") or 0.0))
+        except (TypeError, ValueError):
+            xg_for_vals.append(0.0)
+        try:
+            xg_against_vals.append(float(entry.get("xg_against") or 0.0))
+        except (TypeError, ValueError):
+            xg_against_vals.append(0.0)
 
     return {
-        "for": series_for,
-        "against": series_against,
-        "dates": series_dates,
-        "window_len": len(window_logs),
-        "source_label": "league_only" if league_only else "all_matches",
+        "dates": dates,
+        "xg_for": xg_for_vals,
+        "xg_against": xg_against_vals,
     }
+
+
+def build_rolling_series(
+    logs: Iterable[Dict[str, Any]],
+    N: int,
+    *,
+    league_only: bool = True,
+) -> Dict[str, List[Any]]:
+    return _series_from_logs(logs, N, league_only=league_only)
 
 
 def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=None):
@@ -1360,11 +1433,13 @@ def get_team_recent_xg_snapshot(
     league_code: str,
     season: Optional[int] = None,
     window: int = 5,
+    *,
+    league_only: bool = True,
 ) -> Dict[str, Any]:
     """
     Internal helper used by server context:
       - builds a compact snapshot (sums + window_len + source)
-      - *does not* expose arrays; arrays are provided via RequestMemo paths
+      - includes lightweight series data for graph rendering
     """
     memo_id = get_current_request_memo_id()
     memo_root = _get_request_memo_bucket(memo_id)
@@ -1372,7 +1447,7 @@ def get_team_recent_xg_snapshot(
 
     resolved_season = season or get_xg_season()
     canonical_team = _resolve_fbref_team_name(team_name, "rolling_xg")
-    memo_key = (canonical_team, league_code, resolved_season, window)
+    memo_key = (canonical_team, league_code, resolved_season, window, league_only)
     if rolling_bucket is not None and memo_key in rolling_bucket:
         return rolling_bucket[memo_key]
 
@@ -1383,22 +1458,17 @@ def get_team_recent_xg_snapshot(
         request_memo_id=memo_id,
     )
 
-    rolling = compute_rolling_xg(
-        list(logs or []),
-        N=window,
-        league_only=True,
+    logs_list = list(logs or [])
+    xg_for_sum, xg_against_sum, window_len, source_label = compute_rolling_xg(
+        logs_list,
+        window,
+        league_only=league_only,
         league=league_code,
         team=canonical_team,
     )
 
-    xg_for_sum = float(sum(rolling.get("for", [])))
-    xg_against_sum = float(sum(rolling.get("against", [])))
-    window_len = int(rolling.get("window_len") or 0)
-    source_label = rolling.get("source_label") or "match_logs"
-
-    slug = f"{league_code}:{canonical_team.lower()}"
-    if source_label == "match_logs" and 0 < window_len < window:
-        warn_once(slug, f"rolling_xg partial window {window_len}/{window}", logger=logger)
+    if league_only and window > 0 and 0 < window_len < window:
+        _warn_partial_window_once(league_code, canonical_team, window, window_len)
 
     # season fallback when logs are empty
     if window_len == 0:
@@ -1422,13 +1492,22 @@ def get_team_recent_xg_snapshot(
             xg_against_sum = per_game_against * window_len if window_len else 0.0
             source_label = "season"
 
+    series = build_rolling_series(
+        logs_list,
+        window,
+        league_only=league_only,
+    ) if logs_list else {"dates": [], "xg_for": [], "xg_against": []}
+
     snapshot = {
         "team": canonical_team,
+        "league": league_code,
+        "window": int(window),
         "xg_for_sum": float(xg_for_sum),
         "xg_against_sum": float(xg_against_sum),
         "window_len": int(window_len),
         "source": source_label,
         "season": resolved_season,
+        "series": series,
     }
 
     if rolling_bucket is not None:
@@ -1643,6 +1722,8 @@ def get_match_xg_prediction(
     league_code,
     season=None,
     request_memo: "RequestMemo | None" = None,
+    *,
+    include_rolling: bool = True,
 ):
     """
     Generate xG-based prediction for a match
@@ -1695,10 +1776,18 @@ def get_match_xg_prediction(
         home_source = "in_memory_cache" if home_matches else "missing"
         away_source = "in_memory_cache" if away_matches else "missing"
         request_memo.remember_team_logs(
-            effective_league, canonical_home, home_matches or [], home_source
+            effective_league,
+            canonical_home,
+            home_matches or [],
+            home_source,
+            season=resolved_season,
         )
         request_memo.remember_team_logs(
-            effective_league, canonical_away, away_matches or [], away_source
+            effective_league,
+            canonical_away,
+            away_matches or [],
+            away_source,
+            season=resolved_season,
         )
         if league_code != effective_league:
             request_memo.remember_team_logs(
@@ -1706,12 +1795,14 @@ def get_match_xg_prediction(
                 canonical_home,
                 home_matches or [],
                 f"alias:{effective_league}",
+                season=resolved_season,
             )
             request_memo.remember_team_logs(
                 league_code,
                 canonical_away,
                 away_matches or [],
                 f"alias:{effective_league}",
+                season=resolved_season,
             )
 
     payload = _build_prediction_payload(
@@ -1723,23 +1814,44 @@ def get_match_xg_prediction(
         away_matches or [],
     )
 
-    if request_memo is not None:
-        rolling_home = request_memo.get_or_compute_rolling(canonical_home, effective_league)
-        rolling_away = request_memo.get_or_compute_rolling(canonical_away, effective_league)
+    if include_rolling and request_memo is not None:
+        rolling_home = request_memo.get_or_compute_rolling(
+            canonical_home,
+            effective_league,
+            season=resolved_season,
+            league_only=True,
+        )
+        rolling_away = request_memo.get_or_compute_rolling(
+            canonical_away,
+            effective_league,
+            season=resolved_season,
+            league_only=True,
+        )
+
+        home_series = rolling_home.get("series") or {}
+        away_series = rolling_away.get("series") or {}
 
         payload["rolling_xg_home"] = {
-            "for": rolling_home.get("for", []),
-            "against": rolling_home.get("against", []),
-            "dates": rolling_home.get("dates", []),
+            "for": home_series.get("xg_for", []),
+            "against": home_series.get("xg_against", []),
+            "dates": home_series.get("dates", []),
+            "series": home_series,
+            "window": rolling_home.get("window"),
             "window_len": rolling_home.get("window_len", 0),
-            "source_label": rolling_home.get("source_label"),
+            "xg_for_sum": rolling_home.get("xg_for_sum"),
+            "xg_against_sum": rolling_home.get("xg_against_sum"),
+            "source": rolling_home.get("source"),
         }
         payload["rolling_xg_away"] = {
-            "for": rolling_away.get("for", []),
-            "against": rolling_away.get("against", []),
-            "dates": rolling_away.get("dates", []),
+            "for": away_series.get("xg_for", []),
+            "against": away_series.get("xg_against", []),
+            "dates": away_series.get("dates", []),
+            "series": away_series,
+            "window": rolling_away.get("window"),
             "window_len": rolling_away.get("window_len", 0),
-            "source_label": rolling_away.get("source_label"),
+            "xg_for_sum": rolling_away.get("xg_for_sum"),
+            "xg_against_sum": rolling_away.get("xg_against_sum"),
+            "source": rolling_away.get("source"),
         }
         payload["xg_cache_source_home"] = rolling_home.get("cache_source")
         payload["xg_cache_source_away"] = rolling_away.get("cache_source")
