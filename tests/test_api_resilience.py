@@ -48,7 +48,11 @@ def _no_sleep(monkeypatch):
 
 @pytest.fixture
 def api_key_setup(monkeypatch):
-    monkeypatch.setattr(odds_api_client, "API_KEYS", ["test-key"])
+    monkeypatch.setattr(
+        odds_api_client,
+        "API_KEYS",
+        [odds_api_client.APIKeyEntry("TEST_KEY", "test-key", 0)],
+    )
     odds_api_client.invalid_keys = set()
     odds_api_client.current_key_index = 0
 
