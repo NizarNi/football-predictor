@@ -4209,41 +4209,38 @@
             }
 
             function buildBttsSummaryHtml(market, xgModel) {
-                const signals = [];
-                if (market && typeof market.yes_probability === 'number') {
-                    signals.push(market.yes_probability);
-                }
-                if (xgModel && typeof xgModel.yes_probability === 'number') {
-                    signals.push(xgModel.yes_probability);
-                }
-                if (signals.length === 0) {
-                    return '';
-                }
+                const yesProbMarket = market?.yes_probability ?? null;
+                const yesProbXg = xgModel?.yes_probability ?? null;
+                const probs = [yesProbMarket, yesProbXg].filter(v => typeof v === 'number');
+                if (!probs.length) return '';
 
-                const yesAvg = signals.reduce((sum, value) => sum + value, 0) / signals.length;
+                const yesAvg = probs.reduce((a, b) => a + b, 0) / probs.length;
                 const leaningYes = yesAvg >= 0.5;
                 const label = leaningYes ? 'YES' : 'NO';
-                const percent = (leaningYes ? yesAvg : (1 - yesAvg)) * 100;
 
-                const marketPercent = market && typeof market.yes_probability === 'number'
-                    ? (leaningYes ? market.yes_probability : (1 - market.yes_probability)) * 100
+                const marketPercent = yesProbMarket != null
+                    ? ((leaningYes ? yesProbMarket : 1 - yesProbMarket) * 100)
                     : null;
-                const xgPercent = xgModel && typeof xgModel.yes_probability === 'number'
-                    ? (leaningYes ? xgModel.yes_probability : (1 - xgModel.yes_probability)) * 100
+                const xgPercent = yesProbXg != null
+                    ? ((leaningYes ? yesProbXg : 1 - yesProbXg) * 100)
                     : null;
+
+                const confidence = (leaningYes ? yesAvg : 1 - yesAvg) * 100;
+                const alertClass = leaningYes ? 'alert-success' : 'alert-secondary';
 
                 const details = [
                     marketPercent != null ? `Market: ${marketPercent.toFixed(1)}%` : null,
                     xgPercent != null ? `xG: ${xgPercent.toFixed(1)}%` : null
                 ].filter(Boolean).join(' · ');
 
-                const alertClass = leaningYes ? 'alert-success' : 'alert-secondary';
-
                 return `
-                    <div class="alert ${alertClass} mb-3">
-                        <i class="fas fa-signal me-2"></i><strong>BTTS ${label}</strong>
-                        <span class="ms-2 text-muted small">Confidence ${percent.toFixed(1)}%</span>
-                        ${details ? `<div class="text-muted small mt-2">${details}</div>` : ''}
+                    <div class="alert ${alertClass} mb-3" data-testid="btts-summary">
+                        <i class="fas fa-signal me-2"></i>
+                        <strong>BTTS ${label}</strong>
+                        <span class="ms-2 text-muted small" data-testid="btts-confidence">
+                            Confidence ${confidence.toFixed(1)}%
+                        </span>
+                        ${details ? `<div class="text-muted small mt-2" data-testid="btts-details">${details}</div>` : ''}
                     </div>
                 `;
             }
