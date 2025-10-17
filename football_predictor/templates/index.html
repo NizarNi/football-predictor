@@ -4224,10 +4224,30 @@
                 const leaningYes = yesAvg >= 0.5;
                 const label = leaningYes ? 'YES' : 'NO';
                 const percent = (leaningYes ? yesAvg : (1 - yesAvg)) * 100;
-                const details = [
-                    market && typeof market.yes_probability === 'number' ? `Market: ${(market.yes_probability * 100).toFixed(1)}%` : null,
-                    xgModel && typeof xgModel.yes_probability === 'number' ? `xG: ${(xgModel.yes_probability * 100).toFixed(1)}%` : null
-                ].filter(Boolean).join(' · ');
+
+                const marketProbYES = market && typeof market.yes_probability === 'number'
+                    ? market.yes_probability * 100
+                    : null;
+                const xgProbYES = xgModel && typeof xgModel.yes_probability === 'number'
+                    ? xgModel.yes_probability * 100
+                    : null;
+
+                const displayedMarket = marketProbYES != null
+                    ? (label === 'YES' ? marketProbYES : 100 - marketProbYES)
+                    : null;
+                const displayedXG = xgProbYES != null
+                    ? (label === 'YES' ? xgProbYES : 100 - xgProbYES)
+                    : null;
+
+                const details = [];
+                if (displayedMarket != null) {
+                    details.push(`Market ${label}: ${displayedMarket.toFixed(1)}%`);
+                }
+                if (displayedXG != null) {
+                    details.push(`xG ${label}: ${displayedXG.toFixed(1)}%`);
+                }
+
+                const detailsText = details.join(' · ');
 
                 const alertClass = leaningYes ? 'alert-success' : 'alert-secondary';
 
@@ -4235,7 +4255,7 @@
                     <div class="alert ${alertClass} mb-3">
                         <i class="fas fa-signal me-2"></i><strong>BTTS ${label}</strong>
                         <span class="ms-2 text-muted small">Confidence ${percent.toFixed(1)}%</span>
-                        ${details ? `<div class="text-muted small mt-2">${details}</div>` : ''}
+                        ${detailsText ? `<div class="text-muted small mt-2">${detailsText}</div>` : ''}
                     </div>
                 `;
             }
