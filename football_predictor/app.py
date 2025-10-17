@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from time import monotonic
 from typing import Any, Optional
+from types import SimpleNamespace
 
 from .config import setup_logger, API_TIMEOUT_CONTEXT
 
@@ -36,6 +37,7 @@ from .validators import (
     validate_next_n_days,
     validate_team_optional,
 )
+from .request_memo import RequestMemo
 
 PKG_DIR = os.path.dirname(__file__)
 STATIC_DIR = os.path.join(PKG_DIR, "static")
@@ -52,6 +54,8 @@ def _prime_request_memo() -> None:
     request_id = uuid.uuid4().hex
     g._xg_request_memo_id = request_id
     set_request_memo_id(request_id)
+    g.ctx = SimpleNamespace()
+    g.ctx.memo = RequestMemo()
 
 
 @app.teardown_request
@@ -61,6 +65,7 @@ def _clear_request_memo(_exc: Optional[BaseException]) -> None:
     finally:
         if hasattr(g, "pop"):
             g.pop("_xg_request_memo_id", None)
+            g.pop("ctx", None)
 
 # ---- T29c: small Elo reuse caches (in-process) ----
 _RECENT_ELO_TTL_SEC = 30 * 60  # 30 minutes
@@ -218,6 +223,68 @@ def build_team_logo_urls(home_team: Optional[str], away_team: Optional[str]) -> 
 
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
+
+
+def _get_request_memo() -> Optional[RequestMemo]:
+    ctx = getattr(g, "ctx", None)
+    if ctx is None:
+        return None
+    return getattr(ctx, "memo", None)
+
+
+def _ensure_rolling_fields(
+    memo: Optional[RequestMemo],
+    league: Optional[str],
+    home_team: Optional[str],
+    away_team: Optional[str],
+    target: dict,
+) -> None:
+    if memo is None or not league or not home_team or not away_team:
+        return
+
+    home = memo.get_or_compute_rolling(home_team, league)
+    away = memo.get_or_compute_rolling(away_team, league)
+
+    target.setdefault(
+        "rolling_xg_home",
+        {
+            "for": [],
+            "against": [],
+            "dates": [],
+            "window_len": 0,
+            "source_label": "league_only",
+        },
+    )
+    target.setdefault(
+        "rolling_xg_away",
+        {
+            "for": [],
+            "against": [],
+            "dates": [],
+            "window_len": 0,
+            "source_label": "league_only",
+        },
+    )
+
+    if home:
+        target["rolling_xg_home"] = {
+            "for": home.get("for", []),
+            "against": home.get("against", []),
+            "dates": home.get("dates", []),
+            "window_len": home.get("window_len", 0),
+            "source_label": home.get("source_label"),
+        }
+        target["xg_cache_source_home"] = home.get("cache_source")
+
+    if away:
+        target["rolling_xg_away"] = {
+            "for": away.get("for", []),
+            "against": away.get("against", []),
+            "dates": away.get("dates", []),
+            "window_len": away.get("window_len", 0),
+            "source_label": away.get("source_label"),
+        }
+        target["xg_cache_source_away"] = away.get("cache_source")
 
 
 def _assemble_match_context_core(
@@ -863,6 +930,10 @@ def get_match_totals(event_id):
     try:
         logger.info("Handling /match totals request", extra={"event_id": event_id})
         sport_key = request.args.get("sport_key")
+        home_team = request.args.get("home_team")
+        away_team = request.args.get("away_team")
+        league_code = request.args.get("league")
+        memo = _get_request_memo()
         if not sport_key:
             return make_error(
                 error="sport_key parameter required",
@@ -884,10 +955,14 @@ def get_match_totals(event_id):
 
         totals_predictions = calculate_totals_from_odds(odds_data)
 
-        return make_ok({
+        payload = {
             "totals": totals_predictions,
             "source": "The Odds API"
-        })
+        }
+        if league_code and home_team and away_team:
+            _ensure_rolling_fields(memo, league_code, home_team, away_team, payload)
+
+        return make_ok(payload)
 
     except Exception as e:
         logger.exception("Error fetching totals for %s", event_id)
@@ -906,6 +981,7 @@ def get_match_btts(event_id):
         home_team = request.args.get("home_team")
         away_team = request.args.get("away_team")
         league_code = request.args.get("league")
+        memo = _get_request_memo()
 
         if not sport_key:
             return make_error(
@@ -943,7 +1019,13 @@ def get_match_btts(event_id):
                     logger.info("🔁 BTTS: resolved away '%s' → '%s' for FBref", away_team, resolved_away)
 
                 # Get offensive xG from FBref
-                xg_prediction = get_match_xg_prediction(resolved_home, resolved_away, league_code)
+                xg_prediction = get_match_xg_prediction(
+                    resolved_home,
+                    resolved_away,
+                    league_code,
+                    request_memo=memo,
+                )
+                _ensure_rolling_fields(memo, league_code, resolved_home, resolved_away, xg_prediction)
 
                 # Get defensive xGA from Understat context (TRUE defensive metric, not goalkeeper PSxGA)
                 from .understat_client import fetch_understat_standings
@@ -984,12 +1066,29 @@ def get_match_btts(event_id):
                 logger.warning("⚠️  Could not calculate xG-based BTTS: %s", e)
                 btts_xg = None
         
+        rolling_payload: dict[str, Any] = {}
+        if (
+            home_team
+            and away_team
+            and league_code
+            and "xg_prediction" in locals()
+        ):
+            for key in (
+                "rolling_xg_home",
+                "rolling_xg_away",
+                "xg_cache_source_home",
+                "xg_cache_source_away",
+            ):
+                if key in xg_prediction:
+                    rolling_payload[key] = xg_prediction[key]
+
         return make_ok({
             "btts": {
                 "market": btts_market,
                 "xg_model": btts_xg
             },
-            "source": "The Odds API + xG Analysis"
+            "source": "The Odds API + xG Analysis",
+            **rolling_payload,
         })
 
     except Exception as e:
@@ -1025,8 +1124,12 @@ def get_match_xg(event_id):
 
         start_time = time.monotonic()
 
+        memo = _get_request_memo()
         # Get xG prediction for the match
-        xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
+        xg_prediction = get_match_xg_prediction(
+            home_team, away_team, league_code, request_memo=memo
+        )
+        _ensure_rolling_fields(memo, league_code, home_team, away_team, xg_prediction)
 
         if not xg_prediction.get('available'):
             elapsed_ms = (time.monotonic() - start_time) * 1000

@@ -5,7 +5,7 @@ Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, TYPE_CHECKING
 from dataclasses import dataclass
 
 import json
@@ -28,6 +28,9 @@ from .constants import (
     MATCH_LOGS_CACHE_TTL,
 )
 from .name_resolver import resolve_team_name, get_all_aliases_for
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .request_memo import RequestMemo
 
 # ----------------------------------------------------------------------
 # Paths, TTLs, logger
@@ -1252,6 +1255,63 @@ def get_team_xg_stats(team_name, league_code, season=None, league_stats=None):
     logger.warning("⚠️  Team '%s' not found in %s xG stats", team_name, league_code)
     return None
 
+_PARTIAL_WINDOW_WARNINGS: set[Tuple[str, str, int]] = set()
+
+
+def _format_match_date(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+    return str(value)
+
+
+def compute_rolling_xg(
+    team_logs: Optional[List[Dict[str, Any]]],
+    N: int,
+    league_only: bool = True,
+    *,
+    league: Optional[str] = None,
+    team: Optional[str] = None,
+) -> Dict[str, Any]:
+    logs = list(team_logs or [])
+    if league_only:
+        logs = [match for match in logs if match]
+
+    window_logs = logs[:N]
+    series_for = [round(float(match.get("xg_for", 0.0)), 2) for match in window_logs]
+    series_against = [round(float(match.get("xg_against", 0.0)), 2) for match in window_logs]
+    series_dates = [_format_match_date(match.get("date")) for match in window_logs]
+
+    window_len = len(window_logs)
+    if 0 < window_len < N:
+        warn_key = (league or "", team or "", N)
+        if warn_key not in _PARTIAL_WINDOW_WARNINGS:
+            logger.warning(
+                "rolling_xg: partial window %d/%d (league-only) for %s/%s",
+                window_len,
+                N,
+                league or "?",
+                team or "?",
+            )
+            _PARTIAL_WINDOW_WARNINGS.add(warn_key)
+
+    return {
+        "for": series_for,
+        "against": series_against,
+        "dates": series_dates,
+        "window_len": window_len,
+        "source_label": "league_only" if league_only else "all_matches",
+    }
+
+
 def calculate_rolling_averages(matches, window=5):
     """
     Calculate rolling averages for xG metrics
@@ -1443,7 +1503,13 @@ def _pick_effective_league(
         'error': 'xG data not available for this competition (FBref is domestic-only).'
     }
 
-def get_match_xg_prediction(home_team, away_team, league_code, season=None):
+def get_match_xg_prediction(
+    home_team,
+    away_team,
+    league_code,
+    season=None,
+    request_memo: "RequestMemo | None" = None,
+):
     """
     Generate xG-based prediction for a match
     """
@@ -1491,6 +1557,29 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         effective_league, resolved_season, canonical_away
     )
 
+    if request_memo is not None:
+        home_source = "in_memory_cache" if home_matches else "missing"
+        away_source = "in_memory_cache" if away_matches else "missing"
+        request_memo.remember_team_logs(
+            effective_league, canonical_home, home_matches or [], home_source
+        )
+        request_memo.remember_team_logs(
+            effective_league, canonical_away, away_matches or [], away_source
+        )
+        if league_code != effective_league:
+            request_memo.remember_team_logs(
+                league_code,
+                canonical_home,
+                home_matches or [],
+                f"alias:{effective_league}",
+            )
+            request_memo.remember_team_logs(
+                league_code,
+                canonical_away,
+                away_matches or [],
+                f"alias:{effective_league}",
+            )
+
     payload = _build_prediction_payload(
         home_team,
         away_team,
@@ -1499,6 +1588,27 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         home_matches or [],
         away_matches or [],
     )
+
+    if request_memo is not None:
+        rolling_home = request_memo.get_or_compute_rolling(canonical_home, effective_league)
+        rolling_away = request_memo.get_or_compute_rolling(canonical_away, effective_league)
+
+        payload["rolling_xg_home"] = {
+            "for": rolling_home.get("for", []),
+            "against": rolling_home.get("against", []),
+            "dates": rolling_home.get("dates", []),
+            "window_len": rolling_home.get("window_len", 0),
+            "source_label": rolling_home.get("source_label"),
+        }
+        payload["rolling_xg_away"] = {
+            "for": rolling_away.get("for", []),
+            "against": rolling_away.get("against", []),
+            "dates": rolling_away.get("dates", []),
+            "window_len": rolling_away.get("window_len", 0),
+            "source_label": rolling_away.get("source_label"),
+        }
+        payload["xg_cache_source_home"] = rolling_home.get("cache_source")
+        payload["xg_cache_source_away"] = rolling_away.get("cache_source")
 
     # Non-blocking background warmers (debounced)
     _refresh_logs_async(effective_league, canonical_home, resolved_season)
