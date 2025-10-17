@@ -1300,6 +1300,26 @@
             
             return teamColors[teamName] || null;
         }
+
+        function getTeamColor(teamName) {
+            const palette = {
+                "Chelsea": "#034694",
+                "Nottingham Forest": "#DD0000",
+                "Arsenal": "#EF0107",
+                "Liverpool": "#C8102E",
+                "Manchester United": "#DA291C",
+                "Manchester City": "#6CABDD",
+                "Tottenham Hotspur": "#132257",
+                "Brighton & Hove Albion": "#0057B8",
+                "Everton": "#003399",
+                "_default": "#0d6efd"
+            };
+            const brandColor = getTeamBrandColor(teamName);
+            if (brandColor) {
+                return brandColor;
+            }
+            return palette[teamName] || palette._default;
+        }
         
         // Global functions for onclick access (must be outside DOMContentLoaded)
         function showMatchContextButton(match) {
@@ -4405,13 +4425,15 @@
 
                 const homeLabel = homeAvg != null ? Number(homeAvg).toFixed(2) : '—';
                 const awayLabel = awayAvg != null ? Number(awayAvg).toFixed(2) : '—';
+                const homeColor = getTeamColor(currentMatchData.home_team);
+                const awayColor = getTeamColor(currentMatchData.away_team);
 
                 return `
                     <div class="alert alert-light border mb-3 small text-center">
                         <i class="fas fa-bolt me-1"></i>Season snapshot:
-                        <span class="fw-bold text-primary">${currentMatchData.home_team}</span>
+                        <span style="color:${homeColor}; font-weight:600;">${currentMatchData.home_team}</span>
                         ${homeLabel} xG / match ·
-                        <span class="fw-bold text-danger">${currentMatchData.away_team}</span>
+                        <span style="color:${awayColor}; font-weight:600;">${currentMatchData.away_team}</span>
                         ${awayLabel} xG / match
                     </div>
                 `;
@@ -4452,6 +4474,17 @@
                         ${details ? `<div class="text-muted small mt-2" data-testid="btts-details">${details}</div>` : ''}
                     </div>
                 `;
+            }
+
+            function completeBttsProgress() {
+                const bars = document.querySelectorAll('.btts-progress .progress-bar');
+                if (!bars.length) {
+                    return;
+                }
+                bars.forEach(bar => {
+                    bar.classList.remove('bg-secondary', 'bg-primary', 'progress-bar-animated', 'progress-bar-striped');
+                    bar.classList.add('bg-success');
+                });
             }
 
             function createBttsLoader(container) {
@@ -4519,6 +4552,7 @@
 
                 return {
                     setActiveStep,
+                    totalSteps: bars.length,
                     showFallback: () => fallbackEl && fallbackEl.classList.remove('d-none'),
                     hideFallback: () => fallbackEl && fallbackEl.classList.add('d-none'),
                     renderMarket: (html) => {
@@ -4582,13 +4616,15 @@
 
                         if (state.market && state.xg) {
                             loader.renderSummary(buildBttsSummaryHtml(state.market, state.xg));
+                            completeBttsProgress();
                         }
                     };
 
                     const updateProgress = () => {
                         if (state.market && state.xg) {
-                            loader.setActiveStep(2);
+                            loader.setActiveStep(loader.totalSteps || 3);
                             loader.hideFallback();
+                            completeBttsProgress();
                         } else if (state.xg) {
                             loader.setActiveStep(1);
                         } else {
