@@ -880,6 +880,7 @@
         let xgStatus = null;
         let xgCooldownTimer = null;
         let xgCooldownTriggered = false;
+        let xgReadyPollTimer = null;
         
         // Theme-aware color helper functions (global scope for theme toggle)
         function isDarkTheme() {
@@ -1533,6 +1534,10 @@
                 clearTimeout(xgRepollTimeoutId);
                 xgRepollTimeoutId = null;
             }
+            if (xgReadyPollTimer) {
+                clearTimeout(xgReadyPollTimer);
+                xgReadyPollTimer = null;
+            }
             xgRepollScheduled = false;
             xgRepollAttempted = false;
             currentXgData = null;
@@ -1686,6 +1691,11 @@
                 displayMatchContextData(currentContextData);
                 if (!xgDetailsExpanded) {
                     setXgHint('');
+                    const statusHint = document.getElementById('xg-status-hint');
+                    if (statusHint) {
+                        statusHint.textContent = '';
+                        statusHint.classList.add('d-none');
+                    }
                     const stateCard = document.getElementById('xg-state-card');
                     if (stateCard) {
                         stateCard.classList.add('d-none');
@@ -1733,7 +1743,7 @@
             let html = '';
 
             if (state === 'warming') {
-                html = '<i class="fas fa-hourglass-half me-1"></i> Warming detailed match logs… cooldown active.';
+                html = '<i class="fas fa-hourglass-half me-1"></i> Warming detailed match logs… (cooldown active)';
             } else if (state === 'snapshot-ready') {
                 className = `${baseClass} alert-info`;
                 html = '<i class="fas fa-chart-line me-1"></i> Snapshot ready. Rolling form is warming…';
@@ -1755,7 +1765,7 @@
         }
 
         function setXgHint(text) {
-            const hint = document.getElementById('xg-hint') || document.getElementById('xg-status-hint');
+            const hint = document.getElementById('xg-hint');
             if (!hint) {
                 return;
             }
@@ -1763,9 +1773,17 @@
             if (text) {
                 hint.innerHTML = text;
                 hint.classList.remove('d-none');
+                const status = document.getElementById('xg-status-hint');
+                if (status) {
+                    status.classList.add('d-none');
+                }
             } else {
                 hint.innerHTML = '';
                 hint.classList.add('d-none');
+                const status = document.getElementById('xg-status-hint');
+                if (status && status.textContent) {
+                    status.classList.remove('d-none');
+                }
             }
         }
 
@@ -1773,6 +1791,7 @@
             const reason = message || 'xG data not available for this competition.';
             setXgStateCard('unavailable');
             setXgHint(reason);
+            updateXgStatusMessage({ availability: 'unavailable' });
 
             if (window.homeXgChart) {
                 try { window.homeXgChart.destroy(); } catch (error) { console.warn('home chart destroy failed', error); }
@@ -1852,29 +1871,36 @@
             }
         }
 
-        function renderXgReady(xgData) {
-            const payload = xgData?.xg || xgData || null;
+        function updateXgSnapshot(source) {
+            const payload = source?.xg || source || currentXgData;
             if (!payload) {
-                setXgUnavailable('xG data not available for this match.');
                 return;
             }
 
-            currentXgData = payload;
-            if (currentContextData) {
-                currentContextData.xg = payload;
-                currentContextData.xg_error = null;
-                currentContextData.xg_loading = false;
+            const snapshot = document.getElementById('xg-snapshot');
+            if (!snapshot) {
+                return;
             }
 
-            const snapshot = document.getElementById('xg-snapshot');
-            if (snapshot) {
-                if (payload.season_snapshot) {
-                    const html = buildSeasonSnapshotHtml(payload.season_snapshot);
-                    if (html) {
-                        snapshot.innerHTML = html;
-                        snapshot.dataset.filled = '1';
-                    }
-                }
+            const html = typeof payload.season_snapshot_html === 'string'
+                ? payload.season_snapshot_html
+                : typeof payload.xg_snapshot_html === 'string'
+                    ? payload.xg_snapshot_html
+                    : typeof payload.snapshot_html === 'string'
+                        ? payload.snapshot_html
+                        : payload.season_snapshot
+                            ? buildSeasonSnapshotHtml(payload.season_snapshot)
+                            : '';
+
+            if (html) {
+                snapshot.innerHTML = html;
+                snapshot.dataset.filled = '1';
+            }
+        }
+
+        function updateXgCharts() {
+            if (!currentXgData) {
+                return;
             }
 
             if (window.homeXgChart) {
@@ -1890,26 +1916,98 @@
             if (homeHolder) {
                 homeHolder.innerHTML = '';
             }
+
             const awayHolder = document.getElementById('away-xg-chart-holder');
             if (awayHolder) {
                 awayHolder.innerHTML = '';
             }
 
-            const homeMatches = payload?.home_stats?.recent_matches || [];
-            const awayMatches = payload?.away_stats?.recent_matches || [];
+            const homeStats = currentXgData.home_stats?.recent_matches || [];
+            const awayStats = currentXgData.away_stats?.recent_matches || [];
 
-            if (homeMatches.length) {
+            if (homeStats.length) {
                 ensureXgCanvasExists('home-xg-chart');
-                window.homeXgChart = createXgTrendChart('home-xg-chart', homeMatches, currentMatchData.home_team);
+                const homeLabel = currentMatchData?.home_team || 'Home';
+                window.homeXgChart = createXgTrendChart('home-xg-chart', homeStats, homeLabel);
             }
 
-            if (awayMatches.length) {
+            if (awayStats.length) {
                 ensureXgCanvasExists('away-xg-chart');
-                window.awayXgChart = createXgTrendChart('away-xg-chart', awayMatches, currentMatchData.away_team);
+                const awayLabel = currentMatchData?.away_team || 'Away';
+                window.awayXgChart = createXgTrendChart('away-xg-chart', awayStats, awayLabel);
+            }
+        }
+
+        function updateXgStatusMessage(data) {
+            const statusEl = document.getElementById('xg-status-hint') || document.getElementById('xg-hint');
+            if (!statusEl) {
+                return;
             }
 
+            if (data?.refresh_status === 'ready') {
+                statusEl.textContent = 'xG ready.';
+            } else if ((data?.availability || data?.xg?.availability) === 'unavailable') {
+                statusEl.textContent = 'xG unavailable.';
+            } else {
+                statusEl.textContent = 'Warming detailed match logs… (cooldown active)';
+            }
+            statusEl.classList.remove('d-none');
+        }
+
+        async function pollForXgReady(matchId, retries = 10, delay = 3000) {
+            if (!matchId) {
+                return;
+            }
+            xgReadyPollTimer = null;
+
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(`/match/xg?id=${encodeURIComponent(matchId)}`);
+                    const data = await response.json();
+                    updateXgStatusMessage(data);
+
+                    if (data.refresh_status === 'ready') {
+                        console.log('xG data ready, re-rendering charts');
+                        currentXgData = data.xg || data;
+                        updateXgSnapshot(data);
+                        updateXgCharts();
+                        setXgStateCard('ready');
+                        return;
+                    }
+
+                    if (data.availability === 'unavailable' || data.xg?.availability === 'unavailable') {
+                        console.log('xG unavailable for this league');
+                        setXgUnavailable('xG unavailable for this competition.');
+                        return;
+                    }
+                } catch (error) {
+                    console.warn('xG polling bridge encountered an error', error);
+                }
+
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+
+            console.warn('xG polling timeout reached; no update');
+        }
+
+        function renderXgReady(xgData) {
+            const payload = xgData?.xg || xgData || null;
+            if (!payload) {
+                setXgUnavailable('xG data not available for this match.');
+                return;
+            }
+
+            currentXgData = payload;
+            if (currentContextData) {
+                currentContextData.xg = payload;
+                currentContextData.xg_error = null;
+                currentContextData.xg_loading = false;
+            }
+
+            updateXgSnapshot(payload);
+            updateXgCharts();
+            updateXgStatusMessage({ refresh_status: 'ready' });
             setXgStateCard('ready');
-            setXgHint('');
         }
 
         async function fetchXg(matchId) {
@@ -1950,7 +2048,7 @@
                 }
 
                 if ((status === 'warming' || status === 'debounced') && Date.now() - start > 2000) {
-                    setXgHint('Warming detailed match logs… cooldown active.');
+                    setXgHint('Warming detailed match logs… (cooldown active)');
                 }
 
                 attempt += 1;
@@ -1985,6 +2083,13 @@
 
                 if (status === 'warming' || status === 'debounced') {
                     renderXgSnapshotOnly(initial);
+                    updateXgStatusMessage(initial);
+                    if (xgReadyPollTimer) {
+                        clearTimeout(xgReadyPollTimer);
+                    }
+                    if (currentMatchData && currentMatchData.id) {
+                        xgReadyPollTimer = setTimeout(() => pollForXgReady(currentMatchData.id), 3000);
+                    }
                     const polled = await pollXgUntilReady(async () => {
                         const next = await fetchXg(matchId);
                         if (currentContextData) {
@@ -2442,8 +2547,9 @@
                     const showHint = effectiveStatus === 'warming' || effectiveStatus === 'debounced';
                     const hintClass = `small text-muted mt-2${showHint ? '' : ' d-none'}`;
                     const hintText = showHint
-                        ? '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Warming detailed match logs… cooldown active.'
+                        ? '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Warming detailed match logs… (cooldown active)'
                         : '';
+                    const statusHtml = '<div id="xg-status-hint" class="small text-muted mb-2 d-none"></div>';
                     let noteHtml = '';
                     if (phase === 'season_snapshot') {
                         noteHtml = '<div class="text-muted small mt-2"><i class="fas fa-bolt me-1"></i>Season snapshot ready while detailed logs initialize.</div>';
@@ -2462,6 +2568,7 @@
                                     <button id="xg-toggle" class="${buttonClass}"${toggleDisabled}>
                                         <i class="fas fa-chart-line me-1"></i>${toggleLabel}
                                     </button>
+                                    ${statusHtml}
                                     <div id="xg-hint" class="${hintClass}">${hintText}</div>
                                 </div>
                                 ${noteHtml}
