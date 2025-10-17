@@ -75,6 +75,34 @@ DOMESTIC_MAPPING_FALLBACK_MESSAGE = (
 SUPPORTED_DOMESTIC = ["PL", "PD", "SA", "BL1", "FL1"]
 
 
+_CANONICAL_TO_LEAGUE_CODE = {value: key for key, value in LEAGUE_MAPPING.items()}
+
+LEAGUE_ALIASES = {
+    # Premier League
+    "PL": LEAGUE_MAPPING["PL"],
+    "ENG": LEAGUE_MAPPING["PL"],
+    LEAGUE_MAPPING["PL"]: LEAGUE_MAPPING["PL"],
+    # Serie A
+    "SA": LEAGUE_MAPPING["SA"],
+    "ITA": LEAGUE_MAPPING["SA"],
+    LEAGUE_MAPPING["SA"]: LEAGUE_MAPPING["SA"],
+    # La Liga
+    "PD": LEAGUE_MAPPING["PD"],
+    "ESP": LEAGUE_MAPPING["PD"],
+    LEAGUE_MAPPING["PD"]: LEAGUE_MAPPING["PD"],
+    # Bundesliga
+    "BL1": LEAGUE_MAPPING["BL1"],
+    "GER": LEAGUE_MAPPING["BL1"],
+    LEAGUE_MAPPING["BL1"]: LEAGUE_MAPPING["BL1"],
+    # Ligue 1
+    "FL1": LEAGUE_MAPPING["FL1"],
+    "FRA": LEAGUE_MAPPING["FL1"],
+    LEAGUE_MAPPING["FL1"]: LEAGUE_MAPPING["FL1"],
+}
+
+SUPPORTED_LEAGUES = set(LEAGUE_ALIASES.values())
+
+
 def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) -> Optional[str]:
     for code in SUPPORTED_DOMESTIC:
         table = fetch_league_xg_stats(code, cache_only=True)
@@ -142,6 +170,28 @@ _MATCH_LOG_SUMMARY = RateLimitedLogger(logger, window_seconds=60.0)
 _executor = ThreadPoolExecutor(max_workers=4)
 
 _PARTIAL_WINDOW_WARNINGS: set[tuple[str, str, int]] = set()
+
+
+def _normalize_league_code(raw: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Return (league_code, canonical_label) for supported leagues."""
+
+    if raw is None:
+        return None, None
+
+    league = str(raw).strip()
+    if not league:
+        return None, None
+
+    canonical = LEAGUE_ALIASES.get(league)
+    if canonical is None:
+        canonical = LEAGUE_ALIASES.get(league.upper())
+    if canonical is None and league in LEAGUE_MAPPING:
+        canonical = LEAGUE_MAPPING[league]
+    if canonical is None:
+        return None, league
+
+    code = _CANONICAL_TO_LEAGUE_CODE.get(canonical)
+    return code, canonical
 
 
 def _memoize_rolling_arrays(
@@ -624,13 +674,26 @@ _TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("ENG", "GER", "ITA", "ESP", "FRA")
 def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
     """Warm the in-memory cache for a specific league's xG table."""
 
+    normalized_code, canonical_label = _normalize_league_code(league_code)
+    if canonical_label in SUPPORTED_LEAGUES and normalized_code:
+        league_code = normalized_code
+        league_label = canonical_label
+    else:
+        league_label = str(league_code)
+        warn_once(
+            ("xg_warm", league_label),
+            f"⚠️  League {league_label} not supported for xG warm-up",
+            logger=logger,
+        )
+        return False
+
     if season is None:
         season = get_xg_season()
 
     data, _age = _get_from_mem_cache(league_code, season)
     if data is not None:
         _set_mem_cache(league_code, season, data, stored_at=time.time() + 0.001)
-        logger.info("Prewarmed xG for %s (cache hit)", league_code)
+        logger.info("Prewarmed xG for %s (cache hit)", league_label)
         return True
 
     try:
@@ -646,7 +709,7 @@ def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
     if cached is None:
         cached = stats
     _set_mem_cache(league_code, season, cached, stored_at=time.time() + 0.001)
-    logger.info("Prewarmed xG for %s", league_code)
+    logger.info("Prewarmed xG for %s", league_label)
     return True
 
 
@@ -756,8 +819,23 @@ def fetch_career_xg_stats(team_name, league_code):
     """
     Fetch recent historical xG statistics for a team (last 5 seasons)
     """
+    normalized_code, canonical_label = _normalize_league_code(league_code)
+    if canonical_label in SUPPORTED_LEAGUES and normalized_code:
+        league_code = normalized_code
+        league_label = canonical_label
+    else:
+        league_label = (
+            LEAGUE_MAPPING.get(league_code)
+            if isinstance(league_code, str) and league_code in LEAGUE_MAPPING
+            else str(league_code)
+        )
+
     if league_code not in LEAGUE_MAPPING:
-        logger.warning("⚠️  League %s not supported for career xG", league_code)
+        warn_once(
+            ("unsupported_league", league_label),
+            f"⚠️  League {league_label} not supported for career xG",
+            logger=logger,
+        )
         return None
 
     canonical_team_name = _resolve_fbref_team_name(team_name, "career_xg")
@@ -1031,12 +1109,23 @@ def _fetch_and_cache_league_xg_stats(league_code, season, cache_key):
 def fetch_league_xg_stats(league_code, season=None, cache_only: bool = False):
     """Fetch xG statistics for all teams in a league."""
 
+    normalized_code, canonical_label = _normalize_league_code(league_code)
+    if canonical_label in SUPPORTED_LEAGUES and normalized_code:
+        league_code = normalized_code
+        league_label = canonical_label
+    else:
+        league_label = (
+            LEAGUE_MAPPING.get(league_code)
+            if isinstance(league_code, str) and league_code in LEAGUE_MAPPING
+            else str(league_code)
+        )
+
     if season is None:
         season = get_xg_season()
 
     mem_data, mem_age = _get_from_mem_cache(league_code, season)
     if mem_data:
-        logger.info("✅ Loaded xG data for %s from in-memory cache", league_code)
+        logger.info("✅ Loaded xG data for %s from in-memory cache", league_label)
 
         if not cache_only and _is_hard_expired(mem_age):
             try:
@@ -1069,7 +1158,7 @@ def fetch_league_xg_stats(league_code, season=None, cache_only: bool = False):
     cached_payload = load_from_cache(cache_key)
     if cached_payload:
         cached_data, cache_age = cached_payload
-        logger.info("✅ Loaded xG data for %s from cache", league_code)
+        logger.info("✅ Loaded xG data for %s from cache", league_label)
         _set_mem_cache(league_code, season, cached_data)
 
         if _is_hard_expired(cache_age):
@@ -1098,7 +1187,11 @@ def fetch_league_xg_stats(league_code, season=None, cache_only: bool = False):
         return cached_data
 
     if league_code not in LEAGUE_MAPPING:
-        logger.warning("⚠️  League %s not supported for xG stats", league_code)
+        warn_once(
+            ("unsupported_league", league_label),
+            f"⚠️  League {league_label} not supported for xG stats",
+            logger=logger,
+        )
         return {}
 
     try:
@@ -1112,6 +1205,53 @@ def fetch_league_xg_stats(league_code, season=None, cache_only: bool = False):
     except Exception:
         logger.exception("❌ Error fetching xG stats for %s", league_code)
         return {}
+
+def handle_league_xg(league_code: str, *, season: Optional[int] = None) -> Dict[str, Any]:
+    """Normalize incoming league aliases and surface availability metadata."""
+
+    normalized_code, canonical_label = _normalize_league_code(league_code)
+    league_label = (
+        canonical_label
+        or (
+            LEAGUE_MAPPING.get(league_code)
+            if isinstance(league_code, str) and league_code in LEAGUE_MAPPING
+            else str(league_code)
+        )
+    )
+
+    try:
+        resolved_season = int(season) if season is not None else get_xg_season()
+    except (TypeError, ValueError):
+        resolved_season = get_xg_season()
+
+    if canonical_label not in SUPPORTED_LEAGUES or not normalized_code:
+        payload = _build_unavailable_response(
+            f"xG data unavailable for {league_label}",
+            reason="Unsupported competition",
+            fast_path=False,
+        )
+        payload.setdefault("message", payload.get("error"))
+        return payload
+
+    table = fetch_league_xg_stats(normalized_code, season=resolved_season, cache_only=True)
+    if table:
+        return {
+            "availability": "available",
+            "refresh_status": "ready",
+            "league": league_label,
+            "league_code": normalized_code,
+            "season": resolved_season,
+            "team_count": len(table),
+        }
+
+    _refresh_league_async(normalized_code, resolved_season)
+    return {
+        "availability": "warming",
+        "refresh_status": "warming",
+        "league": league_label,
+        "league_code": normalized_code,
+        "season": resolved_season,
+    }
 
 # ----------------------------------------------------------------------
 # Team xG lookup / Match logs / Rolling / Form
@@ -1262,8 +1402,23 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
       - T31: canonical FBref names via name_resolver, robust schedule matching
     """
     # Check if league is supported
+    normalized_code, canonical_label = _normalize_league_code(league_code)
+    if canonical_label in SUPPORTED_LEAGUES and normalized_code:
+        league_code = normalized_code
+        league_label = canonical_label
+    else:
+        league_label = (
+            LEAGUE_MAPPING.get(league_code)
+            if isinstance(league_code, str) and league_code in LEAGUE_MAPPING
+            else str(league_code)
+        )
+
     if league_code not in LEAGUE_MAPPING:
-        logger.warning("⚠️  League %s not supported for match logs", league_code)
+        warn_once(
+            ("unsupported_league", league_label),
+            f"⚠️  League {league_label} not supported for match logs",
+            logger=logger,
+        )
         return []
 
     league_name = LEAGUE_MAPPING[league_code]
@@ -1529,6 +1684,10 @@ def get_team_recent_xg_snapshot(
       - builds a compact snapshot (sums + window_len + source)
       - *does not* expose arrays; arrays are provided via RequestMemo paths
     """
+    normalized_code, canonical_label = _normalize_league_code(league_code)
+    if canonical_label in SUPPORTED_LEAGUES and normalized_code:
+        league_code = normalized_code
+
     memo_id = get_current_request_memo_id()
     memo_root = _get_request_memo_bucket(memo_id)
     rolling_bucket = _get_memo_slot(memo_root, "rolling")
@@ -1802,8 +1961,9 @@ def _build_unavailable_response(
 def _pick_effective_league(
     requested_league: str, canonical_home: str, canonical_away: str
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-    if requested_league in LEAGUE_MAPPING:
-        return requested_league, None
+    normalized_code, canonical_label = _normalize_league_code(requested_league)
+    if canonical_label in SUPPORTED_LEAGUES and normalized_code:
+        return normalized_code, None
 
     inferred = _infer_domestic_league_for_both(canonical_home, canonical_away)
     if inferred:
@@ -1828,6 +1988,12 @@ def _pick_effective_league(
             fast_path=False,
         )
 
+    display_league = canonical_label or requested_league
+    warn_once(
+        ("unsupported_league", display_league),
+        f"⚠️  League {display_league} not supported for xG",
+        logger=logger,
+    )
     return None, _build_unavailable_response(
         'xG data not available for this competition (FBref is domestic-only).',
         reason="Unsupported competition",
@@ -1844,6 +2010,7 @@ def get_match_xg_prediction(
     """
     Generate xG-based prediction for a match
     """
+    _requested_code, normalized_requested_label = _normalize_league_code(league_code)
     canonical_home = _resolve_fbref_team_name(home_team, "match_xg_home")
     canonical_away = _resolve_fbref_team_name(away_team, "match_xg_away")
 
@@ -1859,7 +2026,8 @@ def get_match_xg_prediction(
         league_supported = effective_league in LEAGUE_MAPPING
         if not league_supported:
             league_label = (
-                LEAGUE_MAPPING.get(league_code)
+                normalized_requested_label
+                or LEAGUE_MAPPING.get(league_code)
                 or LEAGUE_MAPPING.get(effective_league)
                 or effective_league
             )
