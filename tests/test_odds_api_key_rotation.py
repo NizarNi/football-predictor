@@ -34,7 +34,6 @@ def test_odds_api_key_rotation_includes_suffix(monkeypatch):
         monkeypatch.undo()
         reload(odds_api_client)
 
-
 def test_refresh_reinstates_key_after_value_change(monkeypatch):
     for key in list(os.environ):
         if key.startswith("ODDS_API_KEY"):
