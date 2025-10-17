@@ -1,7 +1,7 @@
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import requests
 
@@ -11,27 +11,36 @@ from .constants import BASE_URL, LEAGUE_CODE_MAPPING
 from .utils import create_retry_session, request_with_retries
 from .errors import APIError
 
+class APIKeyEntry(NamedTuple):
+    """Represents a configured Odds API key."""
+
+    name: str
+    value: str
+    order: int
+
+
 def _load_api_keys():
-    """Return all configured Odds API keys in numeric order."""
-    keys = []
+    """Return all configured Odds API keys (with metadata) in numeric order."""
+    entries = []
 
     # Allow unsuffixed fallback key for backwards compatibility
     base_key = os.environ.get("ODDS_API_KEY")
     if base_key:
-        keys.append((0, base_key))
+        entries.append(APIKeyEntry("ODDS_API_KEY", base_key, 0))
 
     suffix_pattern = re.compile(r"^ODDS_API_KEY_(\d+)$")
     for env_name, value in os.environ.items():
         match = suffix_pattern.match(env_name)
         if match and value:
-            keys.append((int(match.group(1)), value))
+            order = int(match.group(1))
+            entries.append(APIKeyEntry(env_name, value, order))
 
-    # Sort by numeric suffix (base key first) and return just the values
-    return [value for _, value in sorted(keys, key=lambda item: item[0])]
+    entries.sort(key=lambda item: (item.order, item.name))
+    return entries
 
 
 API_KEYS = _load_api_keys()
-invalid_keys = set()  # Track invalid keys to skip them
+invalid_keys = set()  # Track invalid keys (by environment name) to skip them
 current_key_index = 0
 
 logger = setup_logger(__name__)
@@ -62,14 +71,31 @@ def sanitize_error_message(message):
     
     return sanitized
 
+def _get_valid_api_keys():
+    return [entry for entry in API_KEYS if entry.name not in invalid_keys]
+
+
+def refresh_api_key_pool():
+    """Reload API keys from the environment and reset rotation state."""
+    global API_KEYS, current_key_index
+
+    API_KEYS = _load_api_keys()
+    valid_names = {entry.name for entry in API_KEYS}
+    invalid_keys.intersection_update(valid_names)
+    current_key_index = 0
+    return API_KEYS
+
+
 def get_next_api_key():
     global current_key_index
-    if not API_KEYS:
+    valid_keys = _get_valid_api_keys()
+    if not valid_keys:
         raise APIError("OddsAPI", "CONFIG_ERROR", "No ODDS_API_KEY environment variables set.")
-    
-    key = API_KEYS[current_key_index]
-    current_key_index = (current_key_index + 1) % len(API_KEYS)
-    return key
+
+    current_key_index %= len(valid_keys)
+    entry = valid_keys[current_key_index]
+    current_key_index = (current_key_index + 1) % len(valid_keys)
+    return entry.value
 
 def get_available_sports():
     api_key = get_next_api_key()
@@ -122,7 +148,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
     url = f"{BASE_URL}/sports/{sport_key}/odds"
     
     # Get valid keys (excluding known invalid ones)
-    valid_keys = [k for k in API_KEYS if k not in invalid_keys]
+    valid_keys = _get_valid_api_keys()
     
     if not valid_keys:
         raise APIError(
@@ -135,7 +161,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
     last_error: Optional[APIError] = None
     for attempt, api_key in enumerate(valid_keys):
         params = {
-            "apiKey": api_key,
+            "apiKey": api_key.value,
             "regions": regions,
             "markets": markets,
             "oddsFormat": odds_format
@@ -160,11 +186,12 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
                 # Invalid/expired key - mark it and try next
-                invalid_keys.add(api_key)
+                invalid_keys.add(api_key.name)
                 key_position = attempt + 1
                 total_keys = len(valid_keys)
                 logger.warning(
-                    "❌ API key #%d/%d validation failed - trying alternate key...",
+                    "❌ API key %s (#%d/%d) validation failed - trying alternate key...",
+                    api_key.name,
                     key_position,
                     total_keys,
                 )
@@ -188,7 +215,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
             adaptive_timeout.record_failure()
             logger.warning("[Resilience] API timeout or network issue: %s", exc)
             logger.warning(
-                "Timeout retrieving odds for %s with key %s", sport_key, api_key
+                "Timeout retrieving odds for %s with key %s", sport_key, api_key.name
             )
             last_error = APIError(
                 "OddsAPI",
@@ -202,7 +229,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
             logger.warning("[Resilience] API timeout or network issue: %s", exc)
             logger.warning(
                 "Retryable error with key %s for %s: %s",
-                api_key,
+                api_key.name,
                 sport_key,
                 sanitized_error,
             )
@@ -219,7 +246,7 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
             sanitized_error = sanitize_error_message(str(e))
             logger.warning(
                 "Retryable error with key %s for %s: %s",
-                api_key,
+                api_key.name,
                 sport_key,
                 sanitized_error,
             )
@@ -325,7 +352,7 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
     url = f"{BASE_URL}/sports/{sport_key}/events/{event_id}/odds"
     
     # Get valid keys (excluding known invalid ones)
-    valid_keys = [k for k in API_KEYS if k not in invalid_keys]
+    valid_keys = _get_valid_api_keys()
     
     if not valid_keys:
         raise APIError(
@@ -338,7 +365,7 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
     last_error: Optional[APIError] = None
     for attempt, api_key in enumerate(valid_keys):
         params = {
-            "apiKey": api_key,
+            "apiKey": api_key.value,
             "regions": regions,
             "markets": markets,
             "oddsFormat": "decimal"
@@ -362,11 +389,12 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
             adaptive_timeout.record_success()
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
-                invalid_keys.add(api_key)
+                invalid_keys.add(api_key.name)
                 key_position = attempt + 1
                 total_keys = len(valid_keys)
                 logger.warning(
-                    "❌ API key #%d/%d validation failed for event odds - trying alternate key...",
+                    "❌ API key %s (#%d/%d) validation failed for event odds - trying alternate key...",
+                    api_key.name,
                     key_position,
                     total_keys,
                 )
@@ -392,7 +420,7 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
             logger.warning(
                 "Timeout retrieving event odds for %s with key %s",
                 sport_key,
-                api_key,
+                api_key.name,
             )
             last_error = APIError(
                 "OddsAPI",
@@ -407,7 +435,7 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
             logger.warning(
                 "Retryable error retrieving event odds for %s with key %s: %s",
                 sport_key,
-                api_key,
+                api_key.name,
                 sanitized_error,
             )
             last_error = APIError(
@@ -424,7 +452,7 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
             logger.warning(
                 "Retryable error retrieving event odds for %s with key %s: %s",
                 sport_key,
-                api_key,
+                api_key.name,
                 sanitized_error,
             )
             last_error = APIError(
