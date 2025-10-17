@@ -18,7 +18,8 @@ API_KEYS = [
     os.environ.get("ODDS_API_KEY_4"),
     os.environ.get("ODDS_API_KEY_5"),
     os.environ.get("ODDS_API_KEY_6"),
-    os.environ.get("ODDS_API_KEY_7")
+    os.environ.get("ODDS_API_KEY_7"),
+    os.environ.get("ODDS_API_KEY_8")   
 ]
 API_KEYS = [key for key in API_KEYS if key]
 invalid_keys = set()  # Track invalid keys to skip them
