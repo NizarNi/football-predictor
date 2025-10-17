@@ -68,11 +68,3 @@ def reset_warn_once_cache() -> None:
 
     with _warn_once_lock:
         _warned_keys.clear()
-
-    try:
-        from . import xg_data_fetcher
-    except Exception:
-        return
-
-    if hasattr(xg_data_fetcher, "_PARTIAL_WINDOW_WARNINGS"):
-        xg_data_fetcher._PARTIAL_WINDOW_WARNINGS.clear()
