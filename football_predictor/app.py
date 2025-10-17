@@ -88,15 +88,19 @@ def _start_xg_prefetch_async() -> None:
 
     Thread(target=_runner, name="xg-prefetch", daemon=True).start()
 
-@app.before_serving        # Flask 3.x replacement for before_first_request
+# ---- universal warm-up hook ----
 def _prefetch_top_leagues() -> None:
-    """Pre-warm xG caches for top-5 leagues once before serving traffic."""
+    """Pre-warm xG caches for top-5 leagues once on startup."""
     try:
         if not xg_prefetch_ready:
             logger.info("🔥 Prewarming top-5 league xG caches…")
             _start_xg_prefetch_async()
     except Exception:
         logger.exception("⚠️ xg_prefetch: startup warm-up failed")
+
+# Trigger immediately on import so it runs once when app starts
+_prefetch_top_leagues()
+# ---- end warm-up hook ----
 
 def _apply_recent_xg_context(
     home_team: Optional[str],
