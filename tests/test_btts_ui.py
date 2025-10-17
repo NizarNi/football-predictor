@@ -7,3 +7,4 @@ def test_btts_progress_loader_present():
     assert 'Analyzing shots' in template
     assert 'Still computing BTTS tip…' in template
     assert 'createBttsLoader' in template
+    assert "bar.classList.add('bg-success')" in template
