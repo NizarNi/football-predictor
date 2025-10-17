@@ -169,6 +169,8 @@ def test_cross_competition_fastpath(monkeypatch, immediate_executor):
         'completeness',
         'refresh_status',
         'availability',
+        'refresh_phase',
+        'resolver_seed',
     }
 
     assert result['available'] is True

@@ -8,9 +8,11 @@ import unicodedata
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
+from threading import Event, Lock
 from typing import Dict, List, Optional, Set, Tuple
 
 from .config import setup_logger
+from .logging_utils import warn_once, reset_warn_once_cache
 
 ALIASES_PATH = os.path.join(os.path.dirname(__file__), "data", "aliases_fbref_seed.json")
 
@@ -22,8 +24,55 @@ _alias_dedupe: ContextVar[Optional[Set[Tuple[str, str, str]]]] = ContextVar(
 _alias_providers: ContextVar[Optional[Set[str]]] = ContextVar(
     "alias_providers", default=None
 )
+_alias_seed_used: ContextVar[bool] = ContextVar("alias_seed_used", default=False)
 
 _resolver_ready_logged = False
+
+RESOLVER_READY_EVENT: Event = Event()
+_resolver_lock: Lock = Lock()
+RESOLVER_READY: bool = False
+_resolver_providers: List[str] = []
+_seed_alias_cache: Optional[Dict[str, Dict[str, list[str]]]] = None
+_seed_providers: Optional[List[str]] = None
+_hydrated_alias_cache: Optional[Dict[str, Dict[str, list[str]]]] = None
+_seed_fallback_count: int = 0
+
+
+def _compute_provider_order(aliases: Dict[str, Dict[str, list[str]]]) -> List[str]:
+    providers: Set[str] = set()
+    for buckets in aliases.values():
+        providers.update(provider.lower() for provider in buckets.keys())
+    ordered = sorted(providers, key=lambda key: (key != "fbref", key))
+    return ordered
+
+
+def _load_seed_aliases() -> Dict[str, Dict[str, list[str]]]:
+    global _seed_alias_cache, _seed_providers
+    if _seed_alias_cache is None:
+        with open(ALIASES_PATH, "r", encoding="utf-8") as fh:
+            _seed_alias_cache = json.load(fh)
+        _seed_providers = _compute_provider_order(_seed_alias_cache)
+    return _seed_alias_cache
+
+
+def _load_hydrated_aliases() -> Dict[str, Dict[str, list[str]]]:
+    global _hydrated_alias_cache
+    if _hydrated_alias_cache is None:
+        # Phase 5 stabilization: hydration mirrors the static seed payload.
+        _hydrated_alias_cache = _load_seed_aliases()
+    return _hydrated_alias_cache
+
+
+def _mark_seed_used() -> None:
+    global _seed_fallback_count
+    if not _alias_seed_used.get():
+        _alias_seed_used.set(True)
+        _seed_fallback_count += 1
+    warn_once(
+        "alias_resolver_seed",
+        "Alias resolver still warming – using static alias seed for this request.",
+        logger=logger,
+    )
 
 
 def _register_alias_mapping(raw: str, canonical: str, provider: str) -> None:
@@ -43,6 +92,7 @@ def alias_logging_context() -> None:
 
     token_bucket = _alias_dedupe.set(set())
     token_providers = _alias_providers.set(set())
+    token_seed = _alias_seed_used.set(False)
     try:
         yield
     finally:
@@ -50,6 +100,10 @@ def alias_logging_context() -> None:
         providers = _alias_providers.get()
         provider_list = sorted(providers) if providers else []
         providers_display = ", ".join(provider_list) if provider_list else "none"
+        if _alias_seed_used.get():
+            providers_display = (
+                f"{providers_display} (seed)" if providers_display else "seed"
+            )
         logger.info(
             "alias_normalizer: applied %d unique mappings (providers: %s)",
             len(mappings) if mappings is not None else 0,
@@ -57,6 +111,7 @@ def alias_logging_context() -> None:
         )
         _alias_dedupe.reset(token_bucket)
         _alias_providers.reset(token_providers)
+        _alias_seed_used.reset(token_seed)
 
 
 def _norm(value: str) -> str:
@@ -90,24 +145,53 @@ def token_set_ratio(a: str, b: str) -> int:
     return int(100 * inter / union)
 
 
-@lru_cache(maxsize=1)
 def load_aliases() -> Dict[str, Dict[str, list[str]]]:
     """Load alias mappings from disk and memoize the parsed JSON."""
+    global RESOLVER_READY
 
-    with open(ALIASES_PATH, "r", encoding="utf-8") as fh:
-        data: Dict[str, Dict[str, list[str]]] = json.load(fh)
+    if RESOLVER_READY or RESOLVER_READY_EVENT.is_set():
+        RESOLVER_READY = True
+        return _load_hydrated_aliases()
 
-    providers = set()
-    for buckets in data.values():
-        providers.update({provider.lower() for provider in buckets.keys()})
+    if RESOLVER_READY_EVENT.wait(0):
+        RESOLVER_READY = True
+        return _load_hydrated_aliases()
 
-    ordered_providers = sorted(providers, key=lambda key: (key != "fbref", key))
+    _mark_seed_used()
+    return _load_seed_aliases()
+
+
+def resolver_seed_used() -> bool:
+    """Return whether the current context fell back to the static alias seed."""
+
+    return bool(_alias_seed_used.get())
+
+
+def await_resolver_ready(timeout: Optional[float] = None) -> bool:
+    """Block until the resolver hydration completes (returns True if ready)."""
+
+    ready = RESOLVER_READY_EVENT.wait(timeout)
+    if ready:
+        global RESOLVER_READY
+        RESOLVER_READY = True
+    return ready
+
+
+def resolver_providers() -> List[str]:
+    if RESOLVER_READY or RESOLVER_READY_EVENT.is_set():
+        return list(_resolver_providers)
+    return list(_seed_providers or _compute_provider_order(_load_seed_aliases()))
+
+
+def _hydrate_aliases() -> List[str]:
+    aliases = _load_hydrated_aliases()
+    ordered = _compute_provider_order(aliases)
     logger.info(
         "aliases: loaded %d canonicals (providers: %s)",
-        len(data),
-        ", ".join(ordered_providers),
+        len(aliases),
+        ", ".join(ordered) if ordered else "none",
     )
-    return data
+    return ordered
 
 
 def get_all_aliases_for(canonical: str) -> list[str]:
@@ -143,26 +227,41 @@ def _build_lookup_structures() -> Tuple[Dict[str, str], Dict[str, Dict[str, str]
     return canonical_by_norm, provider_lookup
 
 
-def warm_alias_resolver() -> List[str]:
+def warm_alias_resolver(*, blocking: bool = True) -> List[str]:
     """Preload alias providers at startup and log readiness once."""
 
-    aliases = load_aliases()
-    # Trigger lookup cache population to ensure providers are ready.
-    _build_lookup_structures()
+    global _resolver_ready_logged, _resolver_providers, RESOLVER_READY
 
-    providers: Set[str] = set()
-    for buckets in aliases.values():
-        providers.update(provider.lower() for provider in buckets.keys())
+    if RESOLVER_READY_EVENT.is_set() and _resolver_providers:
+        return list(_resolver_providers)
 
-    ordered = sorted(providers, key=lambda key: (key != "fbref", key))
+    if not blocking:
+        from threading import Thread
 
-    global _resolver_ready_logged
-    if not _resolver_ready_logged:
-        providers_display = ", ".join(ordered) if ordered else "none"
-        logger.info("Resolver ready: providers=%s", providers_display)
-        _resolver_ready_logged = True
+        def _async_warm() -> None:
+            try:
+                warm_alias_resolver(blocking=True)
+            except Exception:  # pragma: no cover - best-effort log
+                logger.exception("Alias resolver warm-up failed")
 
-    return ordered
+        Thread(target=_async_warm, daemon=True).start()
+        return resolver_providers()
+
+    with _resolver_lock:
+        if RESOLVER_READY_EVENT.is_set() and _resolver_providers:
+            return list(_resolver_providers)
+
+        ordered = _hydrate_aliases()
+        _resolver_providers = list(ordered)
+        RESOLVER_READY = True
+        RESOLVER_READY_EVENT.set()
+        _build_lookup_structures.cache_clear()
+        _build_lookup_structures()
+        if not _resolver_ready_logged:
+            providers_display = ", ".join(ordered) if ordered else "none"
+            logger.info("Resolver ready: providers=%s", providers_display)
+            _resolver_ready_logged = True
+        return list(_resolver_providers)
 
 
 def resolve_team_name(raw: str, provider: str | None = None) -> str:
@@ -232,11 +331,33 @@ def resolve_team_name(raw: str, provider: str | None = None) -> str:
     return raw
 
 
+def get_seed_fallback_count() -> int:
+    """Return how many times the seed fallback has been used."""
+
+    return _seed_fallback_count
+
+
+def _reset_resolver_state_for_tests() -> None:  # pragma: no cover - testing helper
+    global RESOLVER_READY, _resolver_providers, _hydrated_alias_cache, _seed_fallback_count
+    RESOLVER_READY = False
+    RESOLVER_READY_EVENT.clear()
+    _resolver_providers = []
+    _hydrated_alias_cache = None
+    _seed_fallback_count = 0
+    _build_lookup_structures.cache_clear()
+    reset_warn_once_cache()
+
+
 __all__ = [
     "canonicalize_team",
     "alias_logging_context",
+    "await_resolver_ready",
     "get_all_aliases_for",
+    "get_seed_fallback_count",
     "load_aliases",
+    "resolver_providers",
+    "resolver_seed_used",
     "resolve_team_name",
     "token_set_ratio",
+    "warm_alias_resolver",
 ]
