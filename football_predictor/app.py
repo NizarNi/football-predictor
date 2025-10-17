@@ -105,6 +105,39 @@ def _apply_recent_xg_context(
     return home_snapshot, away_snapshot
 
 
+def _normalize_xg_metadata(prediction: dict[str, Any]) -> dict[str, Any]:
+    fast_path = bool(prediction.get("fast_path"))
+    completeness = prediction.get("completeness")
+    if completeness is None:
+        completeness = "season_only" if fast_path else "season+logs"
+    availability = prediction.get("availability")
+    if not availability:
+        availability = "available" if prediction.get("available") else "unavailable"
+    refresh_status = prediction.get("refresh_status")
+    if not refresh_status:
+        refresh_status = "ready" if not fast_path else "warming"
+    resolver_seed = bool(prediction.get("resolver_seed"))
+    metadata: dict[str, Any] = {
+        "fast_path": fast_path,
+        "completeness": completeness,
+        "refresh_status": refresh_status,
+        "availability": availability,
+        "resolver_seed": resolver_seed,
+    }
+    if prediction.get("reason") is not None:
+        metadata["reason"] = prediction.get("reason")
+    if prediction.get("note"):
+        metadata["note"] = prediction.get("note")
+    phase = prediction.get("refresh_phase")
+    if not phase:
+        if not fast_path or refresh_status == "ready":
+            phase = "ready" if not fast_path else "season_snapshot"
+        else:
+            phase = "warming"
+    metadata["refresh_phase"] = phase
+    return metadata
+
+
 @app.before_request
 def _prime_request_memo() -> None:
     clear_request_memo_id()
@@ -1198,14 +1231,6 @@ def get_match_xg(event_id):
                 home_team, away_team, league_code, request_memo=memo
             )
 
-            metadata_keys = (
-                "fast_path",
-                "completeness",
-                "refresh_status",
-                "availability",
-                "reason",
-            )
-
             if not xg_prediction.get('available'):
                 elapsed_ms = (time.monotonic() - start_time) * 1000
                 logger.info(
@@ -1214,18 +1239,14 @@ def get_match_xg(event_id):
                     extra={"event_id": event_id},
                 )
                 _apply_recent_xg_context(home_team, away_team, league_code)
+                metadata = _normalize_xg_metadata(xg_prediction)
                 # Even on partial, try to include rolling fields if memo had logs
                 payload = {
                     "xg": None,
                     "error": xg_prediction.get('error', 'xG data not available'),
-                    "source": "FBref via soccerdata"
+                    "source": "FBref via soccerdata",
+                    **metadata,
                 }
-                for key in metadata_keys:
-                    value = xg_prediction.get(key)
-                    if value is not None:
-                        payload[key] = value
-                if "availability" not in payload:
-                    payload["availability"] = "unavailable"
                 _ensure_rolling_fields(memo, league_code, home_team, away_team, payload)
                 return make_ok(payload)
 
@@ -1237,16 +1258,12 @@ def get_match_xg(event_id):
             )
             _apply_recent_xg_context(home_team, away_team, league_code)
 
+            metadata = _normalize_xg_metadata(xg_prediction)
             payload = {
                 "xg": xg_prediction,
-                "source": "FBref via soccerdata"
+                "source": "FBref via soccerdata",
+                **metadata,
             }
-            for key in metadata_keys:
-                value = xg_prediction.get(key)
-                if value is not None:
-                    payload[key] = value
-            if "availability" not in payload:
-                payload["availability"] = "available"
             _ensure_rolling_fields(memo, league_code, home_team, away_team, payload)
             return make_ok(payload)
 

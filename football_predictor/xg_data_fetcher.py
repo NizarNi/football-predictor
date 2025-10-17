@@ -48,7 +48,7 @@ from .constants import (
     LEAGUE_MAPPING,
     MATCH_LOGS_CACHE_TTL,
 )
-from .name_resolver import resolve_team_name, get_all_aliases_for
+from .name_resolver import resolve_team_name, get_all_aliases_for, resolver_seed_used
 from .logging_utils import RateLimitedLogger, warn_once
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -1725,6 +1725,7 @@ def _build_unavailable_response(
         "completeness": "season_only",
         "refresh_status": refresh_status,
         "availability": "unavailable",
+        "resolver_seed": resolver_seed_used(),
     }
     logger.debug(
         "xg unavailable: %s (reason=%s, status=%s)",
@@ -1940,6 +1941,11 @@ def get_match_xg_prediction(
         else:
             refresh_status = "warming"
     payload["refresh_status"] = refresh_status
+    payload["resolver_seed"] = resolver_seed_used()
+    if fast_path:
+        payload["refresh_phase"] = "season_snapshot" if refresh_status == "ready" else "warming"
+    else:
+        payload["refresh_phase"] = "ready"
 
     if fast_path:
         if refresh_status == "debounced":

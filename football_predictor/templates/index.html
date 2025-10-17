@@ -568,9 +568,29 @@
             animation: fadeInUp 0.5s ease;
             transition: opacity 0.3s ease;
         }
-        
+
         .loading-tip strong {
             color: var(--primary-color);
+        }
+
+        .xg-state-card {
+            animation: xgStateFade 0.35s ease-in-out;
+        }
+
+        .xg-state-card .xg-phase-badge {
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+        }
+
+        @keyframes xgStateFade {
+            from {
+                opacity: 0;
+                transform: translateY(-4px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
     </style>
 </head>
@@ -1527,12 +1547,25 @@
                 return;
             }
 
+            const fastPath = Boolean(xgData?.fast_path);
+            const refreshStatus = xgData?.refresh_status || (fastPath ? 'warming' : 'ready');
+            const availability = xgData?.availability || (xgData?.xg ? 'available' : 'unavailable');
+            const refreshPhase = xgData?.refresh_phase
+                || (!fastPath
+                    ? 'ready'
+                    : refreshStatus !== 'ready'
+                        ? 'warming'
+                        : 'season_snapshot');
+
             currentXgMeta = {
-                fast_path: Boolean(xgData?.fast_path),
-                completeness: xgData?.completeness || null,
-                refresh_status: xgData?.refresh_status || 'ready',
-                availability: xgData?.availability || (xgData?.xg ? 'available' : 'unavailable'),
+                fast_path: fastPath,
+                completeness: xgData?.completeness || (fastPath ? 'season_only' : 'season+logs'),
+                refresh_status: refreshStatus,
+                availability,
                 reason: xgData?.reason || null,
+                refresh_phase: refreshPhase,
+                resolver_seed: Boolean(xgData?.resolver_seed),
+                note: xgData?.note || null,
             };
 
             currentContextData.xg_meta = currentXgMeta;
@@ -1555,7 +1588,7 @@
             currentContextData.away_career = null;
             currentContextData.xg_loading = false;
 
-            if (currentXgMeta.availability === 'available' && currentXgMeta.refresh_status !== 'ready') {
+            if (currentXgMeta.availability === 'available' && currentXgMeta.refresh_status === 'debounced') {
                 scheduleXgRepoll(requestToken);
             } else {
                 cancelXgRepoll();
@@ -2007,6 +2040,37 @@
                 // Add xG trend charts
                 const xgMeta = contextData.xg_meta || currentXgMeta || null;
                 const availability = xgMeta ? xgMeta.availability : null;
+                const fastPath = Boolean(xgMeta?.fast_path);
+                const phase = xgMeta?.refresh_phase || (fastPath ? 'season_snapshot' : 'ready');
+                const shouldRenderToggle = Boolean(xgMeta && (fastPath || availability === 'available'));
+
+                if (shouldRenderToggle) {
+                    const toggleLabel = xgDetailsExpanded ? 'Hide xG details' : 'Show xG details';
+                    const toggleClass = xgDetailsExpanded ? 'btn-primary' : 'btn-outline-primary';
+                    const toggleDisabled = availability === 'available' ? '' : ' disabled';
+                    let noteHtml = '';
+                    if (phase === 'warming') {
+                        noteHtml = '<div class="text-muted small mt-2"><i class="fas fa-hourglass-half me-1"></i>Warming detailed logs… (cooldown active)</div>';
+                    } else if (phase === 'season_snapshot') {
+                        noteHtml = '<div class="text-muted small mt-2"><i class="fas fa-bolt me-1"></i>Season snapshot ready while detailed logs initialize.</div>';
+                    } else if (xgMeta?.note) {
+                        noteHtml = `<div class="text-muted small mt-2"><i class="fas fa-info-circle me-1"></i>${xgMeta.note}</div>`;
+                    }
+                    const seedBadge = xgMeta?.resolver_seed ? '<span class="text-muted small ms-2">(seed)</span>' : '';
+                    const phaseBadge = `<span class="badge bg-light text-muted border xg-phase-badge">${phase.replace(/_/g, ' ').toUpperCase()}</span>`;
+                    html += `
+                        <div class="card mt-3 xg-state-card state-${phase}" data-xg-phase="${phase}">
+                            <div class="card-body text-center">
+                                <button class="btn btn-sm ${toggleClass}" onclick="toggleXgDetails()"${toggleDisabled}>
+                                    <i class="fas fa-chart-line me-1"></i>${toggleLabel}
+                                </button>
+                                ${phaseBadge}
+                                ${seedBadge}
+                                ${noteHtml}
+                            </div>
+                        </div>
+                    `;
+                }
 
                 if (availability === 'unavailable') {
                     const reason = xgMeta?.reason || contextData.xg_error || 'No per-match xG logs for this competition.';
@@ -2017,25 +2081,7 @@
                             </div>
                         </div>
                     `;
-                } else {
-                    if (xgMeta) {
-                        const toggleLabel = xgDetailsExpanded ? 'Hide xG details' : 'Show xG details';
-                        const toggleClass = xgDetailsExpanded ? 'btn-primary' : 'btn-outline-primary';
-                        const note = xgMeta.refresh_status !== 'ready'
-                            ? `<div class="text-muted small mt-2"><i class="fas fa-hourglass-half me-1"></i>${xgMeta.refresh_status === 'debounced' ? 'Warming detailed logs… (cooldown active)' : 'Warming detailed logs… (refresh in progress)'}</div>`
-                            : '';
-                        html += `
-                            <div class="card mt-3">
-                                <div class="card-body text-center">
-                                    <button class="btn btn-sm ${toggleClass}" onclick="toggleXgDetails()">
-                                        <i class="fas fa-chart-line me-1"></i>${toggleLabel}
-                                    </button>
-                                    ${note}
-                                </div>
-                            </div>
-                        `;
-                    }
-
+                } else if (availability === 'available') {
                     if (xgDetailsExpanded) {
                         if (contextData.xg_loading) {
                             html += `
@@ -2067,7 +2113,7 @@
                     }
                 }
             }
-            
+
             matchContext.innerHTML = html;
             
             // Destroy old charts if they exist
