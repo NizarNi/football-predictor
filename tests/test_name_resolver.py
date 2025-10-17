@@ -1,6 +1,12 @@
 """Tests for the team name resolver helper."""
 
-from football_predictor.name_resolver import resolve_team_name
+from football_predictor.name_resolver import resolve_team_name, warm_alias_resolver
+
+
+def test_alias_resolver_ready_on_startup():
+    providers = warm_alias_resolver()
+    assert providers
+    assert any(provider == "fbref" for provider in providers)
 
 
 def test_fbref_exact_and_aliases():

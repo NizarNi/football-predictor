@@ -29,11 +29,11 @@ class RollingXGTests(unittest.TestCase):
             {"date": "2024-08-25", "xg_for": 0.5, "xg_against": 0.8, "result": "W", "gameweek": None},
             {"date": "2024-08-20", "xg_for": 0.4, "xg_against": 0.6, "result": None, "gameweek": 2},
         ]
-        xg_for_sum, xg_against_sum, window_len, source = compute_rolling_xg(logs, N=2)
-        self.assertEqual(window_len, 2)
-        self.assertAlmostEqual(xg_for_sum, 1.2 + 0.7)
-        self.assertAlmostEqual(xg_against_sum, 0.5 + 1.1)
-        self.assertEqual(source, "match_logs")
+        result = compute_rolling_xg(logs, N=2)
+        self.assertEqual(result["window_len"], 2)
+        self.assertAlmostEqual(sum(result["for"]), 1.2 + 0.7)
+        self.assertAlmostEqual(sum(result["against"]), 0.5 + 1.1)
+        self.assertEqual(result["source_label"], "match_logs")
 
     @patch("football_predictor.xg_data_fetcher.fetch_league_xg_stats")
     @patch("football_predictor.xg_data_fetcher.fetch_team_match_logs")

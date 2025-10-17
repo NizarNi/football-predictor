@@ -37,3 +37,5 @@ def test_cross_competition_mismatch_returns_unavailable():
     payload = get_match_xg_prediction("PSG", "Inter", "UCL")
     assert payload["available"] is False
     assert "domestic-only" in payload.get("error", "")
+    assert payload.get("availability") == "unavailable"
+    assert payload.get("reason") == "Unsupported competition"

@@ -14,7 +14,28 @@ import re
 import threading
 import time
 
-import pandas as pd
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover - fallback for environments without pandas
+    class _PandasStub:
+        class Series(list):
+            @property
+            def iloc(self):
+                return self
+
+        class Timestamp(datetime):
+            pass
+
+        @staticmethod
+        def isna(value: Any) -> bool:
+            return value is None
+
+        @staticmethod
+        def notna(value: Any) -> bool:
+            return value is not None
+
+    pd = _PandasStub()  # type: ignore[assignment]
+
 import requests
 import soccerdata as sd
 
@@ -57,8 +78,28 @@ SUPPORTED_DOMESTIC = ["PL", "PD", "SA", "BL1", "FL1"]
 def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) -> Optional[str]:
     for code in SUPPORTED_DOMESTIC:
         table = fetch_league_xg_stats(code, cache_only=True)
+        if not table or len(table) < 5:
+            table = fetch_league_xg_stats(code)
+        if (not table or len(table) < 5) and code in LEAGUE_MAPPING:
+            cache_key = get_cache_key(code, get_xg_season())
+            cached_payload = load_from_cache(cache_key)
+            if cached_payload:
+                table, _age = cached_payload
+                _set_mem_cache(code, get_xg_season(), table)
         if not table:
+            logger.debug(
+                "infer_domestic: %s missing cache for %s vs %s",
+                code,
+                canonical_home,
+                canonical_away,
+            )
             continue
+        logger.debug(
+            "infer_domestic: %s table size=%s type=%s",
+            code,
+            len(table) if hasattr(table, "__len__") else "?",
+            type(table),
+        )
 
         def _has_team(name: str) -> bool:
             if name in table:
@@ -71,7 +112,19 @@ def _infer_domestic_league_for_both(canonical_home: str, canonical_away: str) ->
             return any(n in k.lower() or k.lower() in n for k in table.keys())
 
         if _has_team(canonical_home) and _has_team(canonical_away):
+            logger.debug(
+                "infer_domestic: matched %s for %s/%s",
+                code,
+                canonical_home,
+                canonical_away,
+            )
             return code
+        logger.debug(
+            "infer_domestic: %s missing at least one of %s/%s",
+            code,
+            canonical_home,
+            canonical_away,
+        )
     return None
 
 
@@ -87,6 +140,42 @@ _MATCH_LOG_SUMMARY = RateLimitedLogger(logger, window_seconds=60.0)
 
 # Background worker pool (league + logs refresh)
 _executor = ThreadPoolExecutor(max_workers=4)
+
+_PARTIAL_WINDOW_WARNINGS: set[tuple[str, str, int]] = set()
+
+
+def _memoize_rolling_arrays(
+    league_code: Optional[str],
+    canonical_team: Optional[str],
+    window: int,
+    payload: Dict[str, Any],
+) -> None:
+    if not canonical_team:
+        return
+    request_id = get_current_request_memo_id()
+    memo_root = _get_request_memo_bucket(request_id)
+    bucket = _get_memo_slot(memo_root, "rolling_arrays")
+    if bucket is None:
+        return
+    key = ((league_code or "").upper(), canonical_team, int(window or 0))
+    bucket[key] = dict(payload)
+
+
+def _get_precomputed_rolling(
+    league_code: Optional[str], canonical_team: Optional[str], window: int
+) -> Optional[Dict[str, Any]]:
+    if not canonical_team:
+        return None
+    request_id = get_current_request_memo_id()
+    memo_root = _get_request_memo_bucket(request_id)
+    bucket = _get_memo_slot(memo_root, "rolling_arrays")
+    if bucket is None:
+        return None
+    key = ((league_code or "").upper(), canonical_team, int(window or 0))
+    entry = bucket.get(key)
+    if entry is None:
+        return None
+    return dict(entry)
 
 # ----------------------------------------------------------------------
 # Debounce registry (T35e): bounded backoff per (league, team) and per league
@@ -524,21 +613,21 @@ def _refresh_league_async(league_code: str, season: int) -> None:
 
 def _refresh_logs_async(
     league_code: str, canonical_team: str, season: Optional[int] = None
-) -> None:
+) -> str:
     # T35d fixed cooldown (120s) — keep as a first guard
     now = time.monotonic()
     key_cool = (league_code, canonical_team)
     with _refresh_attempt_lock:
         last = _last_refresh_attempt.get(key_cool, 0.0)
         if now - last < REFRESH_COOLDOWN_S:
-            return
+            return "debounced"
         _last_refresh_attempt[key_cool] = now
 
     # T35e adaptive backoff (90s → 15m)
     deb_key = (league_code, canonical_team)
     if _should_debounce(deb_key, floor=90.0, ceil=900.0):
         logger.info("⏳ logs-refresh debounced for %s/%s", league_code, canonical_team)
-        return
+        return "debounced"
 
     def _logs_task():
         try:
@@ -551,6 +640,7 @@ def _refresh_logs_async(
             logger.warning("⚠️ logs-refresh failed for %s/%s: %s", league_code, canonical_team, exc)
 
     _executor.submit(_logs_task)
+    return "warming"
 
 def get_cache_key(league_code, season):
     """Generate cache key for xG data"""
@@ -1017,7 +1107,7 @@ def _is_league_log(entry: Dict[str, Any], league_only: bool) -> bool:
         return True
     gameweek = entry.get('gameweek')
     if gameweek is None:
-        return False
+        return True
     competition = entry.get('competition') or entry.get('comp')
     if competition is None:
         return True
@@ -1081,13 +1171,25 @@ def compute_rolling_xg(
     series_against = [round(float(m.get("xg_against", 0.0)), 2) for m in window_logs]
     series_dates = [_fmt_date(m.get("date")) for m in window_logs]
 
-    return {
+    payload = {
         "for": series_for,
         "against": series_against,
         "dates": series_dates,
         "window_len": len(window_logs),
-        "source_label": "league_only" if league_only else "all_matches",
+        "source_label": "match_logs" if league_only else "all_matches",
     }
+
+    target_window = N if N and N > 0 else len(filtered)
+    if (
+        league_only
+        and league
+        and team
+        and target_window
+        and 0 < len(window_logs) < target_window
+    ):
+        _PARTIAL_WINDOW_WARNINGS.add((league, team, int(target_window)))
+
+    return payload
 
 
 def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=None):
@@ -1376,12 +1478,14 @@ def get_team_recent_xg_snapshot(
     if rolling_bucket is not None and memo_key in rolling_bucket:
         return rolling_bucket[memo_key]
 
-    logs = fetch_team_match_logs(
-        canonical_team,
-        league_code,
-        resolved_season,
-        request_memo_id=memo_id,
-    )
+    logs = _get_cached_team_logs_in_memory(league_code, resolved_season, canonical_team)
+    if logs is None:
+        logs = fetch_team_match_logs(
+            canonical_team,
+            league_code,
+            resolved_season,
+            request_memo_id=memo_id,
+        )
 
     rolling = compute_rolling_xg(
         list(logs or []),
@@ -1391,6 +1495,8 @@ def get_team_recent_xg_snapshot(
         team=canonical_team,
     )
 
+    _memoize_rolling_arrays(league_code, canonical_team, window, rolling)
+
     xg_for_sum = float(sum(rolling.get("for", [])))
     xg_against_sum = float(sum(rolling.get("against", [])))
     window_len = int(rolling.get("window_len") or 0)
@@ -1399,6 +1505,7 @@ def get_team_recent_xg_snapshot(
     slug = f"{league_code}:{canonical_team.lower()}"
     if source_label == "match_logs" and 0 < window_len < window:
         warn_once(slug, f"rolling_xg partial window {window_len}/{window}", logger=logger)
+        _PARTIAL_WINDOW_WARNINGS.add((league_code, canonical_team, window))
 
     # season fallback when logs are empty
     if window_len == 0:
@@ -1604,6 +1711,32 @@ def _build_prediction_payload(
     }
 
 
+def _build_unavailable_response(
+    error: str,
+    *,
+    reason: Optional[str] = None,
+    refresh_status: str = "ready",
+    fast_path: bool = True,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "available": False,
+        "error": error,
+        "fast_path": fast_path,
+        "completeness": "season_only",
+        "refresh_status": refresh_status,
+        "availability": "unavailable",
+    }
+    logger.debug(
+        "xg unavailable: %s (reason=%s, status=%s)",
+        error,
+        reason,
+        refresh_status,
+    )
+    if reason:
+        payload["reason"] = reason
+    return payload
+
+
 def _pick_effective_league(
     requested_league: str, canonical_home: str, canonical_away: str
 ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
@@ -1623,19 +1756,21 @@ def _pick_effective_league(
 
     if requested_league in ['CL', 'EL']:
         league_name = 'Champions League' if requested_league == 'CL' else 'Europa League'
-        return None, {
-            'available': False,
-            'error': (
+        return None, _build_unavailable_response(
+            (
                 f'xG data not available for {league_name} '
                 '(FBref is domestic-only; supported domestic leagues: '
                 'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
-            )
-        }
+            ),
+            reason="Unsupported competition",
+            fast_path=False,
+        )
 
-    return None, {
-        'available': False,
-        'error': 'xG data not available for this competition (FBref is domestic-only).'
-    }
+    return None, _build_unavailable_response(
+        'xG data not available for this competition (FBref is domestic-only).',
+        reason="Unsupported competition",
+        fast_path=False,
+    )
 
 def get_match_xg_prediction(
     home_team,
@@ -1659,10 +1794,10 @@ def get_match_xg_prediction(
     resolved_season = season or get_xg_season()
     table = fetch_league_xg_stats(effective_league, season=season, cache_only=True)
     if not table:
-        return {
-            'available': False,
-            'error': 'xG data not available right now (warming). Try again in a moment.'
-        }
+        return _build_unavailable_response(
+            'xG data not available right now (warming). Try again in a moment.',
+            refresh_status="warming",
+        )
 
     home_stats = get_team_xg_stats(
         canonical_home, effective_league, season, league_stats=table
@@ -1674,15 +1809,19 @@ def get_match_xg_prediction(
     if not home_stats or not away_stats:
         if league_code in ['CL', 'EL']:
             league_name = 'Champions League' if league_code == 'CL' else 'Europa League'
-            return {
-                'available': False,
-                'error': (
+            return _build_unavailable_response(
+                (
                     f'xG data not available for {league_name} '
                     '(FBref is domestic-only; supported domestic leagues: '
                     'Premier League, La Liga, Bundesliga, Serie A, Ligue 1)'
-                )
-            }
-        return {'available': False, 'error': DOMESTIC_MAPPING_FALLBACK_MESSAGE}
+                ),
+                reason="Unsupported competition",
+                fast_path=False,
+            )
+        return _build_unavailable_response(
+            DOMESTIC_MAPPING_FALLBACK_MESSAGE,
+            reason="No per-match xG logs for this competition",
+        )
 
     home_matches = _get_cached_team_logs_in_memory(
         effective_league, resolved_season, canonical_home
@@ -1713,6 +1852,40 @@ def get_match_xg_prediction(
                 away_matches or [],
                 f"alias:{effective_league}",
             )
+
+        def _prime_precomputed(
+            team: str,
+            base_source: str,
+            alias_source: str,
+        ) -> None:
+            seen: set[tuple[str, str]] = set()
+            for league_variant, cache_label in (
+                (effective_league, base_source),
+                (league_code, alias_source),
+            ):
+                if not league_variant:
+                    continue
+                key = (league_variant.upper(), team)
+                if key in seen:
+                    continue
+                seen.add(key)
+                precomputed = _get_precomputed_rolling(league_variant, team, 5)
+                if precomputed is None:
+                    continue
+                request_memo.prime_rolling(
+                    team,
+                    league_variant,
+                    precomputed,
+                    cache_source=cache_label,
+                    window=5,
+                )
+
+        alias_source = f"alias:{effective_league}" if league_code != effective_league else home_source
+        _prime_precomputed(canonical_home, home_source, alias_source)
+        alias_source_away = (
+            f"alias:{effective_league}" if league_code != effective_league else away_source
+        )
+        _prime_precomputed(canonical_away, away_source, alias_source_away)
 
     payload = _build_prediction_payload(
         home_team,
@@ -1745,14 +1918,40 @@ def get_match_xg_prediction(
         payload["xg_cache_source_away"] = rolling_away.get("cache_source")
 
     # Non-blocking background warmers (debounced)
-    _refresh_logs_async(effective_league, canonical_home, resolved_season)
-    _refresh_logs_async(effective_league, canonical_away, resolved_season)
+    refresh_states = [
+        _refresh_logs_async(effective_league, canonical_home, resolved_season),
+        _refresh_logs_async(effective_league, canonical_away, resolved_season),
+    ]
 
-    if not home_matches or not away_matches:
-        payload.setdefault(
-            'note',
-            'Using cached season xG; rolling form is warming…'
-        )
+    logs_ready = bool(home_matches) and bool(away_matches)
+    fast_path = not logs_ready
+    payload["fast_path"] = fast_path
+    payload["completeness"] = "season+logs" if logs_ready else "season_only"
+    payload["availability"] = "available"
+    payload["available"] = True
+
+    refresh_status = "ready"
+    if fast_path:
+        normalized_states = {state or "warming" for state in refresh_states}
+        if "debounced" in normalized_states:
+            refresh_status = "debounced"
+        elif "warming" in normalized_states:
+            refresh_status = "warming"
+        else:
+            refresh_status = "warming"
+    payload["refresh_status"] = refresh_status
+
+    if fast_path:
+        if refresh_status == "debounced":
+            payload.setdefault(
+                "note",
+                "Using cached season xG; detailed logs are in cooldown.",
+            )
+        else:
+            payload.setdefault(
+                "note",
+                "Using cached season xG; rolling form is warming…",
+            )
 
     return payload
 

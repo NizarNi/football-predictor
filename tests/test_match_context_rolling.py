@@ -89,7 +89,7 @@ def mock_xg_dependencies(monkeypatch):
         return []
 
     monkeypatch.setattr(xg_data_fetcher, "_get_cached_team_logs_in_memory", fake_logs)
-    monkeypatch.setattr(xg_data_fetcher, "_refresh_logs_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr(xg_data_fetcher, "_refresh_logs_async", lambda *args, **kwargs: "ready")
     xg_data_fetcher._PARTIAL_WINDOW_WARNINGS.clear()
 
 
@@ -105,6 +105,10 @@ def test_match_context_rolling_arrays_and_logs(client):
 
     assert response.status_code == 200
     payload = response.get_json()
+    assert payload["completeness"] == "season+logs"
+    assert payload["refresh_status"] == "ready"
+    assert payload["availability"] == "available"
+    assert payload["fast_path"] is False
     xg_payload = payload["xg"]
 
     home_rolling = xg_payload["rolling_xg_home"]
@@ -121,3 +125,30 @@ def test_match_context_rolling_arrays_and_logs(client):
         ("PL", "Manchester United", 5),
         ("PL", "Brighton & Hove Albion", 5),
     }
+
+
+def test_match_context_fast_path_metadata(client, monkeypatch):
+    season = xg_data_fetcher.get_xg_season()
+    table = {
+        "Manchester United": _sample_team_stats(1.8, 1.1),
+        "Brighton & Hove Albion": _sample_team_stats(1.6, 1.2),
+    }
+    xg_data_fetcher._set_mem_cache('PL', season, table)
+
+    monkeypatch.setattr(xg_data_fetcher, "_get_cached_team_logs_in_memory", lambda *args, **kwargs: [])
+    monkeypatch.setattr(xg_data_fetcher, "_refresh_logs_async", lambda *args, **kwargs: "warming")
+
+    response = client.get(
+        "/match/sample/xg",
+        query_string={
+            "home_team": "Manchester United",
+            "away_team": "Brighton & Hove Albion",
+            "league": "PL",
+        },
+    )
+
+    payload = response.get_json()
+    assert payload["completeness"] == "season_only"
+    assert payload["refresh_status"] == "warming"
+    assert payload["availability"] == "available"
+    assert payload["fast_path"] is True
