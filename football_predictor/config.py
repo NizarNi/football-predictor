@@ -70,6 +70,15 @@ API_TIMEOUT_CONTEXT = int(os.getenv("API_TIMEOUT_CONTEXT", 8))
 API_MAX_RETRIES = int(os.getenv("API_MAX_RETRIES", 3))
 """Maximum retry attempts for outbound API calls."""
 
+UNDERSTAT_MAX_RETRIES = int(os.getenv("UNDERSTAT_MAX_RETRIES", 3))
+"""Maximum retry attempts for Understat HTTP fetches."""
+
+UNDERSTAT_BASE_DELAY = float(os.getenv("UNDERSTAT_BASE_DELAY", 1.0))
+"""Base delay (seconds) before retrying Understat requests."""
+
+UNDERSTAT_JITTER_FACTOR = float(os.getenv("UNDERSTAT_JITTER_FACTOR", 0.3))
+"""Maximum jitter factor (percentage) for Understat retry delays."""
+
 
 def setup_logger(name: str) -> logging.Logger:
     """Create or retrieve a configured logger for the application."""
