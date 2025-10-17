@@ -5,7 +5,7 @@ Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 from contextvars import ContextVar
 from datetime import datetime, timedelta
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, Optional, Tuple, List, TYPE_CHECKING
+from typing import Any, Dict, Optional, Tuple, List
 from dataclasses import dataclass
 
 import json
@@ -29,9 +29,6 @@ from .constants import (
 )
 from .name_resolver import resolve_team_name, get_all_aliases_for
 from .logging_utils import RateLimitedLogger, warn_once
-
-if TYPE_CHECKING:  # pragma: no cover
-    from .request_memo import RequestMemo
 
 # ----------------------------------------------------------------------
 # Paths, TTLs, logger
@@ -1026,68 +1023,32 @@ def _is_league_log(entry: Dict[str, Any], league_only: bool) -> bool:
     return True
 
 
-# NEW unified (T35f/T35g) — returns arrays for graph + metadata
 def compute_rolling_xg(
-    team_logs: Optional[List[Dict[str, Any]]],
+    team_logs: List[Dict[str, Any]],
     N: int = 5,
     league_only: bool = True,
-    *,
-    league: Optional[str] = None,
-    team: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Compute rolling xG arrays for last N **completed league** matches (newest first).
+) -> Tuple[float, float, int, str]:
+    """Aggregate rolling xG totals from match logs."""
 
-    Returns:
-        {
-          "for": [float, ...],
-          "against": [float, ...],
-          "dates": [str, ...],
-          "window_len": int,
-          "source_label": "league_only" | "all_matches",
-        }
-    """
-    logs = list(team_logs or [])
+    if not team_logs:
+        return 0.0, 0.0, 0, "match_logs"
 
-    # keep completed matches only
-    filtered: List[Dict[str, Any]] = []
-    for entry in logs:
+    completed: List[Dict[str, Any]] = []
+    for entry in team_logs:
         if not isinstance(entry, dict):
             continue
-        if entry.get("result") not in {"W", "D", "L"}:
+        if entry.get('result') not in {'W', 'D', 'L'}:
             continue
         if not _is_league_log(entry, league_only):
             continue
-        filtered.append(entry)
+        completed.append(entry)
 
-    # newest first by date field
-    filtered.sort(key=lambda m: m.get("date") or "", reverse=True)
-
-    window_logs = filtered[: N if N and N > 0 else 5]
-
-    def _fmt_date(v: Any) -> str:
-        if v is None:
-            return ""
-        if isinstance(v, str):
-            return v
-        if hasattr(v, "isoformat"):
-            try:
-                return v.isoformat()
-            except Exception:
-                return str(v)
-        return str(v)
-
-    series_for = [round(float(m.get("xg_for", 0.0)), 2) for m in window_logs]
-    series_against = [round(float(m.get("xg_against", 0.0)), 2) for m in window_logs]
-    series_dates = [_fmt_date(m.get("date")) for m in window_logs]
-
-    return {
-        "for": series_for,
-        "against": series_against,
-        "dates": series_dates,
-        "window_len": len(window_logs),
-        "source_label": "league_only" if league_only else "all_matches",
-    }
+    completed.sort(key=lambda item: item.get('date') or '', reverse=True)
+    window = completed[:N]
+    xg_for_sum = sum(float(entry.get('xg_for') or 0.0) for entry in window)
+    xg_against_sum = sum(float(entry.get('xg_against') or 0.0) for entry in window)
+    window_len = len(window)
+    return xg_for_sum, xg_against_sum, window_len, "match_logs"
 
 
 def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=None):
@@ -1361,11 +1322,6 @@ def get_team_recent_xg_snapshot(
     season: Optional[int] = None,
     window: int = 5,
 ) -> Dict[str, Any]:
-    """
-    Internal helper used by server context:
-      - builds a compact snapshot (sums + window_len + source)
-      - *does not* expose arrays; arrays are provided via RequestMemo paths
-    """
     memo_id = get_current_request_memo_id()
     memo_root = _get_request_memo_bucket(memo_id)
     rolling_bucket = _get_memo_slot(memo_root, "rolling")
@@ -1382,25 +1338,16 @@ def get_team_recent_xg_snapshot(
         resolved_season,
         request_memo_id=memo_id,
     )
-
-    rolling = compute_rolling_xg(
+    xg_for_sum, xg_against_sum, window_len, source_label = compute_rolling_xg(
         list(logs or []),
         N=window,
         league_only=True,
-        league=league_code,
-        team=canonical_team,
     )
-
-    xg_for_sum = float(sum(rolling.get("for", [])))
-    xg_against_sum = float(sum(rolling.get("against", [])))
-    window_len = int(rolling.get("window_len") or 0)
-    source_label = rolling.get("source_label") or "match_logs"
 
     slug = f"{league_code}:{canonical_team.lower()}"
     if source_label == "match_logs" and 0 < window_len < window:
         warn_once(slug, f"rolling_xg partial window {window_len}/{window}", logger=logger)
 
-    # season fallback when logs are empty
     if window_len == 0:
         table = fetch_league_xg_stats(league_code, season, cache_only=True) or {}
         stats = get_team_xg_stats(
@@ -1444,7 +1391,6 @@ def get_team_recent_xg_snapshot(
     )
 
     return snapshot
-
 
 def calculate_rolling_averages(matches, window=5):
     """
@@ -1637,13 +1583,7 @@ def _pick_effective_league(
         'error': 'xG data not available for this competition (FBref is domestic-only).'
     }
 
-def get_match_xg_prediction(
-    home_team,
-    away_team,
-    league_code,
-    season=None,
-    request_memo: "RequestMemo | None" = None,
-):
+def get_match_xg_prediction(home_team, away_team, league_code, season=None):
     """
     Generate xG-based prediction for a match
     """
@@ -1691,29 +1631,6 @@ def get_match_xg_prediction(
         effective_league, resolved_season, canonical_away
     )
 
-    if request_memo is not None:
-        home_source = "in_memory_cache" if home_matches else "missing"
-        away_source = "in_memory_cache" if away_matches else "missing"
-        request_memo.remember_team_logs(
-            effective_league, canonical_home, home_matches or [], home_source
-        )
-        request_memo.remember_team_logs(
-            effective_league, canonical_away, away_matches or [], away_source
-        )
-        if league_code != effective_league:
-            request_memo.remember_team_logs(
-                league_code,
-                canonical_home,
-                home_matches or [],
-                f"alias:{effective_league}",
-            )
-            request_memo.remember_team_logs(
-                league_code,
-                canonical_away,
-                away_matches or [],
-                f"alias:{effective_league}",
-            )
-
     payload = _build_prediction_payload(
         home_team,
         away_team,
@@ -1722,27 +1639,6 @@ def get_match_xg_prediction(
         home_matches or [],
         away_matches or [],
     )
-
-    if request_memo is not None:
-        rolling_home = request_memo.get_or_compute_rolling(canonical_home, effective_league)
-        rolling_away = request_memo.get_or_compute_rolling(canonical_away, effective_league)
-
-        payload["rolling_xg_home"] = {
-            "for": rolling_home.get("for", []),
-            "against": rolling_home.get("against", []),
-            "dates": rolling_home.get("dates", []),
-            "window_len": rolling_home.get("window_len", 0),
-            "source_label": rolling_home.get("source_label"),
-        }
-        payload["rolling_xg_away"] = {
-            "for": rolling_away.get("for", []),
-            "against": rolling_away.get("against", []),
-            "dates": rolling_away.get("dates", []),
-            "window_len": rolling_away.get("window_len", 0),
-            "source_label": rolling_away.get("source_label"),
-        }
-        payload["xg_cache_source_home"] = rolling_home.get("cache_source")
-        payload["xg_cache_source_away"] = rolling_away.get("cache_source")
 
     # Non-blocking background warmers (debounced)
     _refresh_logs_async(effective_league, canonical_home, resolved_season)

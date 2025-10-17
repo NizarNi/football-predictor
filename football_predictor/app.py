@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from time import monotonic
 from typing import Any, Optional
-from types import SimpleNamespace
 
 from .config import setup_logger, API_TIMEOUT_CONTEXT
 
@@ -38,7 +37,6 @@ from .validators import (
     validate_next_n_days,
     validate_team_optional,
 )
-from .request_memo import RequestMemo
 
 PKG_DIR = os.path.dirname(__file__)
 STATIC_DIR = os.path.join(PKG_DIR, "static")
@@ -105,8 +103,6 @@ def _prime_request_memo() -> None:
     g._xg_request_memo_id = request_id
     g._server_context = {}
     set_request_memo_id(request_id)
-    g.ctx = SimpleNamespace()
-    g.ctx.memo = RequestMemo()
 
 
 @app.teardown_request
@@ -116,8 +112,6 @@ def _clear_request_memo(_exc: Optional[BaseException]) -> None:
     finally:
         if hasattr(g, "pop"):
             g.pop("_xg_request_memo_id", None)
-            # Keep both: ctx (T35f memo container) and _server_context (existing internal context)
-            g.pop("ctx", None)
             g.pop("_server_context", None)
 
 # ---- T29c: small Elo reuse caches (in-process) ----
@@ -276,68 +270,6 @@ def build_team_logo_urls(home_team: Optional[str], away_team: Optional[str]) -> 
 
 # Global variables
 # Note: Matches fetched from The Odds API, standings from Understat
-
-
-def _get_request_memo() -> Optional[RequestMemo]:
-    ctx = getattr(g, "ctx", None)
-    if ctx is None:
-        return None
-    return getattr(ctx, "memo", None)
-
-
-def _ensure_rolling_fields(
-    memo: Optional[RequestMemo],
-    league: Optional[str],
-    home_team: Optional[str],
-    away_team: Optional[str],
-    target: dict,
-) -> None:
-    if memo is None or not league or not home_team or not away_team:
-        return
-
-    home = memo.get_or_compute_rolling(home_team, league)
-    away = memo.get_or_compute_rolling(away_team, league)
-
-    target.setdefault(
-        "rolling_xg_home",
-        {
-            "for": [],
-            "against": [],
-            "dates": [],
-            "window_len": 0,
-            "source_label": "league_only",
-        },
-    )
-    target.setdefault(
-        "rolling_xg_away",
-        {
-            "for": [],
-            "against": [],
-            "dates": [],
-            "window_len": 0,
-            "source_label": "league_only",
-        },
-    )
-
-    if home:
-        target["rolling_xg_home"] = {
-            "for": home.get("for", []),
-            "against": home.get("against", []),
-            "dates": home.get("dates", []),
-            "window_len": home.get("window_len", 0),
-            "source_label": home.get("source_label"),
-        }
-        target["xg_cache_source_home"] = home.get("cache_source")
-
-    if away:
-        target["rolling_xg_away"] = {
-            "for": away.get("for", []),
-            "against": away.get("against", []),
-            "dates": away.get("dates", []),
-            "window_len": away.get("window_len", 0),
-            "source_label": away.get("source_label"),
-        }
-        target["xg_cache_source_away"] = away.get("cache_source")
 
 
 def _assemble_match_context_core(
@@ -995,6 +927,7 @@ def get_match_totals(event_id):
             from .odds_calculator import calculate_totals_from_odds
 
             odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="totals")
+
             if not odds_data:
                 return make_error(
                     error="No totals odds found for this match",
@@ -1002,26 +935,18 @@ def get_match_totals(event_id):
                     status_code=404
                 )
 
-            totals_predictions = calculate_totals_from_odds(odds_data)
-
-            # Optional rolling xG context (internal-only fields)
             league_code = request.args.get("league")
             home_team = request.args.get("home_team")
             away_team = request.args.get("away_team")
             if league_code and home_team and away_team:
                 _apply_recent_xg_context(home_team, away_team, league_code)
 
-            payload = {
+            totals_predictions = calculate_totals_from_odds(odds_data)
+
+            return make_ok({
                 "totals": totals_predictions,
                 "source": "The Odds API"
-            }
-
-            # Attach rolling xG arrays via RequestMemo (internal fields only)
-            memo = _get_request_memo()
-            if league_code and home_team and away_team:
-                _ensure_rolling_fields(memo, league_code, home_team, away_team, payload)
-
-            return make_ok(payload)
+            })
 
     except Exception as e:
         logger.exception("Error fetching totals for %s", event_id)
@@ -1053,6 +978,7 @@ def get_match_btts(event_id):
             from .odds_calculator import calculate_btts_from_odds, calculate_btts_probability_from_xg
 
             odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="btts")
+
             if not odds_data:
                 return make_error(
                     error="No BTTS odds found for this match",
@@ -1060,15 +986,12 @@ def get_match_btts(event_id):
                     status_code=404
                 )
 
-            # Market consensus
             btts_market = calculate_btts_from_odds(odds_data)
 
-            # xG-based signal (offense from FBref path, defense from Understat standings)
             btts_xg = None
             home_snapshot: Optional[dict[str, Any]] = None
             away_snapshot: Optional[dict[str, Any]] = None
 
-            # Keep server-context averages warm (internal only)
             if home_team and away_team and league_code:
                 home_snapshot, away_snapshot = _apply_recent_xg_context(home_team, away_team, league_code)
                 if home_snapshot is None:
@@ -1079,11 +1002,11 @@ def get_match_btts(event_id):
             def _avg(snapshot: Optional[dict[str, Any]], field: str) -> Optional[float]:
                 if not snapshot:
                     return None
-                wl = snapshot.get("window_len") or 0
-                if wl <= 0:
+                window_len = snapshot.get("window_len") or 0
+                if window_len <= 0:
                     return None
                 try:
-                    return float(snapshot.get(field, 0.0)) / wl
+                    return float(snapshot.get(field, 0.0)) / window_len
                 except (TypeError, ZeroDivisionError):
                     return None
 
@@ -1092,63 +1015,80 @@ def get_match_btts(event_id):
             home_xga_per_game = _avg(home_snapshot, "xg_against_sum")
             away_xga_per_game = _avg(away_snapshot, "xg_against_sum")
 
-            # Enrich with FBref/Understat if league/team provided
-            rolling_payload: dict[str, Any] = {}
             if home_team and away_team and league_code:
                 try:
-                    memo = _get_request_memo()
                     resolved_home = resolve_team_name(home_team, provider="fbref")
                     resolved_away = resolve_team_name(away_team, provider="fbref")
 
-                    # FBref offense (via our xG prediction path)
-                    xg_prediction = get_match_xg_prediction(
-                        resolved_home, resolved_away, league_code, request_memo=memo
-                    )
+                    xg_prediction = get_match_xg_prediction(resolved_home, resolved_away, league_code)
 
-                    # Attach rolling arrays to response (internal fields)
-                    _ensure_rolling_fields(memo, league_code, resolved_home, resolved_away, rolling_payload)
-
-                    # Use FBref offense per-game if available
                     if xg_prediction.get('available') and xg_prediction.get('xg'):
                         home_xg_per_game = home_xg_per_game or xg_prediction['xg'].get('home_stats', {}).get('xg_for_per_game')
                         away_xg_per_game = away_xg_per_game or xg_prediction['xg'].get('away_stats', {}).get('xg_for_per_game')
 
-                    # Understat true defensive xGA per game
                     from .understat_client import fetch_understat_standings
+
                     current_season = get_current_season()
                     standings = fetch_understat_standings(league_code, current_season)
+
                     if standings:
                         home_lookup = resolved_home or home_team
                         away_lookup = resolved_away or away_team
-                        home_st = next((t for t in standings if fuzzy_team_match(t['name'], home_lookup)), None)
-                        away_st = next((t for t in standings if fuzzy_team_match(t['name'], away_lookup)), None)
+                        home_standings = next((team for team in standings if fuzzy_team_match(team['name'], home_lookup)), None)
+                        away_standings = next((team for team in standings if fuzzy_team_match(team['name'], away_lookup)), None)
 
-                        if home_st and home_st.get('xGA') is not None and home_st.get('played', 0) > 0:
-                            cand = home_st['xGA'] / home_st['played']
+                        if home_standings and home_standings.get('xGA') is not None and home_standings.get('played', 0) > 0:
+                            candidate = home_standings['xGA'] / home_standings['played']
                             if home_xga_per_game is None:
-                                home_xga_per_game = cand
-                        if away_st and away_st.get('xGA') is not None and away_st.get('played', 0) > 0:
-                            cand = away_st['xGA'] / away_st['played']
+                                home_xga_per_game = candidate
+
+                        if away_standings and away_standings.get('xGA') is not None and away_standings.get('played', 0) > 0:
+                            candidate = away_standings['xGA'] / away_standings['played']
                             if away_xga_per_game is None:
-                                away_xga_per_game = cand
+                                away_xga_per_game = candidate
 
-                    if all(v is not None for v in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]):
+                    if all(
+                        value is not None
+                        for value in [
+                            home_xg_per_game,
+                            away_xg_per_game,
+                            home_xga_per_game,
+                            away_xga_per_game,
+                        ]
+                    ):
                         btts_xg = calculate_btts_probability_from_xg(
-                            home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game
+                            home_xg_per_game,
+                            away_xg_per_game,
+                            home_xga_per_game,
+                            away_xga_per_game,
                         )
-
                 except Exception as e:
                     logger.warning("⚠️  Could not calculate xG-based BTTS: %s", e)
                     btts_xg = None
 
-            # Keep the averages in the internal server context (already done via _apply_recent_xg_context)
+            if home_snapshot and away_snapshot:
+                update_server_context(
+                    {
+                        "team_recent_xg_for": _avg(home_snapshot, "xg_for_sum"),
+                        "team_recent_xg_against": _avg(home_snapshot, "xg_against_sum"),
+                        "opp_recent_xg_for": _avg(away_snapshot, "xg_for_sum"),
+                        "opp_recent_xg_against": _avg(away_snapshot, "xg_against_sum"),
+                        "recent_xg_window_len": min(
+                            home_snapshot.get("window_len", 0),
+                            away_snapshot.get("window_len", 0),
+                        ) or max(
+                            home_snapshot.get("window_len", 0),
+                            away_snapshot.get("window_len", 0),
+                        ),
+                    }
+                )
+
             return make_ok({
                 "btts": {
                     "market": btts_market,
                     "xg_model": btts_xg
                 },
-                "source": "The Odds API + xG Analysis",
-                **rolling_payload,
+                "source": "The Odds API + xG Analysis"
             })
 
     except Exception as e:
@@ -1185,11 +1125,7 @@ def get_match_xg(event_id):
 
             start_time = time.monotonic()
 
-            # Use request memo and attach rolling arrays (internal fields)
-            memo = _get_request_memo()
-            xg_prediction = get_match_xg_prediction(
-                home_team, away_team, league_code, request_memo=memo
-            )
+            xg_prediction = get_match_xg_prediction(home_team, away_team, league_code)
 
             if not xg_prediction.get('available'):
                 elapsed_ms = (time.monotonic() - start_time) * 1000
@@ -1199,14 +1135,11 @@ def get_match_xg(event_id):
                     extra={"event_id": event_id},
                 )
                 _apply_recent_xg_context(home_team, away_team, league_code)
-                # Even on partial, try to include rolling fields if memo had logs
-                payload = {
+                return make_ok({
                     "xg": None,
                     "error": xg_prediction.get('error', 'xG data not available'),
                     "source": "FBref via soccerdata"
-                }
-                _ensure_rolling_fields(memo, league_code, home_team, away_team, payload)
-                return make_ok(payload)
+                })
 
             elapsed_ms = (time.monotonic() - start_time) * 1000
             logger.info(
@@ -1215,13 +1148,10 @@ def get_match_xg(event_id):
                 extra={"event_id": event_id},
             )
             _apply_recent_xg_context(home_team, away_team, league_code)
-
-            payload = {
+            return make_ok({
                 "xg": xg_prediction,
                 "source": "FBref via soccerdata"
-            }
-            _ensure_rolling_fields(memo, league_code, home_team, away_team, payload)
-            return make_ok(payload)
+            })
 
     except Exception as e:
         logger.exception("Error fetching xG for %s", event_id)
@@ -1478,3 +1408,4 @@ def process_data():
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
+
