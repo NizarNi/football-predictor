@@ -25,9 +25,27 @@ def compute_rolling_xg(
     **kwargs: Any,
 ):
     league = kwargs.get("league")
-    team = kwargs.get("team")
+    season = kwargs.get("season")
+    team_identifier = kwargs.get("team_identifier") or kwargs.get("team")
+    season_fallback = kwargs.get("season_fallback")
+    if season_fallback:
+        fallback_key = (
+            season_fallback.get("xg_for_per_game"),
+            season_fallback.get("xg_against_per_game"),
+        )
+    else:
+        fallback_key = None
+
     request_id, bucket = _get_request_bucket()
-    key = (_KEY_PREFIX, id(team_logs), int(N), bool(league_only), league, team)
+    key = (
+        _KEY_PREFIX,
+        team_identifier,
+        league,
+        season,
+        int(N),
+        bool(league_only),
+        fallback_key,
+    )
 
     if bucket is not None:
         cached = bucket.get(key)
@@ -39,7 +57,9 @@ def compute_rolling_xg(
         N,
         league_only=league_only,
         league=league,
-        team=team,
+        season=season,
+        team_identifier=team_identifier,
+        season_fallback=season_fallback,
     )
 
     if request_id is not None:

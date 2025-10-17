@@ -10,7 +10,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, wait
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from time import monotonic
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from .config import setup_logger, API_TIMEOUT_CONTEXT
 
@@ -26,7 +26,6 @@ from .odds_calculator import calculate_predictions_from_odds
 from .xg_data_fetcher import (
     clear_request_memo_id,
     get_match_xg_prediction,
-    get_team_recent_xg_snapshot,
     set_request_memo_id,
 )
 from .utils import get_current_season, fuzzy_team_match
@@ -958,17 +957,76 @@ def get_match_btts(event_id):
                 xg_prediction = get_match_xg_prediction(resolved_home, resolved_away, league_code)
 
                 current_season = get_current_season()
-                rolling_home = get_team_recent_xg_snapshot(
+                from .xg_data_fetcher import (
+                    compute_rolling_xg,
+                    fetch_league_xg_stats,
+                    fetch_team_match_logs,
+                    get_season_per_game_snapshot,
+                )
+
+                league_stats = fetch_league_xg_stats(
+                    league_code,
+                    current_season,
+                    cache_only=True,
+                )
+
+                window = 4
+
+                home_logs = fetch_team_match_logs(
                     resolved_home,
                     league_code,
                     current_season,
-                    window=4,
                 )
-                rolling_away = get_team_recent_xg_snapshot(
+                away_logs = fetch_team_match_logs(
                     resolved_away,
                     league_code,
                     current_season,
-                    window=4,
+                )
+
+                def _season_fallback_for(
+                    team_name: str, logs: Optional[List[Dict[str, Any]]]
+                ) -> Optional[Dict[str, float]]:
+                    league_matches = [
+                        log for log in logs or [] if isinstance(log, dict) and bool(log.get("gameweek"))
+                    ]
+                    if len(league_matches) >= window:
+                        return None
+                    return get_season_per_game_snapshot(
+                        team_name,
+                        league_code,
+                        current_season,
+                        league_stats=league_stats,
+                    )
+
+                home_fallback = _season_fallback_for(resolved_home, home_logs)
+                away_fallback = _season_fallback_for(resolved_away, away_logs)
+
+                rolling_home = compute_rolling_xg(
+                    home_logs or [],
+                    N=window,
+                    league_only=True,
+                    season_fallback=home_fallback,
+                    team_identifier=resolved_home,
+                    league=league_code,
+                    season=current_season,
+                )
+                rolling_away = compute_rolling_xg(
+                    away_logs or [],
+                    N=window,
+                    league_only=True,
+                    season_fallback=away_fallback,
+                    team_identifier=resolved_away,
+                    league=league_code,
+                    season=current_season,
+                )
+
+                logger.info(
+                    "btts: rolling_xg league=%s wh=%d wa=%d sh=%s sa=%s",
+                    league_code,
+                    rolling_home.get("window_len", 0),
+                    rolling_away.get("window_len", 0),
+                    rolling_home.get("source"),
+                    rolling_away.get("source"),
                 )
 
                 # Get defensive xGA from Understat context (TRUE defensive metric, not goalkeeper PSxGA)
@@ -1069,6 +1127,88 @@ def get_match_xg(event_id):
             })
 
         elapsed_ms = (time.monotonic() - start_time) * 1000
+        from .xg_data_fetcher import (
+            compute_rolling_xg,
+            fetch_league_xg_stats,
+            fetch_team_match_logs,
+            get_season_per_game_snapshot,
+            serialize_filtered_logs,
+        )
+
+        meta = xg_prediction.get("meta") or {}
+        effective_league = meta.get("effective_league") or league_code
+        canonical_home = meta.get("canonical_home") or resolve_team_name(
+            home_team, provider="fbref"
+        )
+        canonical_away = meta.get("canonical_away") or resolve_team_name(
+            away_team, provider="fbref"
+        )
+        resolved_season = meta.get("season") or get_current_season()
+
+        league_stats = fetch_league_xg_stats(
+            effective_league,
+            resolved_season,
+            cache_only=True,
+        )
+
+        home_logs = fetch_team_match_logs(
+            canonical_home,
+            effective_league,
+            resolved_season,
+        )
+        away_logs = fetch_team_match_logs(
+            canonical_away,
+            effective_league,
+            resolved_season,
+        )
+
+        home_logs_filtered = serialize_filtered_logs(home_logs, league_only=True)
+        away_logs_filtered = serialize_filtered_logs(away_logs, league_only=True)
+
+        window = 4
+        home_fallback = None
+        away_fallback = None
+        if len(home_logs_filtered) < window:
+            home_fallback = get_season_per_game_snapshot(
+                canonical_home,
+                effective_league,
+                resolved_season,
+                league_stats=league_stats,
+            )
+        if len(away_logs_filtered) < window:
+            away_fallback = get_season_per_game_snapshot(
+                canonical_away,
+                effective_league,
+                resolved_season,
+                league_stats=league_stats,
+            )
+
+        rolling_home = compute_rolling_xg(
+            home_logs or [],
+            N=window,
+            league_only=True,
+            season_fallback=home_fallback,
+            team_identifier=canonical_home,
+            league=effective_league,
+            season=resolved_season,
+        )
+        rolling_away = compute_rolling_xg(
+            away_logs or [],
+            N=window,
+            league_only=True,
+            season_fallback=away_fallback,
+            team_identifier=canonical_away,
+            league=effective_league,
+            season=resolved_season,
+        )
+
+        logger.info(
+            "context_xg: arrays home=%d away=%d window_h=%d window_a=%d",
+            len(home_logs_filtered),
+            len(away_logs_filtered),
+            rolling_home.get("window_len", 0),
+            rolling_away.get("window_len", 0),
+        )
         logger.info(
             "context_xg ready in %.0f ms",
             elapsed_ms,
@@ -1076,7 +1216,11 @@ def get_match_xg(event_id):
         )
         return make_ok({
             "xg": xg_prediction,
-            "source": "FBref via soccerdata"
+            "source": "FBref via soccerdata",
+            "home_logs_filtered": home_logs_filtered,
+            "away_logs_filtered": away_logs_filtered,
+            "rolling_xg_home": rolling_home,
+            "rolling_xg_away": rolling_away,
         })
 
     except Exception as e:

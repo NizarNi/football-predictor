@@ -199,7 +199,13 @@ _MATCH_LOGS_CACHE_LOCK = threading.Lock()
 # Rolling xG utilities (request partial-window warnings)
 # ----------------------------------------------------------------------
 
-_PARTIAL_WINDOW_WARNINGS: set[tuple[str, str, int]] = set()
+_PARTIAL_WINDOW_WARNINGS: set[tuple[str, str, Optional[int]]] = set()
+
+_ROLLING_XG_MEMO: Dict[
+    Tuple[Optional[str], Optional[str], Optional[int], int, bool],
+    Tuple[float, Dict[str, Any]],
+] = {}
+_ROLLING_XG_MEMO_LOCK = threading.Lock()
 
 _MATCH_LOGS_FETCH_LOCKS: Dict[Tuple[str, str, int], threading.Lock] = {}
 _MATCH_LOGS_FETCH_LOCKS_LOCK = threading.Lock()
@@ -1286,129 +1292,49 @@ def _coerce_float(value: Any) -> float:
         return 0.0
 
 
-def compute_rolling_xg(
+def _prepare_league_logs(
     team_logs: Optional[List[Dict[str, Any]]],
-    N: int,
     league_only: bool = True,
-    *,
-    league: Optional[str] = None,
-    team: Optional[str] = None,
-) -> Tuple[float, float, int, str]:
-    if not team_logs or N <= 0:
-        return 0.0, 0.0, 0, "rolling"
-
-    logs = list(team_logs)
+) -> List[Dict[str, Any]]:
+    logs = list(team_logs or [])
     if league_only:
         logs = [log for log in logs if bool(log.get("gameweek"))]
-
-    if not logs:
-        return 0.0, 0.0, 0, "rolling"
 
     logs.sort(
         key=lambda log: _coerce_log_date(log.get("date")) or datetime.min,
         reverse=True,
     )
-
-    window = max(N, 0)
-    recent = logs[:window] if window else []
-    window_len = len(recent)
-
-    xg_for_sum = float(sum(_coerce_float(log.get("xg_for")) for log in recent))
-    xg_against_sum = float(
-        sum(_coerce_float(log.get("xg_against")) for log in recent)
-    )
-
-    if 0 < window_len < window:
-        league_key = league or ""
-        team_key = team or ""
-        warning_key = (league_key, team_key, window)
-        if warning_key not in _PARTIAL_WINDOW_WARNINGS:
-            _PARTIAL_WINDOW_WARNINGS.add(warning_key)
-            logger.warning(
-                "⚠️ partial rolling window for %s in %s: expected %s, got %s",
-                team,
-                league,
-                window,
-                window_len,
-            )
-
-    return xg_for_sum, xg_against_sum, window_len, "rolling"
+    return logs
 
 
-def get_team_recent_xg_snapshot(
-    team: str,
-    league: str,
-    season: int,
-    window: int = 4,
-) -> Dict[str, Any]:
-    window = max(window, 0)
+def _per_match(stats: Dict[str, Any], candidates: List[str], total_key: str) -> float:
+    for key in candidates:
+        value = stats.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
 
-    logs = fetch_team_match_logs(team, league, season)
+    total = stats.get(total_key)
+    matches = stats.get("matches_played") or stats.get("matches")
+    if matches and total is not None:
+        try:
+            matches_f = float(matches)
+            total_f = float(total)
+            if matches_f:
+                return total_f / matches_f
+        except (TypeError, ValueError, ZeroDivisionError):
+            return 0.0
+    return 0.0
 
-    compute_fn = compute_rolling_xg
-    try:
-        from . import request_memo as _request_memo  # type: ignore
 
-        memo_compute = getattr(_request_memo, "compute_rolling_xg", None)
-        if callable(memo_compute):
-            compute_fn = memo_compute  # type: ignore[assignment]
-    except Exception:
-        pass
-
-    xg_for_sum, xg_against_sum, window_len, source = compute_fn(
-        logs or [],
-        window,
-        league_only=True,
-        league=league,
-        team=team,
-    )
-
-    if window_len > 0:
-        return {
-            "xg_for_sum": float(xg_for_sum),
-            "xg_against_sum": float(xg_against_sum),
-            "window_len": window_len,
-            "source": source,
-        }
-
-    table = fetch_league_xg_stats(league, season, cache_only=True)
-    if not table:
-        return {
-            "xg_for_sum": 0.0,
-            "xg_against_sum": 0.0,
-            "window_len": 0,
-            "source": "rolling",
-        }
-
-    team_row = get_team_xg_stats(team, league, season, league_stats=table)
+def _season_per_game_fallback(
+    team_row: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, float]]:
     if not team_row:
-        return {
-            "xg_for_sum": 0.0,
-            "xg_against_sum": 0.0,
-            "window_len": 0,
-            "source": "rolling",
-        }
-
-    def _per_match(stats: Dict[str, Any], candidates: List[str], total_key: str) -> float:
-        for key in candidates:
-            value = stats.get(key)
-            if value is None:
-                continue
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                continue
-        total = stats.get(total_key)
-        matches = stats.get("matches_played") or stats.get("matches")
-        if matches and total is not None:
-            try:
-                matches_f = float(matches)
-                total_f = float(total)
-                if matches_f:
-                    return total_f / matches_f
-            except (TypeError, ValueError, ZeroDivisionError):
-                return 0.0
-        return 0.0
+        return None
 
     per_match_for = _per_match(
         team_row,
@@ -1428,11 +1354,190 @@ def get_team_recent_xg_snapshot(
         )
 
     return {
-        "xg_for_sum": float(per_match_for * window),
-        "xg_against_sum": float(per_match_against * window),
-        "window_len": window,
-        "source": "season",
+        "xg_for_per_game": float(per_match_for),
+        "xg_against_per_game": float(per_match_against),
     }
+
+
+def get_season_per_game_snapshot(
+    team: str,
+    league: str,
+    season: int,
+    *,
+    league_stats: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, float]]:
+    table = league_stats if league_stats is not None else fetch_league_xg_stats(
+        league, season, cache_only=True
+    )
+    if not table:
+        return None
+
+    team_row = get_team_xg_stats(team, league, season, league_stats=table)
+    return _season_per_game_fallback(team_row)
+
+
+def serialize_filtered_logs(
+    team_logs: Optional[List[Dict[str, Any]]],
+    *,
+    league_only: bool = True,
+) -> List[Dict[str, Any]]:
+    filtered = _prepare_league_logs(team_logs, league_only=league_only)
+    serialized: List[Dict[str, Any]] = []
+    for log in filtered:
+        entry = dict(log)
+        dt = _coerce_log_date(entry.get("date"))
+        if dt:
+            entry["date"] = dt.isoformat()
+        elif entry.get("date") is not None:
+            entry["date"] = str(entry["date"])
+        serialized.append(entry)
+    return serialized
+
+
+def _rolling_xg_memo_prune_locked(now: Optional[float] = None) -> None:
+    if now is None:
+        now = time.time()
+    expired = [
+        key for key, (expires_at, _value) in _ROLLING_XG_MEMO.items() if expires_at <= now
+    ]
+    for key in expired:
+        _ROLLING_XG_MEMO.pop(key, None)
+
+
+def compute_rolling_xg(
+    team_logs: Optional[List[Dict[str, Any]]],
+    N: int = 4,
+    league_only: bool = True,
+    *,
+    season_fallback: Optional[Dict[str, Any]] = None,
+    team_identifier: Optional[str] = None,
+    league: Optional[str] = None,
+    season: Optional[int] = None,
+) -> Dict[str, Any]:
+    window = max(int(N or 0), 0)
+    memo_key = (
+        team_identifier,
+        league,
+        season,
+        window,
+        bool(league_only),
+    )
+    now = time.time()
+
+    with _ROLLING_XG_MEMO_LOCK:
+        memo_entry = _ROLLING_XG_MEMO.get(memo_key)
+        if memo_entry:
+            expires_at, cached = memo_entry
+            if expires_at > now:
+                return cached
+            _ROLLING_XG_MEMO.pop(memo_key, None)
+
+    if window <= 0:
+        payload = {
+            "xg_for_sum": 0.0,
+            "xg_against_sum": 0.0,
+            "window_len": 0,
+            "source": "rolling",
+        }
+    else:
+        logs = _prepare_league_logs(team_logs, league_only=league_only)
+        recent = logs[:window]
+        window_len = len(recent)
+
+        xg_for_sum = float(sum(_coerce_float(log.get("xg_for")) for log in recent))
+        xg_against_sum = float(
+            sum(_coerce_float(log.get("xg_against")) for log in recent)
+        )
+
+        if 0 < window_len < window:
+            team_key = team_identifier or ""
+            league_key = league or ""
+            warning_key = (team_key, league_key, season)
+            if warning_key not in _PARTIAL_WINDOW_WARNINGS:
+                _PARTIAL_WINDOW_WARNINGS.add(warning_key)
+                logger.warning(
+                    "partial rolling window for %s/%s: expected %d, got %d",
+                    team_identifier,
+                    league,
+                    window,
+                    window_len,
+                )
+
+        if window_len > 0:
+            payload = {
+                "xg_for_sum": xg_for_sum,
+                "xg_against_sum": xg_against_sum,
+                "window_len": window_len,
+                "source": "rolling",
+            }
+        elif season_fallback:
+            per_game_for = _coerce_float(season_fallback.get("xg_for_per_game"))
+            per_game_against = _coerce_float(
+                season_fallback.get("xg_against_per_game")
+            )
+            payload = {
+                "xg_for_sum": float(per_game_for * window),
+                "xg_against_sum": float(per_game_against * window),
+                "window_len": 0,
+                "source": "season",
+            }
+        else:
+            payload = {
+                "xg_for_sum": 0.0,
+                "xg_against_sum": 0.0,
+                "window_len": 0,
+                "source": "rolling",
+            }
+
+    with _ROLLING_XG_MEMO_LOCK:
+        _ROLLING_XG_MEMO[memo_key] = (now + INMEM_TTL_SECONDS, payload)
+        if len(_ROLLING_XG_MEMO) > 512:
+            _rolling_xg_memo_prune_locked(now=now)
+
+    return payload
+
+
+def get_team_recent_xg_snapshot(
+    team: str,
+    league: str,
+    season: int,
+    window: int = 4,
+) -> Dict[str, Any]:
+    window = max(window, 0)
+
+    logs = fetch_team_match_logs(team, league, season)
+    league_only = True
+    filtered_logs = _prepare_league_logs(logs, league_only=league_only)
+
+    compute_fn = compute_rolling_xg
+    try:
+        from . import request_memo as _request_memo  # type: ignore
+
+        memo_compute = getattr(_request_memo, "compute_rolling_xg", None)
+        if callable(memo_compute):
+            compute_fn = memo_compute  # type: ignore[assignment]
+    except Exception:
+        pass
+
+    season_fallback: Optional[Dict[str, float]] = None
+    if len(filtered_logs) < window:
+        table = fetch_league_xg_stats(league, season, cache_only=True)
+        season_fallback = get_season_per_game_snapshot(
+            team,
+            league,
+            season,
+            league_stats=table,
+        )
+
+    return compute_fn(
+        logs or [],
+        window,
+        league_only=league_only,
+        season_fallback=season_fallback,
+        team_identifier=team,
+        league=league,
+        season=season,
+    )
 
 
 def calculate_rolling_averages(matches, window=5):
@@ -1682,6 +1787,13 @@ def get_match_xg_prediction(home_team, away_team, league_code, season=None):
         home_matches or [],
         away_matches or [],
     )
+
+    payload["meta"] = {
+        "effective_league": effective_league,
+        "canonical_home": canonical_home,
+        "canonical_away": canonical_away,
+        "season": resolved_season,
+    }
 
     # Non-blocking background warmers (debounced)
     _refresh_logs_async(effective_league, canonical_home, resolved_season)
