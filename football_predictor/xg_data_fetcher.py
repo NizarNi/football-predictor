@@ -28,7 +28,6 @@ from .constants import (
     MATCH_LOGS_CACHE_TTL,
 )
 from .name_resolver import resolve_team_name, get_all_aliases_for
-from .logging_utils import RateLimitedLogger, warn_once
 
 # ----------------------------------------------------------------------
 # Paths, TTLs, logger
@@ -79,8 +78,6 @@ logger = setup_logger(__name__)
 logger.info("xg_data_fetcher: using cache dir at %s", CACHE_DIR)
 if os.path.exists(LEGACY_CACHE_DIR) and LEGACY_CACHE_DIR != CACHE_DIR:
     logger.warning("xg_data_fetcher: ignoring legacy cache dir at %s", LEGACY_CACHE_DIR)
-
-_MATCH_LOG_SUMMARY = RateLimitedLogger(logger, window_seconds=60.0)
 
 # Background worker pool (league + logs refresh)
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -145,7 +142,7 @@ adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT, max_timeo
 # ----------------------------------------------------------------------
 
 _request_memo_id: ContextVar[Optional[str]] = ContextVar("xg_request_memo_id", default=None)
-_request_memo_store: Dict[str, Dict[str, Dict[Any, Any]]] = {}
+_request_memo_store: Dict[str, Dict[Tuple[str, str, int], Any]] = {}
 _request_memo_lock = threading.Lock()
 
 _league_alias_summary: ContextVar[Optional[List[Tuple[str, str]]]] = ContextVar(
@@ -177,12 +174,6 @@ def _get_request_memo_bucket(request_id: Optional[str]):
         return None
     with _request_memo_lock:
         return _request_memo_store.setdefault(request_id, {})
-
-
-def _get_memo_slot(bucket: Optional[Dict[str, Dict[Any, Any]]], slot: str):
-    if bucket is None:
-        return None
-    return bucket.setdefault(slot, {})
 
 # ----------------------------------------------------------------------
 # HTTP session with retries/backoff for FBref (soccerdata)
@@ -341,17 +332,7 @@ def _save_team_match_logs_to_disk(
 # ----------------------------------------------------------------------
 
 def _resolve_fbref_team_name(raw_name: str, context: str) -> str:
-    memo_bucket = _get_memo_slot(
-        _get_request_memo_bucket(get_current_request_memo_id()),
-        "alias_map",
-    )
-    memo_key = (raw_name, "fbref")
-    if memo_bucket is not None and memo_key in memo_bucket:
-        return memo_bucket[memo_key]
-
     canonical = resolve_team_name(raw_name, provider="fbref")
-    if memo_bucket is not None:
-        memo_bucket[memo_key] = canonical
     if raw_name and canonical != raw_name:
         if context == "league_xg_fetch":
             logger.debug(
@@ -361,9 +342,7 @@ def _resolve_fbref_team_name(raw_name: str, context: str) -> str:
             if bucket is not None:
                 bucket.append((raw_name, canonical))
         else:
-            logger.debug(
-                "🔁 %s: resolved '%s' → '%s' for FBref", context, raw_name, canonical
-            )
+            logger.info("🔁 %s: resolved '%s' → '%s' for FBref", context, raw_name, canonical)
     return canonical
 
 def _configure_fbref_client(fbref_client):
@@ -1008,49 +987,6 @@ def parse_match_result(score, is_home_team):
     except Exception:
         return None
 
-
-def _is_league_log(entry: Dict[str, Any], league_only: bool) -> bool:
-    if not league_only:
-        return True
-    gameweek = entry.get('gameweek')
-    if gameweek is None:
-        return False
-    competition = entry.get('competition') or entry.get('comp')
-    if competition is None:
-        return True
-    if isinstance(competition, str):
-        return 'league' in competition.lower()
-    return True
-
-
-def compute_rolling_xg(
-    team_logs: List[Dict[str, Any]],
-    N: int = 5,
-    league_only: bool = True,
-) -> Tuple[float, float, int, str]:
-    """Aggregate rolling xG totals from match logs."""
-
-    if not team_logs:
-        return 0.0, 0.0, 0, "match_logs"
-
-    completed: List[Dict[str, Any]] = []
-    for entry in team_logs:
-        if not isinstance(entry, dict):
-            continue
-        if entry.get('result') not in {'W', 'D', 'L'}:
-            continue
-        if not _is_league_log(entry, league_only):
-            continue
-        completed.append(entry)
-
-    completed.sort(key=lambda item: item.get('date') or '', reverse=True)
-    window = completed[:N]
-    xg_for_sum = sum(float(entry.get('xg_for') or 0.0) for entry in window)
-    xg_against_sum = sum(float(entry.get('xg_against') or 0.0) for entry in window)
-    window_len = len(window)
-    return xg_for_sum, xg_against_sum, window_len, "match_logs"
-
-
 def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=None):
     """
     Fetch match-by-match logs for a team including xG and results
@@ -1071,8 +1007,7 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
 
     memo_id = request_memo_id or get_current_request_memo_id()
     resolved_season = season or get_xg_season()
-    memo_root = _get_request_memo_bucket(memo_id)
-    memo_bucket = _get_memo_slot(memo_root, "team_logs")
+    memo_bucket = _get_request_memo_bucket(memo_id)
     memo_key = (team_name, league_code, resolved_season)
     legacy_memo_key = (original_team_name, league_code, resolved_season)
     memo_future: Optional[Future] = None
@@ -1126,7 +1061,7 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
 
         disk_cached = _load_team_match_logs_from_disk(league_code, season, team_name)
         if disk_cached is not None:
-            logger.debug("✅ Loaded match logs for %s from disk cache (age ≤ %ds)", team_name, MATCH_LOGS_CACHE_TTL)
+            logger.info("✅ Loaded match logs for %s from disk cache (age ≤ %ds)", team_name, MATCH_LOGS_CACHE_TTL)
             _match_logs_cache_set(cache_lookup_key, disk_cached)
             _memo_resolve_success(disk_cached)
             return disk_cached
@@ -1234,6 +1169,8 @@ def fetch_team_match_logs(team_name, league_code, season=None, request_memo_id=N
             # Sort by date (most recent first)
             matches.sort(key=lambda x: x['date'], reverse=True)
 
+            logger.info("✅ Found %d completed matches for %s", len(matches), team_name)
+
             _match_logs_cache_set(cache_lookup_key, matches)
             _save_team_match_logs_to_disk(league_code, season, team_name, matches)
 
@@ -1314,83 +1251,6 @@ def get_team_xg_stats(team_name, league_code, season=None, league_stats=None):
 
     logger.warning("⚠️  Team '%s' not found in %s xG stats", team_name, league_code)
     return None
-
-
-def get_team_recent_xg_snapshot(
-    team_name: str,
-    league_code: str,
-    season: Optional[int] = None,
-    window: int = 5,
-) -> Dict[str, Any]:
-    memo_id = get_current_request_memo_id()
-    memo_root = _get_request_memo_bucket(memo_id)
-    rolling_bucket = _get_memo_slot(memo_root, "rolling")
-
-    resolved_season = season or get_xg_season()
-    canonical_team = _resolve_fbref_team_name(team_name, "rolling_xg")
-    memo_key = (canonical_team, league_code, resolved_season, window)
-    if rolling_bucket is not None and memo_key in rolling_bucket:
-        return rolling_bucket[memo_key]
-
-    logs = fetch_team_match_logs(
-        canonical_team,
-        league_code,
-        resolved_season,
-        request_memo_id=memo_id,
-    )
-    xg_for_sum, xg_against_sum, window_len, source_label = compute_rolling_xg(
-        list(logs or []),
-        N=window,
-        league_only=True,
-    )
-
-    slug = f"{league_code}:{canonical_team.lower()}"
-    if source_label == "match_logs" and 0 < window_len < window:
-        warn_once(slug, f"rolling_xg partial window {window_len}/{window}", logger=logger)
-
-    if window_len == 0:
-        table = fetch_league_xg_stats(league_code, season, cache_only=True) or {}
-        stats = get_team_xg_stats(
-            canonical_team,
-            league_code,
-            season,
-            league_stats=table,
-        )
-        if stats:
-            matches_played = int(stats.get('matches_played') or window)
-            per_game_for = float(stats.get('xg_for_per_game') or 0.0)
-            per_game_against = float(
-                stats.get('xg_against_per_game')
-                or stats.get('ps_xg_against_per_game')
-                or 0.0
-            )
-            window_len = min(window, matches_played) if matches_played else window
-            xg_for_sum = per_game_for * window_len if window_len else 0.0
-            xg_against_sum = per_game_against * window_len if window_len else 0.0
-            source_label = "season"
-
-    snapshot = {
-        "team": canonical_team,
-        "xg_for_sum": float(xg_for_sum),
-        "xg_against_sum": float(xg_against_sum),
-        "window_len": int(window_len),
-        "source": source_label,
-        "season": resolved_season,
-    }
-
-    if rolling_bucket is not None:
-        rolling_bucket[memo_key] = snapshot
-
-    _MATCH_LOG_SUMMARY.info(
-        (league_code, canonical_team),
-        "xg_logs: %s (%s) completed=%d source=%s",
-        canonical_team,
-        league_code,
-        snapshot["window_len"],
-        snapshot["source"],
-    )
-
-    return snapshot
 
 def calculate_rolling_averages(matches, window=5):
     """

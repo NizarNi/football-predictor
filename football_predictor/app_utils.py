@@ -3,8 +3,7 @@ import time
 from functools import wraps
 from typing import Any, Dict, Optional
 
-from flask import jsonify, request, current_app, g
-import json
+from flask import jsonify, request, current_app
 
 from . import config
 from .errors import APIError
@@ -192,28 +191,10 @@ def _build_error_payload(error: Any, message: str) -> Dict[str, Any] | Any:
     }
 
 
-def update_server_context(values: Dict[str, Any]) -> None:
-    """Merge values into the per-request server context."""
-
-    if not values:
-        return
-    context = getattr(g, "_server_context", None)
-    if context is None:
-        context = {}
-        setattr(g, "_server_context", context)
-    context.update({key: value for key, value in values.items() if value is not None})
-
-
 def make_ok(data: Optional[Any] = None, message: str = "success", status_code: int = 200):
     """Return a standardized success response (legacy-aware)."""
     payload = _build_success_payload(data, message)
     response = jsonify(payload)
-    context = getattr(g, "_server_context", None)
-    if context:
-        try:
-            response.headers["X-Server-Context"] = json.dumps(context)
-        except TypeError:
-            pass
     return response, status_code
 
 
