@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import time
 import unicodedata
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -12,11 +14,18 @@ from threading import Event, Lock
 from typing import Dict, List, Optional, Set, Tuple
 
 from .config import setup_logger
-from .logging_utils import warn_once, reset_warn_once_cache
+from .logging_utils import RateLimitedLogger, warn_once, reset_warn_once_cache
 
 ALIASES_PATH = os.path.join(os.path.dirname(__file__), "data", "aliases_fbref_seed.json")
 
 logger = setup_logger(__name__)
+
+LOG_THROTTLE_INTERVAL = float(os.environ.get("LOG_THROTTLE_INTERVAL", "300"))
+_alias_debug_throttle = RateLimitedLogger(logger, window_seconds=LOG_THROTTLE_INTERVAL)
+_alias_suppressed_lock = Lock()
+_alias_suppressed_count = 0
+_alias_suppressed_sample: Optional[Tuple[str, str, str]] = None
+_alias_suppressed_last_emit = time.monotonic()
 
 _alias_dedupe: ContextVar[Optional[Set[Tuple[str, str, str]]]] = ContextVar(
     "alias_dedupe", default=None
@@ -75,6 +84,44 @@ def _mark_seed_used() -> None:
     )
 
 
+def _flush_alias_suppressed(force: bool = False) -> None:
+    global _alias_suppressed_count, _alias_suppressed_sample, _alias_suppressed_last_emit
+
+    with _alias_suppressed_lock:
+        if _alias_suppressed_count <= 0:
+            return
+        now = time.monotonic()
+        if not force and (now - _alias_suppressed_last_emit) < LOG_THROTTLE_INTERVAL:
+            return
+        sample = _alias_suppressed_sample
+        count = _alias_suppressed_count
+        _alias_suppressed_count = 0
+        _alias_suppressed_sample = None
+        _alias_suppressed_last_emit = now
+
+    if not sample:
+        return
+
+    raw, canonical, _provider = sample
+    logger.info(
+        "alias_normalizer: suppressed %d duplicate mappings (e.g. '%s'→'%s')",
+        count,
+        raw,
+        canonical,
+    )
+
+
+def _record_alias_suppression(raw: str, canonical: str, provider: str) -> None:
+    global _alias_suppressed_count, _alias_suppressed_sample
+
+    with _alias_suppressed_lock:
+        _alias_suppressed_count += 1
+        if _alias_suppressed_sample is None:
+            _alias_suppressed_sample = (raw, canonical, provider)
+
+    _flush_alias_suppressed()
+
+
 def _register_alias_mapping(raw: str, canonical: str, provider: str) -> None:
     mapping = (raw, canonical, provider)
     bucket = _alias_dedupe.get()
@@ -83,7 +130,12 @@ def _register_alias_mapping(raw: str, canonical: str, provider: str) -> None:
     provider_bucket = _alias_providers.get()
     if provider_bucket is not None:
         provider_bucket.add(provider)
-    logger.debug("✅ alias '%s' → '%s' (provider=%s)", raw, canonical, provider)
+    if _alias_debug_throttle.log(
+        logging.DEBUG, (raw, canonical, provider), "✅ alias '%s' → '%s' (provider=%s)", raw, canonical, provider
+    ):
+        _flush_alias_suppressed()
+    else:
+        _record_alias_suppression(raw, canonical, provider)
 
 
 @contextmanager
@@ -109,6 +161,7 @@ def alias_logging_context() -> None:
             len(mappings) if mappings is not None else 0,
             providers_display,
         )
+        _flush_alias_suppressed()
         _alias_dedupe.reset(token_bucket)
         _alias_providers.reset(token_providers)
         _alias_seed_used.reset(token_seed)
@@ -348,6 +401,19 @@ def _reset_resolver_state_for_tests() -> None:  # pragma: no cover - testing hel
     reset_warn_once_cache()
 
 
+def _reset_alias_log_throttle_for_tests(interval: Optional[float] = None) -> None:
+    global LOG_THROTTLE_INTERVAL, _alias_debug_throttle, _alias_suppressed_last_emit
+
+    target = LOG_THROTTLE_INTERVAL if interval is None else float(interval)
+    LOG_THROTTLE_INTERVAL = target
+    _alias_debug_throttle = RateLimitedLogger(logger, window_seconds=target)
+    with _alias_suppressed_lock:
+        global _alias_suppressed_count, _alias_suppressed_sample
+        _alias_suppressed_count = 0
+        _alias_suppressed_sample = None
+        _alias_suppressed_last_emit = time.monotonic()
+
+
 __all__ = [
     "canonicalize_team",
     "alias_logging_context",
@@ -360,4 +426,5 @@ __all__ = [
     "resolve_team_name",
     "token_set_ratio",
     "warm_alias_resolver",
+    "_reset_alias_log_throttle_for_tests",
 ]

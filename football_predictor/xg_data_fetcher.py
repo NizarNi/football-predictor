@@ -4,8 +4,8 @@ Fetches Expected Goals (xG) statistics from FBref using soccerdata library
 """
 from contextvars import ContextVar
 from datetime import datetime, timedelta
-from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, Optional, Tuple, List, TYPE_CHECKING
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, Optional, Tuple, List, TYPE_CHECKING
 from dataclasses import dataclass
 
 import json
@@ -545,10 +545,17 @@ def _get_from_mem_cache(league_code: str, season: int) -> Tuple[Optional[Dict[st
     return data, age
 
 
-def _set_mem_cache(league_code: str, season: int, data: Dict[str, Any]) -> None:
+def _set_mem_cache(
+    league_code: str,
+    season: int,
+    data: Dict[str, Any],
+    *,
+    stored_at: Optional[float] = None,
+) -> None:
     key = (league_code, season)
+    timestamp = stored_at if stored_at is not None else time.time()
     with _LEAGUE_MEM_CACHE_LOCK:
-        _LEAGUE_MEM_CACHE[key] = (time.time(), data)
+        _LEAGUE_MEM_CACHE[key] = (timestamp, data)
     # Clear any per-league debounce/stacktrace guards when we successfully refreshed
     with _refresh_attempt_lock:
         stale_keys = [k for k in _last_refresh_attempt if k[0] == league_code]
@@ -609,6 +616,60 @@ def _refresh_league_async(league_code: str, season: int) -> None:
             _background_refreshes.discard(refresh_key)
 
     _executor.submit(_task)
+
+
+_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("ENG", "GER", "ITA", "ESP", "FRA")
+
+
+def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
+    """Warm the in-memory cache for a specific league's xG table."""
+
+    if season is None:
+        season = get_xg_season()
+
+    data, _age = _get_from_mem_cache(league_code, season)
+    if data is not None:
+        _set_mem_cache(league_code, season, data, stored_at=time.time() + 0.001)
+        logger.info("Prewarmed xG for %s (cache hit)", league_code)
+        return True
+
+    try:
+        stats = fetch_league_xg_stats(league_code, season)
+    except Exception:
+        logger.warning("xg_prefetch: failed to warm %s", league_code, exc_info=True)
+        return False
+
+    if stats is None:
+        return False
+
+    cached, _ = _get_from_mem_cache(league_code, season)
+    if cached is None:
+        cached = stats
+    _set_mem_cache(league_code, season, cached, stored_at=time.time() + 0.001)
+    logger.info("Prewarmed xG for %s", league_code)
+    return True
+
+
+def warm_top5_leagues(
+    leagues: Optional[Tuple[str, ...]] = None,
+    *,
+    warm_fn: Optional[Callable[[str], bool]] = None,
+) -> Dict[str, bool]:
+    """Warm the top-5 European leagues concurrently for faster startup."""
+
+    target_leagues = leagues or _TOP5_PREFETCH_LEAGUES
+    executor_fn = warm_fn or warm_league_xg
+    results: Dict[str, bool] = {}
+    with ThreadPoolExecutor(max_workers=len(target_leagues)) as executor:
+        futures = {executor.submit(executor_fn, league): league for league in target_leagues}
+        for future in as_completed(futures):
+            league = futures[future]
+            try:
+                results[league] = bool(future.result())
+            except Exception:
+                logger.warning("xg_prefetch: warm failed for %s", league, exc_info=True)
+                results[league] = False
+    return results
 
 
 def _refresh_logs_async(
