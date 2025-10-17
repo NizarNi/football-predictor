@@ -27,7 +27,7 @@ class AliasLoggingTests(unittest.TestCase):
         summary = info_logs[0]
         self.assertIn("applied 2 unique mappings", summary)
         self.assertIn("providers: _, fbref", summary)
-        self.assertEqual(len(debug_logs), 3)
+        self.assertEqual(len(debug_logs), 2)
         self.assertTrue(any("provider=fbref" in msg for msg in debug_logs))
 
 

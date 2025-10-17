@@ -4112,113 +4112,325 @@
             
             // Auto-load popular upcoming matches on page load
             getUpcomingMatches('CL');
-            
+
+            function buildBttsMarketHtml(market) {
+                if (!market) {
+                    return `
+                        <div class="alert alert-secondary mb-2">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Market consensus not available right now.
+                        </div>
+                    `;
+                }
+
+                const bookmakerCount = market.bookmaker_count || market.num_bookmakers || 'Multiple';
+                const bestYesOdds = market.best_odds && market.best_odds.yes ? market.best_odds.yes.price.toFixed(2) : 'N/A';
+                const bestNoOdds = market.best_odds && market.best_odds.no ? market.best_odds.no.price.toFixed(2) : 'N/A';
+
+                return `
+                    <div class="alert alert-info mb-3">
+                        <h6 class="mb-2"><i class="fas fa-chart-line me-2"></i>Market Consensus (${bookmakerCount} Bookmakers)</h6>
+                        <div class="row text-center">
+                            <div class="col-6">
+                                <div class="p-2 bg-success bg-opacity-10 rounded">
+                                    <div class="fw-bold">Yes</div>
+                                    <div class="h5 mb-0">${(market.yes_probability * 100).toFixed(1)}%</div>
+                                    <small class="text-muted">Best: ${bestYesOdds}</small>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="p-2 bg-danger bg-opacity-10 rounded">
+                                    <div class="fw-bold">No</div>
+                                    <div class="h5 mb-0">${(market.no_probability * 100).toFixed(1)}%</div>
+                                    <small class="text-muted">Best: ${bestNoOdds}</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            function buildBttsXgHtml(xgModel) {
+                if (!xgModel) {
+                    return `
+                        <div class="alert alert-secondary mb-2">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>xG Model:</strong> Not available (insufficient xG data)
+                        </div>
+                    `;
+                }
+
+                const confidence = Math.max(xgModel.yes_probability, xgModel.no_probability) * 100;
+                const alertClass = confidence >= 65 ? 'alert-success' : 'alert-secondary';
+
+                return `
+                    <div class="alert ${alertClass} mb-2">
+                        <h6 class="mb-2"><i class="fas fa-chart-bar me-2"></i>xG Statistical Model</h6>
+                        <div class="row text-center">
+                            <div class="col-6">
+                                <div class="fw-bold">Yes</div>
+                                <div class="h6 mb-0">${(xgModel.yes_probability * 100).toFixed(1)}%</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="fw-bold">No</div>
+                                <div class="h6 mb-0">${(xgModel.no_probability * 100).toFixed(1)}%</div>
+                            </div>
+                        </div>
+                        <small class="text-muted d-block mt-2">
+                            <i class="fas fa-info-circle me-1"></i>${xgModel.reasoning || 'Based on xG and xGA statistics'}
+                        </small>
+                    </div>
+                `;
+            }
+
+            function buildSeasonSnapshotHtml() {
+                if (!currentMatchData || !currentXgData) {
+                    return '';
+                }
+
+                const homeAvg = currentXgData?.home_stats?.xg_for_per_game;
+                const awayAvg = currentXgData?.away_stats?.xg_for_per_game;
+                if (homeAvg == null && awayAvg == null) {
+                    return '';
+                }
+
+                const homeLabel = homeAvg != null ? Number(homeAvg).toFixed(2) : '—';
+                const awayLabel = awayAvg != null ? Number(awayAvg).toFixed(2) : '—';
+
+                return `
+                    <div class="alert alert-light border mb-3 small text-center">
+                        <i class="fas fa-bolt me-1"></i>Season snapshot:
+                        <span class="fw-bold text-primary">${currentMatchData.home_team}</span>
+                        ${homeLabel} xG / match ·
+                        <span class="fw-bold text-danger">${currentMatchData.away_team}</span>
+                        ${awayLabel} xG / match
+                    </div>
+                `;
+            }
+
+            function buildBttsSummaryHtml(market, xgModel) {
+                const signals = [];
+                if (market && typeof market.yes_probability === 'number') {
+                    signals.push(market.yes_probability);
+                }
+                if (xgModel && typeof xgModel.yes_probability === 'number') {
+                    signals.push(xgModel.yes_probability);
+                }
+                if (signals.length === 0) {
+                    return '';
+                }
+
+                const yesAvg = signals.reduce((sum, value) => sum + value, 0) / signals.length;
+                const leaningYes = yesAvg >= 0.5;
+                const label = leaningYes ? 'YES' : 'NO';
+                const percent = (leaningYes ? yesAvg : (1 - yesAvg)) * 100;
+                const details = [
+                    market && typeof market.yes_probability === 'number' ? `Market: ${(market.yes_probability * 100).toFixed(1)}%` : null,
+                    xgModel && typeof xgModel.yes_probability === 'number' ? `xG: ${(xgModel.yes_probability * 100).toFixed(1)}%` : null
+                ].filter(Boolean).join(' · ');
+
+                const alertClass = leaningYes ? 'alert-success' : 'alert-secondary';
+
+                return `
+                    <div class="alert ${alertClass} mb-3">
+                        <i class="fas fa-signal me-2"></i><strong>BTTS ${label}</strong>
+                        <span class="ms-2 text-muted small">Confidence ${percent.toFixed(1)}%</span>
+                        ${details ? `<div class="text-muted small mt-2">${details}</div>` : ''}
+                    </div>
+                `;
+            }
+
+            function createBttsLoader(container) {
+                container.innerHTML = `
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <div class="progress btts-progress mb-3">
+                                <div class="progress-bar bg-primary progress-bar-striped progress-bar-animated" data-step="0" style="width: 33%">Analyzing shots</div>
+                                <div class="progress-bar bg-secondary" data-step="1" style="width: 33%">xG trend</div>
+                                <div class="progress-bar bg-secondary" data-step="2" style="width: 34%">BTTS signal</div>
+                            </div>
+                            <div id="btts-season-snapshot"></div>
+                            <div id="btts-market-section" class="mb-3">
+                                <div class="placeholder-glow">
+                                    <div class="placeholder col-12 mb-2"></div>
+                                    <div class="placeholder col-9"></div>
+                                </div>
+                            </div>
+                            <div id="btts-xg-section" class="mb-3">
+                                <div class="placeholder-glow">
+                                    <div class="placeholder col-12 mb-2"></div>
+                                    <div class="placeholder col-7"></div>
+                                </div>
+                            </div>
+                            <div id="btts-summary" class="mb-0"></div>
+                            <div class="text-muted small mt-2 d-none" id="btts-loader-fallback">
+                                <i class="fas fa-hourglass-half me-1"></i>Still computing BTTS tip…
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const bars = Array.from(container.querySelectorAll('.btts-progress .progress-bar'));
+                const fallbackEl = container.querySelector('#btts-loader-fallback');
+                const marketSection = container.querySelector('#btts-market-section');
+                const xgSection = container.querySelector('#btts-xg-section');
+                const seasonSection = container.querySelector('#btts-season-snapshot');
+                const summarySection = container.querySelector('#btts-summary');
+
+                if (seasonSection) {
+                    const snapshot = buildSeasonSnapshotHtml();
+                    if (snapshot) {
+                        seasonSection.innerHTML = snapshot;
+                    } else {
+                        seasonSection.classList.add('d-none');
+                    }
+                }
+
+                const setActiveStep = (step) => {
+                    bars.forEach((bar, index) => {
+                        bar.classList.remove('bg-secondary', 'bg-success', 'bg-primary', 'progress-bar-striped', 'progress-bar-animated');
+                        if (step >= bars.length) {
+                            bar.classList.add('bg-success');
+                        } else if (index < step) {
+                            bar.classList.add('bg-success');
+                        } else if (index === step) {
+                            bar.classList.add('bg-primary', 'progress-bar-striped', 'progress-bar-animated');
+                        } else {
+                            bar.classList.add('bg-secondary');
+                        }
+                    });
+                };
+
+                setActiveStep(0);
+
+                return {
+                    setActiveStep,
+                    showFallback: () => fallbackEl && fallbackEl.classList.remove('d-none'),
+                    hideFallback: () => fallbackEl && fallbackEl.classList.add('d-none'),
+                    renderMarket: (html) => {
+                        if (marketSection) {
+                            marketSection.innerHTML = html;
+                        }
+                    },
+                    renderXg: (html) => {
+                        if (xgSection) {
+                            xgSection.innerHTML = html;
+                        }
+                    },
+                    renderSummary: (html) => {
+                        if (summarySection) {
+                            summarySection.innerHTML = html;
+                        }
+                    }
+                };
+            }
+
             // BTTS button handler - using event delegation for dynamically loaded buttons
             document.addEventListener('click', function(e) {
                 if (e.target && (e.target.id === 'load-btts-btn' || e.target.closest('#load-btts-btn'))) {
                     e.preventDefault();
                     const button = document.getElementById('load-btts-btn');
                     const container = document.getElementById('prediction-btts');
-                    
+
                     if (!currentMatchData) {
                         container.innerHTML = '<div class="alert alert-danger">Please select a match first</div>';
                         return;
                     }
-                    
-                    // Show loading state
                     button.disabled = true;
-                    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Loading BTTS...';
-                    
-                    // Get league code from current match
-                    const leagueCode = currentMatchData.league_code || null;
-                    
-                    // Fetch BTTS data
-                    fetch(`/match/${currentMatchData.event_id}/btts?sport_key=${currentMatchData.sport_key}&home_team=${encodeURIComponent(currentMatchData.home_team)}&away_team=${encodeURIComponent(currentMatchData.away_team)}&league=${leagueCode}`)
+                    button.innerHTML = '<i class="fas fa-bolt me-2"></i> Preparing BTTS…';
+
+                    const loader = createBttsLoader(container);
+                    const fallbackTimer = setTimeout(() => loader.showFallback(), 4000);
+
+                    const leagueCode = currentMatchData.league_code || '';
+                    const leagueParam = leagueCode ? `&league=${encodeURIComponent(leagueCode)}` : '';
+                    const baseUrl = `/match/${currentMatchData.event_id}/btts?sport_key=${currentMatchData.sport_key}&home_team=${encodeURIComponent(currentMatchData.home_team)}&away_team=${encodeURIComponent(currentMatchData.away_team)}${leagueParam}`;
+
+                    const state = {
+                        market: null,
+                        xg: null,
+                        marketError: null,
+                        xgError: null
+                    };
+
+                    const refreshSections = () => {
+                        if (state.market) {
+                            loader.renderMarket(buildBttsMarketHtml(state.market));
+                        } else if (state.marketError) {
+                            loader.renderMarket(`<div class="alert alert-warning">${state.marketError}</div>`);
+                        }
+
+                        if (state.xg) {
+                            loader.renderXg(buildBttsXgHtml(state.xg));
+                        } else if (state.xgError) {
+                            loader.renderXg(`<div class="alert alert-warning">${state.xgError}</div>`);
+                        }
+
+                        if (state.market && state.xg) {
+                            loader.renderSummary(buildBttsSummaryHtml(state.market, state.xg));
+                        }
+                    };
+
+                    const updateProgress = () => {
+                        if (state.market && state.xg) {
+                            loader.setActiveStep(2);
+                            loader.hideFallback();
+                        } else if (state.xg) {
+                            loader.setActiveStep(1);
+                        } else {
+                            loader.setActiveStep(0);
+                        }
+                    };
+
+                    const marketPromise = fetch(`${baseUrl}&mode=market`)
                         .then(response => response.json())
                         .then(data => {
                             if (data.error) {
-                                container.innerHTML = `<div class="alert alert-warning">${data.error}</div>`;
-                                return;
-                            }
-                            
-                            // Display BTTS predictions
-                            let html = '<div class="btts-predictions">';
-                            
-                            // Market consensus
-                            if (data.btts && data.btts.market) {
-                                const market = data.btts.market;
-                                const bestYesOdds = market.best_odds && market.best_odds.yes ? market.best_odds.yes.price.toFixed(2) : 'N/A';
-                                const bestNoOdds = market.best_odds && market.best_odds.no ? market.best_odds.no.price.toFixed(2) : 'N/A';
-                                html += `
-                                    <div class="alert alert-info mb-3">
-                                        <h6 class="mb-2"><i class="fas fa-chart-line me-2"></i>Market Consensus (${market.bookmaker_count || market.num_bookmakers || 'Multiple'} Bookmakers)</h6>
-                                        <div class="row text-center">
-                                            <div class="col-6">
-                                                <div class="p-2 bg-success bg-opacity-10 rounded">
-                                                    <div class="fw-bold">Yes</div>
-                                                    <div class="h5 mb-0">${(market.yes_probability * 100).toFixed(1)}%</div>
-                                                    <small class="text-muted">Best: ${bestYesOdds}</small>
-                                                </div>
-                                            </div>
-                                            <div class="col-6">
-                                                <div class="p-2 bg-danger bg-opacity-10 rounded">
-                                                    <div class="fw-bold">No</div>
-                                                    <div class="h5 mb-0">${(market.no_probability * 100).toFixed(1)}%</div>
-                                                    <small class="text-muted">Best: ${bestNoOdds}</small>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                `;
-                            }
-                            
-                            // xG-based prediction
-                            if (data.btts && data.btts.xg_model) {
-                                const xg = data.btts.xg_model;
-                                const confidence = Math.max(xg.yes_probability, xg.no_probability) * 100;
-                                const alertClass = confidence >= 65 ? 'alert-success' : 'alert-secondary';
-                                
-                                html += `
-                                    <div class="alert ${alertClass} mb-2">
-                                        <h6 class="mb-2"><i class="fas fa-chart-bar me-2"></i>xG Statistical Model</h6>
-                                        <div class="row text-center">
-                                            <div class="col-6">
-                                                <div class="fw-bold">Yes</div>
-                                                <div class="h6 mb-0">${(xg.yes_probability * 100).toFixed(1)}%</div>
-                                            </div>
-                                            <div class="col-6">
-                                                <div class="fw-bold">No</div>
-                                                <div class="h6 mb-0">${(xg.no_probability * 100).toFixed(1)}%</div>
-                                            </div>
-                                        </div>
-                                        <small class="text-muted d-block mt-2">
-                                            <i class="fas fa-info-circle me-1"></i>${xg.reasoning || 'Based on xG and xGA statistics'}
-                                        </small>
-                                    </div>
-                                `;
+                                state.marketError = data.error;
+                            } else if (data.btts && data.btts.market) {
+                                state.market = data.btts.market;
                             } else {
-                                html += `
-                                    <div class="alert alert-secondary mb-2">
-                                        <i class="fas fa-info-circle me-2"></i>
-                                        <strong>xG Model:</strong> Not available (insufficient xG data)
-                                    </div>
-                                `;
+                                state.marketError = 'Market odds not available.';
                             }
-                            
-                            html += '</div>';
-                            container.innerHTML = html;
-                            
-                            // Reinitialize tooltips
-                            initTooltips();
+                            refreshSections();
+                            updateProgress();
                         })
                         .catch(error => {
-                            console.error('Error fetching BTTS:', error);
-                            container.innerHTML = '<div class="alert alert-danger">Failed to load BTTS data. Please try again.</div>';
-                        })
-                        .finally(() => {
-                            button.disabled = false;
-                            button.innerHTML = '<i class="fas fa-futbol me-2"></i> Show BTTS Odds';
+                            console.error('Error fetching BTTS market:', error);
+                            state.marketError = 'Failed to load market odds.';
+                            refreshSections();
+                            updateProgress();
                         });
+
+                    const xgPromise = fetch(`${baseUrl}&mode=xg`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.error) {
+                                state.xgError = data.error;
+                            } else if (data.btts && data.btts.xg_model) {
+                                state.xg = data.btts.xg_model;
+                            } else {
+                                state.xgError = 'xG signal not available.';
+                            }
+                            refreshSections();
+                            updateProgress();
+                        })
+                        .catch(error => {
+                            console.error('Error computing BTTS xG:', error);
+                            state.xgError = 'Failed to compute xG-based BTTS.';
+                            refreshSections();
+                            updateProgress();
+                        });
+
+                    Promise.allSettled([marketPromise, xgPromise]).then(() => {
+                        clearTimeout(fallbackTimer);
+                        loader.hideFallback();
+                        updateProgress();
+                        refreshSections();
+                        button.disabled = false;
+                        button.innerHTML = '<i class="fas fa-futbol me-2"></i> Show BTTS Odds';
+                        initTooltips();
+                    });
                 }
             });
         });

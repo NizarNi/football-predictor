@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, wait
+from threading import Lock, Thread
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from time import monotonic
 from typing import Any, Optional
@@ -29,6 +30,7 @@ from .xg_data_fetcher import (
     get_match_xg_prediction,
     get_team_recent_xg_snapshot,
     set_request_memo_id,
+    warm_top5_leagues,
 )
 from .utils import get_current_season, fuzzy_team_match
 from .name_resolver import (
@@ -54,6 +56,43 @@ logger = setup_logger(__name__)
 
 # Warm alias resolver at startup to avoid lazy initialization gaps (T37).
 _ALIAS_PROVIDERS = warm_alias_resolver()
+
+xg_prefetch_ready = os.environ.get("XG_PREFETCH_READY", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+_xg_prefetch_lock = Lock()
+_xg_prefetch_started = False
+
+
+def _start_xg_prefetch_async() -> None:
+    global _xg_prefetch_started, xg_prefetch_ready
+
+    if xg_prefetch_ready:
+        return
+
+    with _xg_prefetch_lock:
+        if _xg_prefetch_started or xg_prefetch_ready:
+            return
+        _xg_prefetch_started = True
+
+    def _runner() -> None:
+        global xg_prefetch_ready
+        try:
+            warm_top5_leagues()
+        except Exception:  # pragma: no cover - best effort logging
+            logger.exception("xg_prefetch: startup warm failed")
+        finally:
+            xg_prefetch_ready = True
+
+    Thread(target=_runner, name="xg-prefetch", daemon=True).start()
+
+
+@app.before_first_request
+def _prefetch_top_leagues() -> None:
+    if not xg_prefetch_ready:
+        _start_xg_prefetch_async()
 
 
 def _apply_recent_xg_context(
@@ -1077,119 +1116,152 @@ def get_match_btts(event_id):
     try:
         with alias_logging_context():
             logger.info("Handling /match btts request", extra={"event_id": event_id})
+
+            mode = (request.args.get("mode") or "full").lower()
+            if mode not in {"full", "market", "xg"}:
+                return make_error(
+                    error="Invalid mode",
+                    message="mode must be one of full, market, or xg",
+                    status_code=400,
+                )
+
+            want_market = mode in {"full", "market"}
+            want_xg = mode in {"full", "xg"}
+            if not want_market and not want_xg:
+                return make_error(
+                    error="Invalid mode",
+                    message="mode must request at least one data source",
+                    status_code=400,
+                )
+
             sport_key = request.args.get("sport_key")
             home_team = request.args.get("home_team")
             away_team = request.args.get("away_team")
             league_code = request.args.get("league")
 
-            if not sport_key:
+            if want_market and not sport_key:
                 return make_error(
                     error="sport_key parameter required",
                     message="Missing sport_key parameter",
-                    status_code=400
+                    status_code=400,
                 )
 
             from .odds_api_client import get_event_odds
             from .odds_calculator import calculate_btts_from_odds, calculate_btts_probability_from_xg
 
-            odds_data = get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="btts")
-            if not odds_data:
-                return make_error(
-                    error="No BTTS odds found for this match",
-                    message="No BTTS odds found",
-                    status_code=404
+            btts_market = None
+            if want_market:
+                odds_data = get_event_odds(
+                    sport_key,
+                    event_id,
+                    regions="us,uk,eu",
+                    markets="btts",
                 )
-
-            # Market consensus
-            btts_market = calculate_btts_from_odds(odds_data)
-
-            # xG-based signal (offense from FBref path, defense from Understat standings)
-            btts_xg = None
-            home_snapshot: Optional[dict[str, Any]] = None
-            away_snapshot: Optional[dict[str, Any]] = None
-
-            # Keep server-context averages warm (internal only)
-            if home_team and away_team and league_code:
-                home_snapshot, away_snapshot = _apply_recent_xg_context(home_team, away_team, league_code)
-                if home_snapshot is None:
-                    home_snapshot = get_team_recent_xg_snapshot(home_team, league_code)
-                if away_snapshot is None:
-                    away_snapshot = get_team_recent_xg_snapshot(away_team, league_code)
-
-            def _avg(snapshot: Optional[dict[str, Any]], field: str) -> Optional[float]:
-                if not snapshot:
-                    return None
-                wl = snapshot.get("window_len") or 0
-                if wl <= 0:
-                    return None
-                try:
-                    return float(snapshot.get(field, 0.0)) / wl
-                except (TypeError, ZeroDivisionError):
-                    return None
-
-            home_xg_per_game = _avg(home_snapshot, "xg_for_sum")
-            away_xg_per_game = _avg(away_snapshot, "xg_for_sum")
-            home_xga_per_game = _avg(home_snapshot, "xg_against_sum")
-            away_xga_per_game = _avg(away_snapshot, "xg_against_sum")
-
-            # Enrich with FBref/Understat if league/team provided
-            rolling_payload: dict[str, Any] = {}
-            if home_team and away_team and league_code:
-                try:
-                    memo = _get_request_memo()
-                    resolved_home = resolve_team_name(home_team, provider="fbref")
-                    resolved_away = resolve_team_name(away_team, provider="fbref")
-
-                    # FBref offense (via our xG prediction path)
-                    xg_prediction = get_match_xg_prediction(
-                        resolved_home, resolved_away, league_code, request_memo=memo
+                if not odds_data:
+                    return make_error(
+                        error="No BTTS odds found for this match",
+                        message="No BTTS odds found",
+                        status_code=404,
                     )
+                btts_market = calculate_btts_from_odds(odds_data)
 
-                    # Attach rolling arrays to response (internal fields)
-                    _ensure_rolling_fields(memo, league_code, resolved_home, resolved_away, rolling_payload)
+            btts_xg = None
+            rolling_payload: dict[str, Any] = {}
+            if want_xg:
+                home_snapshot: Optional[dict[str, Any]] = None
+                away_snapshot: Optional[dict[str, Any]] = None
 
-                    # Use FBref offense per-game if available
-                    if xg_prediction.get('available') and xg_prediction.get('xg'):
-                        home_xg_per_game = home_xg_per_game or xg_prediction['xg'].get('home_stats', {}).get('xg_for_per_game')
-                        away_xg_per_game = away_xg_per_game or xg_prediction['xg'].get('away_stats', {}).get('xg_for_per_game')
+                if home_team and away_team and league_code:
+                    home_snapshot, away_snapshot = _apply_recent_xg_context(
+                        home_team, away_team, league_code
+                    )
+                    if home_snapshot is None:
+                        home_snapshot = get_team_recent_xg_snapshot(home_team, league_code)
+                    if away_snapshot is None:
+                        away_snapshot = get_team_recent_xg_snapshot(away_team, league_code)
 
-                    # Understat true defensive xGA per game
-                    from .understat_client import fetch_understat_standings
-                    current_season = get_current_season()
-                    standings = fetch_understat_standings(league_code, current_season)
-                    if standings:
-                        home_lookup = resolved_home or home_team
-                        away_lookup = resolved_away or away_team
-                        home_st = next((t for t in standings if fuzzy_team_match(t['name'], home_lookup)), None)
-                        away_st = next((t for t in standings if fuzzy_team_match(t['name'], away_lookup)), None)
+                def _avg(snapshot: Optional[dict[str, Any]], field: str) -> Optional[float]:
+                    if not snapshot:
+                        return None
+                    wl = snapshot.get("window_len") or 0
+                    if wl <= 0:
+                        return None
+                    try:
+                        return float(snapshot.get(field, 0.0)) / wl
+                    except (TypeError, ZeroDivisionError):
+                        return None
 
-                        if home_st and home_st.get('xGA') is not None and home_st.get('played', 0) > 0:
-                            cand = home_st['xGA'] / home_st['played']
-                            if home_xga_per_game is None:
-                                home_xga_per_game = cand
-                        if away_st and away_st.get('xGA') is not None and away_st.get('played', 0) > 0:
-                            cand = away_st['xGA'] / away_st['played']
-                            if away_xga_per_game is None:
-                                away_xga_per_game = cand
+                home_xg_per_game = _avg(home_snapshot, "xg_for_sum")
+                away_xg_per_game = _avg(away_snapshot, "xg_for_sum")
+                home_xga_per_game = _avg(home_snapshot, "xg_against_sum")
+                away_xga_per_game = _avg(away_snapshot, "xg_against_sum")
 
-                    if all(v is not None for v in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]):
-                        btts_xg = calculate_btts_probability_from_xg(
-                            home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game
+                if home_team and away_team and league_code:
+                    try:
+                        memo = _get_request_memo()
+                        resolved_home = resolve_team_name(home_team, provider="fbref")
+                        resolved_away = resolve_team_name(away_team, provider="fbref")
+
+                        xg_prediction = get_match_xg_prediction(
+                            resolved_home, resolved_away, league_code, request_memo=memo
                         )
 
-                except Exception as e:
-                    logger.warning("⚠️  Could not calculate xG-based BTTS: %s", e)
-                    btts_xg = None
+                        _ensure_rolling_fields(
+                            memo, league_code, resolved_home, resolved_away, rolling_payload
+                        )
 
-            # Keep the averages in the internal server context (already done via _apply_recent_xg_context)
-            return make_ok({
-                "btts": {
-                    "market": btts_market,
-                    "xg_model": btts_xg
-                },
+                        if xg_prediction.get('available') and xg_prediction.get('xg'):
+                            home_xg_per_game = home_xg_per_game or xg_prediction['xg'].get('home_stats', {}).get('xg_for_per_game')
+                            away_xg_per_game = away_xg_per_game or xg_prediction['xg'].get('away_stats', {}).get('xg_for_per_game')
+
+                        from .understat_client import fetch_understat_standings
+
+                        current_season = get_current_season()
+                        standings = fetch_understat_standings(league_code, current_season)
+                        if standings:
+                            home_lookup = resolved_home or home_team
+                            away_lookup = resolved_away or away_team
+                            home_st = next((t for t in standings if fuzzy_team_match(t['name'], home_lookup)), None)
+                            away_st = next((t for t in standings if fuzzy_team_match(t['name'], away_lookup)), None)
+
+                            if home_st and home_st.get('xGA') is not None and home_st.get('played', 0) > 0:
+                                cand = home_st['xGA'] / home_st['played']
+                                if home_xga_per_game is None:
+                                    home_xga_per_game = cand
+                            if away_st and away_st.get('xGA') is not None and away_st.get('played', 0) > 0:
+                                cand = away_st['xGA'] / away_st['played']
+                                if away_xga_per_game is None:
+                                    away_xga_per_game = cand
+
+                        if all(
+                            v is not None
+                            for v in [home_xg_per_game, away_xg_per_game, home_xga_per_game, away_xga_per_game]
+                        ):
+                            btts_xg = calculate_btts_probability_from_xg(
+                                home_xg_per_game,
+                                away_xg_per_game,
+                                home_xga_per_game,
+                                away_xga_per_game,
+                            )
+
+                    except Exception as e:
+                        logger.warning("⚠️  Could not calculate xG-based BTTS: %s", e)
+                        btts_xg = None
+
+            btts_payload: dict[str, Any] = {}
+            if want_market:
+                btts_payload["market"] = btts_market
+            if want_xg:
+                btts_payload["xg_model"] = btts_xg
+
+            response_payload = {
+                "btts": btts_payload,
                 "source": "The Odds API + xG Analysis",
-                **rolling_payload,
-            })
+            }
+            if want_xg:
+                response_payload.update(rolling_payload)
+
+            return make_ok(response_payload)
 
     except Exception as e:
         logger.exception("Error fetching BTTS for %s", event_id)
