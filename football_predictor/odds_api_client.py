@@ -11,17 +11,26 @@ from .constants import BASE_URL, LEAGUE_CODE_MAPPING
 from .utils import create_retry_session, request_with_retries
 from .errors import APIError
 
-API_KEYS = [
-    os.environ.get("ODDS_API_KEY_1"),
-    os.environ.get("ODDS_API_KEY_2"),
-    os.environ.get("ODDS_API_KEY_3"),
-    os.environ.get("ODDS_API_KEY_4"),
-    os.environ.get("ODDS_API_KEY_5"),
-    os.environ.get("ODDS_API_KEY_6"),
-    os.environ.get("ODDS_API_KEY_7"),
-    os.environ.get("ODDS_API_KEY_8")   
-]
-API_KEYS = [key for key in API_KEYS if key]
+def _load_api_keys():
+    """Return all configured Odds API keys in numeric order."""
+    keys = []
+
+    # Allow unsuffixed fallback key for backwards compatibility
+    base_key = os.environ.get("ODDS_API_KEY")
+    if base_key:
+        keys.append((0, base_key))
+
+    suffix_pattern = re.compile(r"^ODDS_API_KEY_(\d+)$")
+    for env_name, value in os.environ.items():
+        match = suffix_pattern.match(env_name)
+        if match and value:
+            keys.append((int(match.group(1)), value))
+
+    # Sort by numeric suffix (base key first) and return just the values
+    return [value for _, value in sorted(keys, key=lambda item: item[0])]
+
+
+API_KEYS = _load_api_keys()
 invalid_keys = set()  # Track invalid keys to skip them
 current_key_index = 0
 
