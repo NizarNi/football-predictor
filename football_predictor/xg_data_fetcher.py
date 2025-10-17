@@ -1225,33 +1225,47 @@ def handle_league_xg(league_code: str, *, season: Optional[int] = None) -> Dict[
         resolved_season = get_xg_season()
 
     if canonical_label not in SUPPORTED_LEAGUES or not normalized_code:
-        payload = _build_unavailable_response(
+        result = _build_unavailable_response(
             f"xG data unavailable for {league_label}",
             reason="Unsupported competition",
             fast_path=False,
         )
-        payload.setdefault("message", payload.get("error"))
-        return payload
+        result.setdefault("message", result.get("error"))
+    else:
+        table = fetch_league_xg_stats(normalized_code, season=resolved_season, cache_only=True)
+        if table:
+            result = {
+                "availability": "available",
+                "refresh_status": "ready",
+                "league": league_label,
+                "league_code": normalized_code,
+                "season": resolved_season,
+                "team_count": len(table),
+                "xg_stats": table,
+            }
+        else:
+            _refresh_league_async(normalized_code, resolved_season)
+            result = {
+                "availability": "warming",
+                "refresh_status": "warming",
+                "league": league_label,
+                "league_code": normalized_code,
+                "season": resolved_season,
+            }
 
-    table = fetch_league_xg_stats(normalized_code, season=resolved_season, cache_only=True)
-    if table:
-        return {
-            "availability": "available",
-            "refresh_status": "ready",
-            "league": league_label,
-            "league_code": normalized_code,
-            "season": resolved_season,
-            "team_count": len(table),
-        }
+    normalized = LEAGUE_ALIASES.get(league_code, league_code)
 
-    _refresh_league_async(normalized_code, resolved_season)
-    return {
-        "availability": "warming",
-        "refresh_status": "warming",
-        "league": league_label,
-        "league_code": normalized_code,
-        "season": resolved_season,
-    }
+    if result.get("xg_stats") or result.get("logs") or "completed" in str(result.get("status", "")):
+        result["availability"] = "ready"
+    else:
+        result.setdefault("availability", "unavailable")
+
+    if result.get("refresh_status") not in ("ready", "warming", "debounced"):
+        result["refresh_status"] = "ready"
+
+    logger.info("xG availability for %s: %s", normalized, result["availability"])
+
+    return result
 
 # ----------------------------------------------------------------------
 # Team xG lookup / Match logs / Rolling / Form
