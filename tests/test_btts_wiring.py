@@ -49,7 +49,10 @@ class BTTSTests(unittest.TestCase):
 
     @patch("football_predictor.odds_calculator.calculate_btts_probability_from_xg")
     @patch("football_predictor.odds_calculator.calculate_btts_from_odds", return_value={"odds": []})
-    @patch("football_predictor.odds_api_client.get_event_odds", return_value=[{"market": "btts"}])
+    @patch(
+        "football_predictor.odds_api_client.get_event_odds",
+        return_value={"bookmakers": [{"markets": []}]},
+    )
     @patch("football_predictor.app.get_match_xg_prediction")
     @patch("football_predictor.app.get_current_season", return_value=2024)
     @patch("football_predictor.understat_client.fetch_understat_standings")
@@ -123,7 +126,10 @@ class BTTSTests(unittest.TestCase):
 
     @patch("football_predictor.odds_calculator.calculate_btts_probability_from_xg")
     @patch("football_predictor.odds_calculator.calculate_btts_from_odds", return_value={"odds": []})
-    @patch("football_predictor.odds_api_client.get_event_odds", return_value=[{"market": "btts"}])
+    @patch(
+        "football_predictor.odds_api_client.get_event_odds",
+        return_value={"bookmakers": [{"markets": []}]},
+    )
     @patch("football_predictor.app.get_team_recent_xg_snapshot", side_effect=[
         {
             "team": "Home FC",

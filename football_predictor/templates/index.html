@@ -4402,6 +4402,7 @@
 
                     const state = {
                         market: null,
+                        marketUnavailable: false,
                         xg: null,
                         marketError: null,
                         xgError: null
@@ -4410,6 +4411,12 @@
                     const refreshSections = () => {
                         if (state.market) {
                             loader.renderMarket(buildBttsMarketHtml(state.market));
+                        } else if (state.marketUnavailable) {
+                            loader.renderMarket(`
+                                <div class="alert alert-secondary mb-2 small" data-testid="btts-market-unavailable">
+                                    <i class="fas fa-info-circle me-2"></i>Market not available for this event.
+                                </div>
+                            `);
                         } else if (state.marketError) {
                             loader.renderMarket(`<div class="alert alert-warning">${state.marketError}</div>`);
                         }
@@ -4443,6 +4450,8 @@
                         .then(data => {
                             if (data.error) {
                                 state.marketError = data.error;
+                            } else if (data.btts && data.btts.market_unavailable) {
+                                state.marketUnavailable = true;
                             } else if (data.btts && data.btts.market) {
                                 state.market = data.btts.market;
                             } else {

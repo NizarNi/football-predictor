@@ -352,6 +352,14 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
             )
             adaptive_timeout.record_success()
         except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                logger.info(
+                    "BTTS market 404 for %s event %s — treating as unavailable",
+                    sport_key,
+                    event_id,
+                )
+                return {"bookmakers": []}
+
             if e.response is not None and e.response.status_code == 401:
                 invalid_keys.add(api_key)
                 key_position = attempt + 1

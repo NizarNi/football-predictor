@@ -1157,6 +1157,7 @@ def get_match_btts(event_id):
             from .odds_calculator import calculate_btts_from_odds, calculate_btts_probability_from_xg
 
             btts_market = None
+            market_unavailable = False
             if want_market:
                 odds_data = get_event_odds(
                     sport_key,
@@ -1164,13 +1165,10 @@ def get_match_btts(event_id):
                     regions="us,uk,eu",
                     markets="btts",
                 )
-                if not odds_data:
-                    return make_error(
-                        error="No BTTS odds found for this match",
-                        message="No BTTS odds found",
-                        status_code=404,
-                    )
-                btts_market = calculate_btts_from_odds(odds_data)
+                if not odds_data or not odds_data.get("bookmakers"):
+                    market_unavailable = True
+                else:
+                    btts_market = calculate_btts_from_odds(odds_data)
 
             btts_xg = None
             rolling_payload: dict[str, Any] = {}
@@ -1257,7 +1255,10 @@ def get_match_btts(event_id):
 
             btts_payload: dict[str, Any] = {}
             if want_market:
-                btts_payload["market"] = btts_market
+                if market_unavailable:
+                    btts_payload["market_unavailable"] = True
+                elif btts_market is not None:
+                    btts_payload["market"] = btts_market
             if want_xg:
                 btts_payload["xg_model"] = btts_xg
 

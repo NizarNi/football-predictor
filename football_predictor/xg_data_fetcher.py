@@ -620,7 +620,7 @@ def _refresh_league_async(league_code: str, season: int) -> None:
     _executor.submit(_task)
 
 
-_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("ENG", "GER", "ITA", "ESP", "FRA")
+_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("PL", "BL1", "SA", "PD", "FL1", "UCL", "UEL")
 
 
 def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
@@ -628,6 +628,10 @@ def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
 
     if season is None:
         season = get_xg_season()
+
+    if league_code not in LEAGUE_MAPPING:
+        logger.info("xG prewarm skipped for %s (unavailable)", league_code)
+        return False
 
     data, _age = _get_from_mem_cache(league_code, season)
     if data is not None:
@@ -641,7 +645,8 @@ def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
         logger.warning("xg_prefetch: failed to warm %s", league_code, exc_info=True)
         return False
 
-    if stats is None:
+    if not stats:
+        logger.info("xG prewarm skipped for %s (unavailable)", league_code)
         return False
 
     cached, _ = _get_from_mem_cache(league_code, season)
@@ -1100,7 +1105,7 @@ def fetch_league_xg_stats(league_code, season=None, cache_only: bool = False):
         return cached_data
 
     if league_code not in LEAGUE_MAPPING:
-        logger.warning("⚠️  League %s not supported for xG stats", league_code)
+        logger.info("xG stats unavailable for %s (unsupported)", league_code)
         return {}
 
     try:
