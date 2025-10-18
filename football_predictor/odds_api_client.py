@@ -4,7 +4,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import requests
 
@@ -60,6 +60,8 @@ def _parse_retry_after_seconds(value: Optional[str]) -> Optional[float]:
 
     now = datetime.now(dt.tzinfo)
     delay = (dt - now).total_seconds()
+    if delay > 0:
+        delay = max(delay, 0.1)
     return max(0.0, min(delay, MAX_RETRY_AFTER))
 
 
@@ -82,15 +84,17 @@ def fetch_odds_with_backoff(
     params: Optional[dict] = None,
     timeout: Optional[float] = None,
     max_attempts: Optional[int] = None,
+    request_callable: Optional[Callable[..., requests.Response]] = None,
 ) -> Tuple[requests.Response, int]:
     attempts = max_attempts or config_module.ODDS_MAX_ATTEMPTS
     timeout = timeout or API_TIMEOUT
+    request_fn = request_callable or requests.get
 
     last_error: Optional[Exception] = None
 
     for attempt in range(1, attempts + 1):
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=timeout)
+            response = request_fn(url, headers=headers, params=params, timeout=timeout)
         except requests.RequestException as exc:
             last_error = exc
             if attempt == attempts:
@@ -132,7 +136,95 @@ def fetch_odds_with_backoff(
     error_message = "Odds API retry limit exceeded"
     if last_error is not None:
         error_message = f"{error_message}: {last_error}"
+        error_code = "NETWORK_ERROR"
+        if isinstance(last_error, requests.Timeout):
+            error_code = "TIMEOUT"
+        elif isinstance(last_error, requests.ConnectionError):
+            error_code = "NETWORK_ERROR"
+        raise APIError("OddsAPI", error_code, error_message) from last_error
     raise APIError("OddsAPI", "NETWORK_ERROR", error_message)
+
+
+def _extract_attempts(response: requests.Response) -> int:
+    value = getattr(response, "_odds_backoff_attempts", 1)
+    try:
+        attempts = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, attempts)
+
+
+# --- Back-compat shims for legacy tests & callers ---------------------------------
+# NOTE: These shims allow tests that patch `odds_api_client._session` and
+# `odds_api_client.request_with_retries` to keep working. Internally, they call our
+# new `fetch_odds_with_backoff(... )`.
+
+import types
+import warnings
+
+# Minimal session-like object with a .get attribute that delegates to requests.get.
+# Tests can monkeypatch `_session.get` to simulate network behavior as before.
+_session = types.SimpleNamespace(get=requests.get, request=requests.request)
+
+
+def request_with_retries(
+    session,
+    method: str,
+    url: str,
+    *,
+    params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: Optional[float] = None,
+    max_retries: Optional[int] = None,
+    backoff_factor: Optional[float] = None,
+    status_forcelist: Optional[tuple] = None,
+    logger=None,
+    context: Optional[str] = None,
+    sanitize=None,
+):
+    """Back-compat wrapper that preserves the old signature used in tests."""
+
+    warnings.warn(
+        "request_with_retries is deprecated; use fetch_odds_with_backoff instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    request_callable = None
+
+    method_name = (method or "get").lower()
+    if session is not None:
+        if hasattr(session, "request"):
+            def request_callable(url, headers=None, params=None, timeout=None):
+                return session.request(
+                    method_name,
+                    url,
+                    params=params,
+                    headers=headers,
+                    timeout=timeout,
+                )
+        elif hasattr(session, method_name):
+            method_func = getattr(session, method_name)
+
+            def request_callable(url, headers=None, params=None, timeout=None):
+                return method_func(url, headers=headers, params=params, timeout=timeout)
+
+    try:
+        response, attempts = fetch_odds_with_backoff(
+            url,
+            headers=headers,
+            params=params,
+            timeout=timeout,
+            max_attempts=max_retries,
+            request_callable=request_callable,
+        )
+        setattr(response, "_odds_backoff_attempts", attempts)
+        return response
+    except APIError as exc:
+        if sanitize:
+            msg = sanitize(str(exc))
+            raise APIError("OddsAPI", "NETWORK_ERROR", msg) from exc
+        raise
 
 def sanitize_error_message(message):
     """
@@ -165,11 +257,14 @@ def get_available_sports():
 
     timeout = adaptive_timeout.get_timeout()
     try:
-        response, attempts = fetch_odds_with_backoff(
+        response = request_with_retries(
+            _session,
+            "get",
             url,
             params={"apiKey": api_key},
             timeout=timeout,
         )
+        attempts = _extract_attempts(response)
         if attempts > 1:
             logger.info("Odds API backoff done for sports listing after %d attempts", attempts)
         adaptive_timeout.record_success()
@@ -228,11 +323,14 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
 
         timeout = adaptive_timeout.get_timeout()
         try:
-            response, attempts = fetch_odds_with_backoff(
+            response = request_with_retries(
+                _session,
+                "get",
                 url,
                 params=params,
                 timeout=timeout,
             )
+            attempts = _extract_attempts(response)
             if attempts > 1:
                 logger.info(
                     "Odds API backoff done for %s after %d attempts",
@@ -445,11 +543,14 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
         
         timeout = adaptive_timeout.get_timeout()
         try:
-            response, attempts = fetch_odds_with_backoff(
+            response = request_with_retries(
+                _session,
+                "get",
                 url,
                 params=params,
                 timeout=timeout,
             )
+            attempts = _extract_attempts(response)
             if attempts > 1:
                 logger.info(
                     "Odds API backoff done for %s event %s after %d attempts",
