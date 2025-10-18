@@ -28,3 +28,11 @@ def test_xg_toggle_ready_state():
     html = render_xg_toggle_html(data)
     assert "Show xG details" in html
     assert "Warming" not in html
+
+
+def test_index_contains_xg_button_initial():
+    from pathlib import Path
+
+    template = Path("football_predictor/templates/index.html").read_text(encoding="utf-8")
+
+    assert "Show xG analysis" in template

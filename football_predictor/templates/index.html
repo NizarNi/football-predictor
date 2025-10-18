@@ -1354,15 +1354,15 @@
 
             matchContext.innerHTML = `
                 <div class="text-center py-3">
-                    <button id="load-match-context-btn" class="btn btn-primary btn-lg" onclick="loadMatchContext(currentMatchData)">
-                        <i class="fas fa-chart-bar me-2"></i>Show Match Context
-                    </button>
-                    
-                    <!-- NEW: Always-visible xG Details button (stateful) -->
-                    <button id="xg-details-btn" class="btn btn-outline-primary btn-lg ms-2" onclick="openXgDetails()" aria-busy="false" data-state="idle">
-                        <span class="spinner-border spinner-border-sm me-2 d-none" role="status" aria-hidden="true"></span>
-                        <i class="fas fa-chart-line me-2"></i><span id="xg-details-label">xG Details</span>
-                    </button>
+                    <div class="d-flex gap-2 justify-content-center mt-2 flex-wrap">
+                        <button id="load-match-context-btn" class="btn btn-primary btn-lg" onclick="loadMatchContext(currentMatchData)">
+                            <i class="fas fa-chart-bar me-2"></i>Show Match Context
+                        </button>
+                        <button id="load-xg-btn" class="btn btn-outline-primary btn-lg" onclick="openXgPanel(currentMatchData)" aria-busy="false" data-state="idle">
+                            <span class="spinner-border spinner-border-sm me-2 d-none" role="status" aria-hidden="true"></span>
+                            <i class="fas fa-flask me-2"></i><span class="xg-btn-label">Show xG analysis</span>
+                        </button>
+                    </div>
                     <p class="text-muted small mt-2 mb-0">
                         <i class="fas fa-info-circle me-1"></i>League standings, team form, xG metrics & PPDA
                     </p>
@@ -3304,17 +3304,32 @@
                 matchLeague.textContent = match.league || 'Unknown League';
                 matchDate.textContent = match.datetime || 'TBD';
 
-                // Show on-demand Match Context button instead of auto-loading
+                // Show on-demand Match Context and immediate xG button
                 showMatchContextButton(match);
 
-                if (typeof startXgPreload === 'function') {
+                if (typeof showXgButton === 'function') {
                     try {
-                        startXgPreload(match);
-                        if (typeof hideXgPanel === 'function') {
-                            hideXgPanel();
-                        }
+                        showXgButton(match);
                     } catch (err) {
-                        console.warn('Failed to start xG preload:', err);
+                        console.warn('Failed to prime xG button:', err);
+                    }
+                }
+
+                if (typeof resetXgViewState === 'function') {
+                    try {
+                        resetXgViewState();
+                    } catch (err) {
+                        console.warn('Failed to reset xG panel state:', err);
+                    }
+                } else if (typeof hideXgPanel === 'function') {
+                    hideXgPanel();
+                }
+
+                if (typeof warmXgInBackground === 'function') {
+                    try {
+                        warmXgInBackground(match);
+                    } catch (err) {
+                        console.warn('Failed to warm xG in background:', err);
                     }
                 }
 
@@ -4784,50 +4799,60 @@
     </script>
 
     <script>
-    // --- T40j: xG Details preload controller (additive, local JS-only) ---
+    // --- T41a: xG button warm + poller ---
 
-    // Local cache: key -> { snapshot, logs, ts }
     const xgCache = new Map();
-    // Current controller & state
+    const XG_CACHE_TTL_MS = 5 * 60 * 1000;
+    const XG_POLL_INTERVAL_MS = 1200;
+    const XG_MAX_POLL_ATTEMPTS = 20;
+
     let xgCtrl = {
-      state: 'idle', // 'idle'|'warming'|'ready'|'unavailable'|'error'
+      state: 'idle',
       key: null,
       snapshot: null,
       logs: null,
-      aborter: null,
+      raw: null,
+      refreshStatus: null,
+      availability: null,
     };
 
-    // Build a stable key for cache
+    let xgPollTimer = null;
+    let xgPollAttempts = 0;
+    let xgPollInFlight = false;
+
     function xgKeyFromMatch(match) {
       if (!match) return null;
       const league = match.league || match.league_code || match.sport_key || '';
-      return `${league}:${match.home_team}|${match.away_team}`;
+      const home = match.home_team || '';
+      const away = match.away_team || '';
+      return `${league}:${home}|${away}`;
     }
 
-    // UI helpers for the button
     function setXgButtonState(state) {
-      const btn = document.getElementById('xg-details-btn');
-      const label = document.getElementById('xg-details-label');
+      const btn = document.getElementById('load-xg-btn');
+      const label = btn?.querySelector('.xg-btn-label');
       const spin = btn?.querySelector('.spinner-border');
-      if (!btn || !label || !spin) return;
+      if (!btn || !label || !spin) {
+        return;
+      }
 
-      btn.setAttribute('data-state', state);
+      btn.dataset.state = state;
       btn.setAttribute('aria-busy', state === 'warming' ? 'true' : 'false');
 
-      // Defaults
       btn.disabled = false;
       spin.classList.add('d-none');
-      btn.classList.remove('btn-secondary', 'btn-outline-secondary');
-      btn.classList.remove('btn-outline-primary');
-      btn.classList.add('btn-outline-primary');
+      btn.classList.remove('btn-outline-secondary', 'btn-secondary', 'btn-primary');
+      if (!btn.classList.contains('btn-outline-primary')) {
+        btn.classList.add('btn-outline-primary');
+      }
 
       if (state === 'idle') {
-        label.textContent = 'xG Details';
+        label.textContent = 'Show xG analysis';
       } else if (state === 'warming') {
         spin.classList.remove('d-none');
         label.textContent = 'Warming xG…';
       } else if (state === 'ready') {
-        label.textContent = 'xG Details';
+        label.textContent = 'Show xG analysis';
       } else if (state === 'unavailable') {
         btn.disabled = true;
         btn.classList.remove('btn-outline-primary');
@@ -4835,55 +4860,104 @@
         label.textContent = 'xG Unavailable';
       } else if (state === 'error') {
         label.textContent = 'Retry xG';
+      } else {
+        label.textContent = 'Show xG analysis';
       }
     }
 
-    // Panel helpers
     function showXgPanel() {
       const panel = document.getElementById('xg-details-panel');
-      panel && panel.classList.remove('d-none');
-    }
-    function hideXgPanel() {
-      const panel = document.getElementById('xg-details-panel');
-      panel && panel.classList.add('d-none');
-    }
-    function setXgBanner(visible) {
-      const el = document.getElementById('xg-warming-banner');
-      if (!el) return;
-      el.classList.toggle('d-none', !visible);
-    }
-    function setXgUnavailable(visible) {
-      const el = document.getElementById('xg-unavailable');
-      if (!el) return;
-      el.classList.toggle('d-none', !visible);
-    }
-    function setXgError(visible) {
-      const el = document.getElementById('xg-error');
-      if (!el) return;
-      el.classList.toggle('d-none', !visible);
-    }
-    function renderXgSnapshot(html) {
-      const el = document.getElementById('xg-snapshot-section');
-      if (el) { el.innerHTML = html || ''; }
-    }
-    function renderXgCharts(html) {
-      const el = document.getElementById('xg-charts-section');
-      if (!el) return;
-      el.innerHTML = html || '';
-      el.classList.toggle('d-none', !html);
+      if (panel) {
+        panel.classList.remove('d-none');
+      }
     }
 
-    // Build snapshot HTML from existing `currentXgData`-like shape
+    function hideXgPanel() {
+      const panel = document.getElementById('xg-details-panel');
+      if (panel) {
+        panel.classList.add('d-none');
+      }
+    }
+
+    function setXgBanner(visible) {
+      const el = document.getElementById('xg-warming-banner');
+      if (el) {
+        el.classList.toggle('d-none', !visible);
+      }
+    }
+
+    function setXgUnavailable(visible) {
+      const el = document.getElementById('xg-unavailable');
+      if (el) {
+        el.classList.toggle('d-none', !visible);
+      }
+    }
+
+    function setXgError(visible) {
+      const el = document.getElementById('xg-error');
+      if (el) {
+        el.classList.toggle('d-none', !visible);
+      }
+    }
+
+    function renderXgSnapshot(html) {
+      const el = document.getElementById('xg-snapshot-section');
+      if (el) {
+        el.innerHTML = html || '';
+      }
+    }
+
+    function renderXgCharts(html) {
+      const el = document.getElementById('xg-charts-section');
+      if (el) {
+        el.innerHTML = html || '';
+        el.classList.toggle('d-none', !html);
+      }
+    }
+
+    function renderXgSkeleton() {
+      showXgPanel();
+      setXgBanner(true);
+      setXgUnavailable(false);
+      setXgError(false);
+      renderXgSnapshot('<div class="text-muted small text-center"><i class="fas fa-hourglass-half me-2"></i>Preparing expected goals snapshot…</div>');
+      renderXgCharts('');
+    }
+
+    function hydrateXgCharts(logs) {
+      const homeMatches = logs?.home_recent || [];
+      const awayMatches = logs?.away_recent || [];
+
+      if (window.homeXgChart) {
+        window.homeXgChart.destroy();
+        window.homeXgChart = null;
+      }
+      if (window.awayXgChart) {
+        window.awayXgChart.destroy();
+        window.awayXgChart = null;
+      }
+
+      if (typeof createXgTrendChart !== 'function') {
+        return;
+      }
+
+      if (homeMatches.length) {
+        window.homeXgChart = createXgTrendChart('home-xg-chart', homeMatches, currentMatchData?.home_team);
+      }
+      if (awayMatches.length) {
+        window.awayXgChart = createXgTrendChart('away-xg-chart', awayMatches, currentMatchData?.away_team);
+      }
+    }
+
     function buildSnapshotHtml(snapshot) {
-      // Be defensive: show basic averages if present
       const home = snapshot?.home_stats?.xg_for_per_game;
       const away = snapshot?.away_stats?.xg_for_per_game;
       if (home == null && away == null) {
-        return `<div class="text-muted small">No season xG snapshot available yet.</div>`;
+        return '<div class="text-muted small">No season xG snapshot available yet.</div>';
       }
+
       const homeLabel = home != null ? Number(home).toFixed(2) : '—';
       const awayLabel = away != null ? Number(away).toFixed(2) : '—';
-      // Keep same brand color function already present in repo
       const homeColor = (typeof getTeamBrandColor === 'function' && getTeamBrandColor(currentMatchData?.home_team)) || '#0d6efd';
       const awayColor = (typeof getTeamBrandColor === 'function' && getTeamBrandColor(currentMatchData?.away_team)) || '#dc3545';
 
@@ -4897,9 +4971,7 @@
         </div>`;
     }
 
-    // Minimal charts placeholder (charts already exist elsewhere; we trigger the same build you use)
-    function buildChartsHtml(logs) {
-      // We only need containers; your existing chart builder (e.g. createXgTrendChart) will rehydrate.
+    function buildChartsHtml() {
       return `
         <div class="row">
           <div class="col-md-6"><canvas id="home-xg-chart" height="160"></canvas></div>
@@ -4908,153 +4980,379 @@
       `;
     }
 
-    // Kick off preload on match selection
-    function startXgPreload(match) {
-      // Cancel previous
-      if (xgCtrl.aborter) xgCtrl.aborter.abort();
-
-      xgCtrl = { state: 'idle', key: xgKeyFromMatch(match), snapshot: null, logs: null, aborter: new AbortController() };
-      setXgButtonState('warming'); // optimistic: start warming immediately
-      setXgUnavailable(false); setXgError(false); setXgBanner(false);
-      renderXgSnapshot(''); renderXgCharts('');
-
-      const cacheHit = xgCtrl.key && xgCache.get(xgCtrl.key);
-      if (cacheHit && cacheHit.snapshot && cacheHit.logs && (Date.now() - cacheHit.ts) < 5 * 60 * 1000) {
-        // Fresh cache: instant ready
-        xgCtrl.state = 'ready';
-        xgCtrl.snapshot = cacheHit.snapshot;
-        xgCtrl.logs = cacheHit.logs;
-        setXgButtonState('ready');
-        return;
+    function buildXgUrl(match) {
+      if (!match) {
+        return null;
       }
-
-      // Build URL (same route you already use in the app). Keep defensive params.
-      const league = match?.league_code || match?.league || match?.sport_key || '';
-      const eventId = match?.event_id ?? match?.id ?? match?.eventId;
+      const league = match.league_code || match.league || match.sport_key || '';
+      const eventId = match.event_id ?? match.id ?? match.eventId;
       if (!eventId) {
-        xgCtrl.state = 'error';
-        setXgButtonState('error');
-        return;
+        return null;
       }
-      const base = `/match/${eventId}/xg?sport_key=${encodeURIComponent(match?.sport_key || '')}&home_team=${encodeURIComponent(match?.home_team || '')}&away_team=${encodeURIComponent(match?.away_team || '')}${league ? `&league=${encodeURIComponent(league)}` : ''}`;
-
-      // First request (fast path returns snapshot + warm status). We reuse the same route; no API change.
-      fetch(base, { signal: xgCtrl.aborter.signal })
-        .then(r => r.json())
-        .then(data => {
-          // Contract: show snapshot if present, inspect refresh_status & availability
-          const refresh = data?.refresh_status || data?.status || '';
-          const availability = data?.availability || 'available';
-          const snapshot = data?.snapshot || data?.season_stats || data; // be liberal
-          if (availability === 'unavailable') {
-            xgCtrl.state = 'unavailable';
-            setXgButtonState('unavailable');
-            return;
-          }
-          // We have at least snapshot
-          xgCtrl.snapshot = snapshot || null;
-          setXgButtonState(refresh === 'ready' ? 'ready' : 'warming');
-
-          // If it is already ready and contains recent logs/recent_matches, mark ready and cache
-          const homeRecent = data?.home_stats?.recent_matches;
-          const awayRecent = data?.away_stats?.recent_matches;
-          if (refresh === 'ready' && (homeRecent || awayRecent)) {
-            xgCtrl.logs = { home_recent: homeRecent || [], away_recent: awayRecent || [] };
-            xgCtrl.state = 'ready';
-            if (xgCtrl.key) xgCache.set(xgCtrl.key, { snapshot: xgCtrl.snapshot, logs: xgCtrl.logs, ts: Date.now() });
-            setXgButtonState('ready');
-            return;
-          }
-
-          // Otherwise, schedule one follow-up read after a short delay (no infinite loop)
-          setTimeout(() => {
-            fetch(base, { signal: xgCtrl.aborter.signal })
-              .then(r => r.json())
-              .then(data2 => {
-                const refresh2 = data2?.refresh_status || data2?.status || '';
-                const homeR = data2?.home_stats?.recent_matches;
-                const awayR = data2?.away_stats?.recent_matches;
-
-                if (data2?.availability === 'unavailable') {
-                  xgCtrl.state = 'unavailable';
-                  setXgButtonState('unavailable');
-                  return;
-                }
-
-                if (refresh2 === 'ready' && (homeR || awayR)) {
-                  xgCtrl.logs = { home_recent: homeR || [], away_recent: awayR || [] };
-                  xgCtrl.state = 'ready';
-                  if (xgCtrl.key) xgCache.set(xgCtrl.key, { snapshot: xgCtrl.snapshot, logs: xgCtrl.logs, ts: Date.now() });
-                  setXgButtonState('ready');
-                } else {
-                  // Still warming but we won’t loop forever
-                  xgCtrl.state = 'warming';
-                  setXgButtonState('warming');
-                }
-              })
-              .catch(() => { xgCtrl.state = 'error'; setXgButtonState('error'); });
-          }, 1200);
-        })
-        .catch(() => { xgCtrl.state = 'error'; setXgButtonState('error'); });
+      const params = [
+        `sport_key=${encodeURIComponent(match.sport_key || '')}`,
+        `home_team=${encodeURIComponent(match.home_team || '')}`,
+        `away_team=${encodeURIComponent(match.away_team || '')}`,
+      ];
+      if (league) {
+        params.push(`league=${encodeURIComponent(league)}`);
+      }
+      return `/match/${eventId}/xg?${params.join('&')}`;
     }
 
-    // Opens the panel; shows snapshot immediately, charts when ready.
-    function openXgDetails() {
-      if (!currentMatchData) return;
-      showXgPanel();
-      setXgUnavailable(false); setXgError(false);
+    function normalizeXgData(data, matchKey) {
+      const availability = data?.availability || (data?.xg ? 'available' : 'available');
+      const refreshRaw = data?.refresh_status || data?.status || '';
+      const refresh = String(refreshRaw || '').toLowerCase();
+      const snapshot = data?.snapshot || data?.season_stats || data?.xg_snapshot || data?.xg || data;
+      const homeRecent = data?.home_stats?.recent_matches || data?.recent_matches_home;
+      const awayRecent = data?.away_stats?.recent_matches || data?.recent_matches_away;
+      const logs = (homeRecent || awayRecent) ? { home_recent: homeRecent || [], away_recent: awayRecent || [] } : null;
 
-      if (xgCtrl.state === 'unavailable') {
-        setXgUnavailable(true);
-        setXgBanner(false);
-        renderXgSnapshot(''); renderXgCharts('');
+      let state = 'warming';
+      if (availability === 'unavailable') {
+        state = 'unavailable';
+      } else if (refresh === 'ready') {
+        state = (logs || data?.xg) ? 'ready' : 'warming';
+      } else if (refresh === 'error' || refresh === 'failed') {
+        state = 'error';
+      } else if (!refresh && (logs || data?.xg)) {
+        state = 'ready';
+      }
+
+      return {
+        matchKey,
+        availability,
+        refreshStatus: refresh || (state === 'ready' ? 'ready' : 'warming'),
+        snapshot: snapshot || null,
+        logs,
+        raw: data || null,
+        state,
+      };
+    }
+
+    function updateXgStateFromNormalized(normalized) {
+      if (!normalized) {
+        return;
+      }
+      xgCtrl.state = normalized.state;
+      xgCtrl.key = normalized.matchKey;
+      xgCtrl.snapshot = normalized.snapshot || null;
+      xgCtrl.logs = normalized.logs || null;
+      xgCtrl.raw = normalized.raw || null;
+      xgCtrl.refreshStatus = normalized.refreshStatus;
+      xgCtrl.availability = normalized.availability;
+    }
+
+    function updateXgButtonFromNormalized(normalized) {
+      if (!normalized) {
+        return;
+      }
+      if (normalized.availability === 'unavailable') {
+        setXgButtonState('unavailable');
+      } else if (normalized.state === 'ready') {
+        setXgButtonState('ready');
+      } else if (normalized.state === 'warming') {
+        setXgButtonState('warming');
+      } else if (normalized.state === 'error') {
+        setXgButtonState('error');
+      } else {
+        setXgButtonState('idle');
+      }
+    }
+
+    function getCachedXg(match) {
+      const key = xgKeyFromMatch(match);
+      if (!key) {
+        return null;
+      }
+      const cached = xgCache.get(key);
+      if (!cached) {
+        return null;
+      }
+      if ((Date.now() - cached.ts) > XG_CACHE_TTL_MS) {
+        xgCache.delete(key);
+        return null;
+      }
+      return cached;
+    }
+
+    function resetXgViewState() {
+      stopXgPolling();
+      setXgBanner(false);
+      setXgUnavailable(false);
+      setXgError(false);
+      renderXgSnapshot('');
+      renderXgCharts('');
+      hideXgPanel();
+      xgCtrl.state = 'idle';
+      xgCtrl.snapshot = null;
+      xgCtrl.logs = null;
+      xgCtrl.raw = null;
+      xgCtrl.refreshStatus = null;
+      xgCtrl.availability = null;
+    }
+
+    function showXgButton(match) {
+      const btn = document.getElementById('load-xg-btn');
+      if (!btn) {
+        return;
+      }
+      const cached = getCachedXg(match);
+      if (cached?.normalized) {
+        updateXgStateFromNormalized({ ...cached.normalized });
+        updateXgButtonFromNormalized(cached.normalized);
+      } else {
+        setXgButtonState('idle');
+      }
+    }
+
+    function warmXgInBackground(match) {
+      if (!match) {
+        return;
+      }
+      const key = xgKeyFromMatch(match);
+      xgCtrl.key = key;
+
+      const cached = getCachedXg(match);
+      if (cached?.normalized) {
+        updateXgStateFromNormalized(cached.normalized);
+        updateXgButtonFromNormalized(cached.normalized);
         return;
       }
 
-      // Always show snapshot if we have it
-      if (xgCtrl.snapshot) {
-        renderXgSnapshot(buildSnapshotHtml(xgCtrl.snapshot));
+      if (!key) {
+        setXgButtonState('unavailable');
+        return;
       }
 
       if (xgCtrl.state === 'warming') {
-        setXgBanner(true);
-        // Keep the charts section hidden until we truly have logs
-        renderXgCharts('');
-      } else if (xgCtrl.state === 'ready') {
-        setXgBanner(false);
-        // Render chart containers and trigger your existing chart hydration if present
-        renderXgCharts(buildChartsHtml(xgCtrl.logs));
-        // If you have functions like createXgTrendChart, call them safely after DOM paint
-        requestAnimationFrame(() => {
-          try { if (typeof refreshXgChartsIfOpen === 'function') refreshXgChartsIfOpen(); } catch (e) {}
+        return;
+      }
+
+      const url = buildXgUrl(match);
+      if (!url) {
+        setXgButtonState('unavailable');
+        return;
+      }
+
+      xgCtrl.state = 'warming';
+      setXgButtonState('warming');
+      fetchXgData(match, { updateButton: true, suppressErrorState: true }).catch(() => {});
+    }
+
+    function fetchXgData(match, { updateButton = true, suppressErrorState = false } = {}) {
+      const key = xgKeyFromMatch(match);
+      const url = buildXgUrl(match);
+      if (!key || !url) {
+        if (updateButton && !suppressErrorState) {
+          setXgButtonState('error');
+        }
+        return Promise.resolve(null);
+      }
+
+      return fetch(url)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`Failed to fetch xG data: ${response.status}`);
+          }
+          return response.json();
+        })
+        .then(data => {
+          const normalized = normalizeXgData(data, key);
+          if (key) {
+            xgCache.set(key, { normalized, ts: Date.now() });
+          }
+          if (xgCtrl.key !== key) {
+            return normalized;
+          }
+          updateXgStateFromNormalized(normalized);
+          if (updateButton) {
+            updateXgButtonFromNormalized(normalized);
+          }
+          return normalized;
+        })
+        .catch(error => {
+          if (xgCtrl.key === key && updateButton && !suppressErrorState) {
+            setXgButtonState('error');
+          }
+          throw error;
         });
-      } else if (xgCtrl.state === 'error') {
-        setXgError(true);
+    }
+
+    function renderXg(normalized) {
+      if (!normalized || normalized.matchKey !== xgCtrl.key) {
+        return;
+      }
+
+      showXgPanel();
+      setXgError(false);
+
+      if (normalized.availability === 'unavailable') {
+        setXgUnavailable(true);
+        setXgBanner(false);
+        renderXgSnapshot('');
+        renderXgCharts('');
+        return;
+      }
+
+      setXgUnavailable(false);
+
+      if (normalized.snapshot) {
+        renderXgSnapshot(buildSnapshotHtml(normalized.snapshot));
       } else {
-        // Idle → force a preload and show banner
-        startXgPreload(currentMatchData);
+        renderXgSnapshot('<div class="text-muted small">No xG snapshot available yet.</div>');
+      }
+
+      if (normalized.state === 'ready') {
+        setXgBanner(false);
+        if (normalized.logs && (normalized.logs.home_recent?.length || normalized.logs.away_recent?.length)) {
+          renderXgCharts(buildChartsHtml());
+          requestAnimationFrame(() => hydrateXgCharts(normalized.logs));
+        } else {
+          renderXgCharts('');
+        }
+      } else if (normalized.state === 'warming') {
         setXgBanner(true);
+        renderXgCharts('');
+      } else if (normalized.state === 'error') {
+        renderXgError('Unable to load xG data.');
       }
     }
 
-    // Called from Retry link in the panel
-    function retryXgFetch() {
-      if (!currentMatchData) return;
-      startXgPreload(currentMatchData);
-      openXgDetails();
+    function renderXgError(message) {
+      showXgPanel();
+      setXgBanner(false);
+      setXgUnavailable(false);
+      renderXgCharts('');
+      const el = document.getElementById('xg-error');
+      if (el) {
+        el.innerHTML = `<i class="fas fa-triangle-exclamation me-2"></i>${message} <a href="#" onclick="retryXgFetch();return false;">Retry</a>.`;
+      }
+      setXgError(true);
     }
 
-    // Hook into your existing match selection flow:
-    // Whenever user selects a match, we kick off preload and keep the button visible.
-    const _origSelectMatch = window.selectMatch || function(m){ currentMatchData = m; };
+    function fetchAndRenderXg(match, { startPolling = false, suppressErrorState = false } = {}) {
+      return fetchXgData(match, { updateButton: true, suppressErrorState })
+        .then(normalized => {
+          if (!normalized || normalized.matchKey !== xgCtrl.key) {
+            return;
+          }
+          renderXg(normalized);
+          if (startPolling) {
+            if (normalized.state === 'warming' && normalized.availability !== 'unavailable') {
+              startXgPolling(match);
+            } else {
+              stopXgPolling();
+            }
+          }
+        })
+        .catch(() => {
+          if (!suppressErrorState) {
+            renderXgError('Unable to load xG data.');
+          }
+        });
+    }
+
+    function startXgPolling(match) {
+      stopXgPolling();
+      if (!match) {
+        return;
+      }
+      xgPollAttempts = 0;
+      xgPollTimer = setInterval(() => {
+        if (xgPollInFlight) {
+          return;
+        }
+        xgPollAttempts += 1;
+        xgPollInFlight = true;
+        fetchXgData(match, { updateButton: true })
+          .then(normalized => {
+            xgPollInFlight = false;
+            if (!normalized || normalized.matchKey !== xgCtrl.key) {
+              return;
+            }
+            renderXg(normalized);
+            const shouldStop = normalized.state !== 'warming' || normalized.availability === 'unavailable' || xgPollAttempts >= XG_MAX_POLL_ATTEMPTS;
+            if (shouldStop) {
+              stopXgPolling();
+            }
+          })
+          .catch(() => {
+            xgPollInFlight = false;
+            if (xgPollAttempts >= XG_MAX_POLL_ATTEMPTS) {
+              stopXgPolling();
+              renderXgError('Unable to load xG data.');
+            }
+          });
+      }, XG_POLL_INTERVAL_MS);
+    }
+
+    function stopXgPolling() {
+      if (xgPollTimer) {
+        clearInterval(xgPollTimer);
+        xgPollTimer = null;
+      }
+      xgPollAttempts = 0;
+      xgPollInFlight = false;
+    }
+
+    function openXgPanel(match) {
+      const target = match || currentMatchData;
+      if (!target) {
+        return;
+      }
+      const key = xgKeyFromMatch(target);
+      if (key) {
+        xgCtrl.key = key;
+      }
+      setXgButtonState('warming');
+      renderXgSkeleton();
+
+      const cached = getCachedXg(target);
+      if (cached?.normalized) {
+        updateXgStateFromNormalized(cached.normalized);
+        renderXg(cached.normalized);
+        if (cached.normalized.state === 'ready' || cached.normalized.availability === 'unavailable') {
+          stopXgPolling();
+          return;
+        }
+      }
+
+      fetchAndRenderXg(target, { startPolling: true });
+    }
+
+    function retryXgFetch() {
+      if (!currentMatchData) {
+        return;
+      }
+      stopXgPolling();
+      setXgButtonState('warming');
+      renderXgSkeleton();
+      fetchAndRenderXg(currentMatchData, { startPolling: true });
+    }
+
+    const _origSelectMatch = window.selectMatch || function(m) { currentMatchData = m; };
     window.selectMatch = function(match) {
       _origSelectMatch(match);
-      try { startXgPreload(match); } catch(e) {}
-      setXgButtonState('warming'); // visible feedback right away
-      hideXgPanel();               // keep panel closed until user clicks
+      if (!match) {
+        return;
+      }
+      try {
+        showXgButton(match);
+        resetXgViewState();
+        warmXgInBackground(match);
+      } catch (error) {
+        console.warn('xG warm failed:', error);
+      }
     };
 
-    // If you don’t have selectMatch, call startXgPreload(match) inside your existing handler
+    window.showXgButton = showXgButton;
+    window.resetXgViewState = resetXgViewState;
+    window.warmXgInBackground = warmXgInBackground;
+    window.openXgPanel = openXgPanel;
+    window.retryXgFetch = retryXgFetch;
+    window.hideXgPanel = hideXgPanel;
     </script>
     </body>
 </html>
