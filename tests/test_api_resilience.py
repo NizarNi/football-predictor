@@ -17,7 +17,6 @@ if "soccerdata" not in sys.modules:
 if "pandas" not in sys.modules:
     sys.modules["pandas"] = types.ModuleType("pandas")
 
-from football_predictor import config
 from football_predictor import odds_api_client
 from football_predictor import xg_data_fetcher
 from football_predictor.errors import APIError
@@ -56,57 +55,60 @@ def api_key_setup(monkeypatch):
 def test_odds_api_retries_on_timeout(monkeypatch, api_key_setup):
     call_counter = {"count": 0}
 
-    def fake_request(method, url, timeout=None, **kwargs):
+    def fake_fetch(url, params=None, timeout=None, **kwargs):
         call_counter["count"] += 1
-        raise requests.exceptions.Timeout("simulated timeout")
+        raise APIError("OddsAPI", "TIMEOUT", "Odds API retry limit exceeded")
 
-    monkeypatch.setattr(odds_api_client._session, "request", fake_request)
+    monkeypatch.setattr(odds_api_client, "fetch_odds_with_backoff", fake_fetch)
 
     with pytest.raises(APIError) as exc:
         odds_api_client.get_available_sports()
 
-    assert call_counter["count"] == config.API_MAX_RETRIES
+    assert call_counter["count"] == 1
     assert exc.value.code == "TIMEOUT"
+    assert exc.value.message == "The Odds API did not respond in time."
 
 
 def test_odds_api_recovers_after_server_error(monkeypatch, api_key_setup):
-    responses = [
-        MockResponse(status_code=500, reason="Server Error"),
-        MockResponse(
+    captured = {}
+
+    def fake_fetch(url, params=None, timeout=None, **kwargs):
+        response = MockResponse(
             status_code=200,
             json_data={"sports": []},
             headers={"x-requests-remaining": "9", "x-requests-used": "1"},
-        ),
-    ]
-    call_counter = {"count": 0}
+        )
+        captured["response"] = response
+        return response, 2
 
-    def fake_request(method, url, timeout=None, **kwargs):
-        call_counter["count"] += 1
-        return responses.pop(0)
-
-    monkeypatch.setattr(odds_api_client._session, "request", fake_request)
+    monkeypatch.setattr(odds_api_client, "fetch_odds_with_backoff", fake_fetch)
 
     payload = odds_api_client.get_available_sports()
 
-    assert call_counter["count"] == 2
     assert payload == {"sports": []}
+    assert getattr(captured["response"], "_odds_backoff_attempts") == 2
 
 
 def test_odds_api_permanent_server_error(monkeypatch, api_key_setup):
-    responses = [MockResponse(status_code=503, reason="Service Unavailable") for _ in range(config.API_MAX_RETRIES)]
     call_counter = {"count": 0}
 
-    def fake_request(method, url, timeout=None, **kwargs):
+    def fake_fetch(url, params=None, timeout=None, **kwargs):
         call_counter["count"] += 1
-        return responses[min(call_counter["count"] - 1, len(responses) - 1)]
+        raise APIError(
+            "OddsAPI",
+            "NETWORK_ERROR",
+            "Odds API retry limit exceeded",
+            details="apiKey=SECRET",
+        )
 
-    monkeypatch.setattr(odds_api_client._session, "request", fake_request)
+    monkeypatch.setattr(odds_api_client, "fetch_odds_with_backoff", fake_fetch)
 
     with pytest.raises(APIError) as exc:
         odds_api_client.get_available_sports()
 
-    assert call_counter["count"] == config.API_MAX_RETRIES
-    assert exc.value.code in {"NETWORK_ERROR", "HTTP_ERROR"}
+    assert call_counter["count"] == 1
+    assert exc.value.code == "NETWORK_ERROR"
+    assert exc.value.details == "apiKey=***"
 
 
 def test_upcoming_route_returns_make_error_on_failure(monkeypatch):
