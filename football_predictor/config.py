@@ -79,6 +79,15 @@ UNDERSTAT_BASE_DELAY = float(os.getenv("UNDERSTAT_BASE_DELAY", 1.0))
 UNDERSTAT_JITTER_FACTOR = float(os.getenv("UNDERSTAT_JITTER_FACTOR", 0.3))
 """Maximum jitter factor (percentage) for Understat retry delays."""
 
+ODDS_MAX_ATTEMPTS = int(os.getenv("ODDS_MAX_ATTEMPTS", 3))
+"""Maximum retry attempts for Odds API requests."""
+
+ODDS_BASE_DELAY = float(os.getenv("ODDS_BASE_DELAY", 0.8))
+"""Base delay (seconds) used for Odds API exponential backoff."""
+
+ODDS_JITTER = float(os.getenv("ODDS_JITTER", 0.4))
+"""Maximum random jitter (seconds) added to Odds API backoff delays."""
+
 
 def setup_logger(name: str) -> logging.Logger:
     """Create or retrieve a configured logger for the application."""
