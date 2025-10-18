@@ -4196,16 +4196,29 @@
 
                 const homeLabel = homeAvg != null ? Number(homeAvg).toFixed(2) : '—';
                 const awayLabel = awayAvg != null ? Number(awayAvg).toFixed(2) : '—';
+                const homeBrand = getTeamBrandColor(currentMatchData.home_team) || '#0d6efd';
+                const awayBrand = getTeamBrandColor(currentMatchData.away_team) || '#dc3545';
 
                 return `
                     <div class="alert alert-light border mb-3 small text-center">
                         <i class="fas fa-bolt me-1"></i>Season snapshot:
-                        <span class="fw-bold text-primary">${currentMatchData.home_team}</span>
+                        <span style="color:${homeBrand}; font-weight:600;">${currentMatchData.home_team}</span>
                         ${homeLabel} xG / match ·
-                        <span class="fw-bold text-danger">${currentMatchData.away_team}</span>
+                        <span style="color:${awayBrand}; font-weight:600;">${currentMatchData.away_team}</span>
                         ${awayLabel} xG / match
                     </div>
                 `;
+            }
+
+            function completeBttsProgress() {
+                const bars = document.querySelectorAll('.btts-progress .progress-bar');
+                if (!bars.length) {
+                    return;
+                }
+                bars.forEach(bar => {
+                    bar.classList.remove('bg-secondary', 'bg-primary', 'progress-bar-animated', 'progress-bar-striped');
+                    bar.classList.add('bg-success');
+                });
             }
 
             function buildBttsSummaryHtml(market, xgModel) {
@@ -4310,6 +4323,7 @@
 
                 return {
                     setActiveStep,
+                    totalSteps: bars.length,
                     showFallback: () => fallbackEl && fallbackEl.classList.remove('d-none'),
                     hideFallback: () => fallbackEl && fallbackEl.classList.add('d-none'),
                     renderMarket: (html) => {
@@ -4373,13 +4387,15 @@
 
                         if (state.market && state.xg) {
                             loader.renderSummary(buildBttsSummaryHtml(state.market, state.xg));
+                            completeBttsProgress();
                         }
                     };
 
                     const updateProgress = () => {
                         if (state.market && state.xg) {
-                            loader.setActiveStep(2);
+                            loader.setActiveStep(loader.totalSteps || 3);
                             loader.hideFallback();
+                            completeBttsProgress();
                         } else if (state.xg) {
                             loader.setActiveStep(1);
                         } else {
