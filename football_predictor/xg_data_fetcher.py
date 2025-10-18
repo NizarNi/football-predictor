@@ -45,6 +45,7 @@ from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
 from .errors import APIError
 from .constants import (
     CAREER_XG_CACHE_TTL,
+    LEAGUE_CODE_MAPPING,
     LEAGUE_MAPPING,
     MATCH_LOGS_CACHE_TTL,
 )
@@ -620,7 +621,34 @@ def _refresh_league_async(league_code: str, season: int) -> None:
     _executor.submit(_task)
 
 
-_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("ENG", "GER", "ITA", "ESP", "FRA")
+# External (incoming) codes → internal xG league keys for prewarm routine
+PREWARM_CODE_MAP: Dict[str, Optional[str]] = {
+    # Top-5 domestic leagues
+    "ENG": "PL",
+    "GER": "BL1",
+    "ITA": "SA",
+    "ESP": "PD",
+    "FRA": "FL1",
+    # European competitions
+    "CL": "CL",
+    "EL": "EL",
+    "ECL": "ECL",
+}
+
+_DEFAULT_DOMESTIC_PREFETCH: Tuple[str, ...] = ("ENG", "GER", "ITA", "ESP", "FRA")
+_DEFAULT_EUROPE_PREFETCH: Tuple[str, ...] = tuple(
+    code for code in ("CL", "EL", "ECL") if code in LEAGUE_CODE_MAPPING
+)
+_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = _DEFAULT_DOMESTIC_PREFETCH + _DEFAULT_EUROPE_PREFETCH
+
+
+def _resolve_internal_league_code(external_code: str) -> Optional[str]:
+    code = (external_code or "").upper()
+    if not code:
+        return None
+    if code in LEAGUE_MAPPING:
+        return code
+    return PREWARM_CODE_MAP.get(code)
 
 
 def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
@@ -660,10 +688,22 @@ def warm_top5_leagues(
     """Warm the top-5 European leagues concurrently for faster startup."""
 
     target_leagues = leagues or _TOP5_PREFETCH_LEAGUES
+    if not target_leagues:
+        return {}
+
     executor_fn = warm_fn or warm_league_xg
     results: Dict[str, bool] = {}
-    with ThreadPoolExecutor(max_workers=len(target_leagues)) as executor:
-        futures = {executor.submit(executor_fn, league): league for league in target_leagues}
+
+    def _prefetch_single(code: str) -> bool:
+        internal = _resolve_internal_league_code(code)
+        if not internal:
+            logger.debug("xg prewarm: skip %s (no internal map)", code)
+            return False
+        return bool(executor_fn(internal))
+
+    max_workers = max(1, len(target_leagues))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_prefetch_single, league): league for league in target_leagues}
         for future in as_completed(futures):
             league = futures[future]
             try:

@@ -19,5 +19,9 @@ def test_warm_top5_leagues_concurrent(monkeypatch):
     duration = time.monotonic() - start
 
     assert duration < 10
-    assert set(calls) == {"ENG", "GER", "ITA", "ESP", "FRA"}
-    assert all(results.get(code) for code in calls)
+    expected_calls = {"PL", "BL1", "SA", "PD", "FL1", "CL", "EL"}
+    assert set(calls) == expected_calls
+    # Results are keyed by the external codes used for dispatch
+    expected_result_keys = {"ENG", "GER", "ITA", "ESP", "FRA", "CL", "EL"}
+    assert set(results.keys()) == expected_result_keys
+    assert all(results.get(code) for code in results)
