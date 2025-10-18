@@ -146,6 +146,10 @@ _PARTIAL_WINDOW_WARNINGS: set[tuple[str, str, int]] = set()
 _PLACEHOLDER_TEAM_NAMES = {"Home", "Away", "", None}
 
 
+# Lazily constructed canonical team index per (league, season)
+_xg_team_index: dict[tuple[str, str], dict[str, Dict[str, Any]]] = {}
+
+
 def _memoize_rolling_arrays(
     league_code: Optional[str],
     canonical_team: Optional[str],
@@ -460,6 +464,101 @@ def _resolve_fbref_team_name(raw_name: str, context: str) -> str:
             )
     return canonical
 
+
+def _resolver_normalize(
+    resolver: Any, raw_name: str, *, provider: str = "fbref"
+) -> str:
+    """Normalize a team name using a resolver interface or callable."""
+
+    if resolver is None:
+        return resolve_team_name(raw_name, provider=provider)
+
+    normalize = getattr(resolver, "normalize", None)
+    if callable(normalize):
+        try:
+            return normalize(raw_name, provider=provider)
+        except TypeError:
+            return normalize(raw_name)
+
+    if callable(resolver):
+        try:
+            return resolver(raw_name, provider=provider)
+        except TypeError:
+            return resolver(raw_name)
+
+    return resolve_team_name(raw_name, provider=provider)
+
+
+def _build_xg_index_if_needed(
+    league_code: str,
+    season: str,
+    league_xg: Dict[str, Dict[str, Any]],
+    resolver: Any,
+) -> Dict[str, Dict[str, Any]]:
+    key = (league_code, season)
+    if key in _xg_team_index:
+        return _xg_team_index[key]
+
+    idx: Dict[str, Dict[str, Any]] = {}
+    for raw_name, row in league_xg.items():
+        canonical = _resolver_normalize(resolver, raw_name) or raw_name
+        idx[canonical] = row
+
+    _xg_team_index[key] = idx
+    logger.info(
+        "xg_index: built canonical map for %s %s (%d teams)",
+        league_code,
+        season,
+        len(idx),
+    )
+    return idx
+
+
+def _find_team_xg(
+    league_code: str,
+    season: str,
+    input_name: str,
+    league_xg: Dict[str, Dict[str, Any]],
+    resolver: Any,
+) -> Optional[Dict[str, Any]]:
+    """Lookup a team within a league xG table using aliases and fuzzy fallbacks."""
+
+    idx = _build_xg_index_if_needed(league_code, season, league_xg, resolver)
+
+    if input_name in league_xg:
+        return league_xg[input_name]
+
+    canonical = _resolver_normalize(resolver, input_name) or input_name
+    if canonical in idx:
+        if canonical != input_name:
+            logger.debug(
+                "xg_lookup: '%s' → '%s' via alias (league %s %s)",
+                input_name,
+                canonical,
+                league_code,
+                season,
+            )
+        return idx[canonical]
+
+    try:
+        import difflib
+
+        best = difflib.get_close_matches(canonical, idx.keys(), n=1, cutoff=0.85)
+        if best:
+            logger.debug(
+                "xg_lookup: fuzzy '%s' → '%s' (league %s %s)",
+                canonical,
+                best[0],
+                league_code,
+                season,
+            )
+            return idx[best[0]]
+    except Exception:
+        pass
+
+    return None
+
+
 def _configure_fbref_client(fbref_client):
     """Attach the retry session to a soccerdata FBref client when possible."""
     timeout = adaptive_timeout.get_timeout()
@@ -558,6 +657,7 @@ def _set_mem_cache(
     timestamp = stored_at if stored_at is not None else time.time()
     with _LEAGUE_MEM_CACHE_LOCK:
         _LEAGUE_MEM_CACHE[key] = (timestamp, data)
+    _xg_team_index.pop((league_code, str(season)), None)
     # Clear any per-league debounce/stacktrace guards when we successfully refreshed
     with _refresh_attempt_lock:
         stale_keys = [k for k in _last_refresh_attempt if k[0] == league_code]
@@ -1534,28 +1634,29 @@ def get_team_xg_stats(team_name, league_code, season=None, league_stats=None):
         return None
 
     canonical_name = _resolve_fbref_team_name(team_name, "team_xg_lookup")
+    season_key = str(season if season is not None else get_xg_season())
 
-    if canonical_name in league_stats:
-        return league_stats[canonical_name]
+    match = _find_team_xg(
+        league_code,
+        season_key,
+        canonical_name,
+        league_stats,
+        resolve_team_name,
+    )
 
-    if team_name in league_stats:
-        return league_stats[team_name]
+    if match is None and team_name != canonical_name:
+        match = _find_team_xg(
+            league_code,
+            season_key,
+            team_name,
+            league_stats,
+            resolve_team_name,
+        )
 
-    for alias in get_all_aliases_for(canonical_name):
-        if alias in league_stats:
-            return league_stats[alias]
+    if match is None:
+        logger.warning("⚠️  Team '%s' not found in %s xG stats", team_name, league_code)
 
-    team_name_lower = team_name.lower()
-    for fbref_team, stats in league_stats.items():
-        if (
-            team_name_lower in fbref_team.lower()
-            or fbref_team.lower() in team_name_lower
-            or resolve_team_name(fbref_team, provider="fbref") == canonical_name
-        ):
-            return stats
-
-    logger.warning("⚠️  Team '%s' not found in %s xG stats", team_name, league_code)
-    return None
+    return match
 
 
 def get_team_recent_xg_snapshot(
