@@ -15,7 +15,6 @@ from ..settings import FOTMOB_TIMEOUT_MS
 from ..logging_utils import RateLimitedLogger
 from ..constants import fotmob_comp_id
 from ..fotmob_shared import to_iso_utc, season_from_iso, normalize_team_dict
-from ..compat import patch_asyncio_for_py311
 try:
     import soccerdata as sd
 except Exception:
@@ -96,22 +95,12 @@ class FotMobAdapter(
 
     def __init__(self, timeout_ms: Optional[int] = None):
         self.timeout_s = (timeout_ms or FOTMOB_TIMEOUT_MS) / 1000.0
-        # Defer import so the app doesn’t require the lib unless this adapter is used
-        try:
-            patch_asyncio_for_py311()
-            from fotmob_api import FotMob  # type: ignore
-
-            self._client_cls = FotMob
-        except Exception as e:  # pragma: no cover - import failure path
-            # Keep class constructible even if dep isn’t installed yet
-            log.warning("fotmob_client_import_failed: %s", e)
-            self._client_cls = None
+        # Hybrid path does not use a persistent client; keep a placeholder.
+        self._client_cls = None
 
     def _client(self):
-        # Construct a new client per call for now (stateless); can pool later
-        if self._client_cls is None:
-            raise RuntimeError("FotMob client not available. Is 'fotmob-api' installed?")
-        return self._client_cls(timeout=self.timeout_s)
+        # Not used in the hybrid path (soccerdata for Top-5, FotmobAPI inline for UCL/UEL).
+        raise RuntimeError("internal: _client unused in hybrid path")
 
     # -------- FixturesPort --------
     def list_competitions(self) -> List[dict]:
