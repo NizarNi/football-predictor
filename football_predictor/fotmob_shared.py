@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
-from .logging_utils import setup_logger
+# --- logging setup (robust) ---
+# Try to import the helper from your logging_utils; fall back to stdlib logger if absent.
+try:
+    from .logging_utils import setup_logger  # type: ignore
+except Exception:
+    import logging as _logging
+    def setup_logger(name: str):
+        return _logging.getLogger(name)
+
+log = setup_logger(__name__)
+# --- end logging setup ---
+
 from .validators import normalize_team_name
 from . import name_resolver as _nr
 from . import logo_resolver as _lr
