@@ -160,6 +160,10 @@ class FotMobAdapter(
                 fm = sd.FotMob(leagues=[league_str], no_cache=True, no_store=True)
                 # soccerdata >=1.8 uses read_schedule() for fixtures/schedule
                 df = fm.read_schedule()
+                try:
+                    log.info("soccerdata cols=%s size=%s", list(df.columns), len(df))
+                except Exception:
+                    pass
                 for _, row in df.iterrows():
                     # tolerate schema differences across soccerdata versions
                     def _first(*keys):
