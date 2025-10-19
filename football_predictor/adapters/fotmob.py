@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any, Tuple
 import time
 import threading
 from datetime import datetime, timezone
+import logging
 
 from ..ports.fixtures import FixturesPort, Fixture
 from ..ports.match_stats import MatchStatsPort, MatchStats
@@ -10,11 +11,11 @@ from ..ports.standings import StandingsPort, Standings
 from ..ports.lineups import LineupsPort, Lineups
 from ..ports.events import EventsPort, Events
 from ..settings import FOTMOB_TIMEOUT_MS
-from ..logging_utils import RateLimitedLogger
 from ..constants import fotmob_comp_id
+from ..fotmob_shared import to_iso_utc, season_from_iso, normalize_team_dict
 from ..compat import patch_asyncio_for_py311
 
-log = RateLimitedLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 # Simple in-process TTL cache to keep Replit happy (stub now; filled in later tasks)
@@ -42,18 +43,6 @@ class _TTLCache:
 
 _cache = _TTLCache()
 
-
-ISO_FMT = "%Y-%m-%dT%H:%M:%SZ"
-
-
-def _to_iso_utc(dt: datetime) -> str:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    return dt.strftime(ISO_FMT)
-
-
 def _status_from_fotmob(
     raw_status: str | None, started: bool | None, finished: bool | None
 ) -> tuple[str, int | None]:
@@ -79,20 +68,6 @@ def _status_from_fotmob(
                 pass
         return "LIVE", m
     return "NS", None
-
-
-def _norm_team(t: dict) -> dict:
-    # Accept common shapes, be defensive
-    name = t.get("name") or t.get("shortName") or t.get("teamName") or ""
-    tid = t.get("id") or t.get("teamId") or t.get("idTeam") or 0
-    score = t.get("score")
-    try:
-        score = int(score) if score is not None else None
-    except Exception:
-        score = None
-    return {"id": int(tid) if tid else 0, "name": str(name), "score": score}
-
-
 def _backoff_attempts():
     # yields small backoff (ms) with jitter. Keep tiny for Replit free tier.
     import random
@@ -214,25 +189,25 @@ class FotMobAdapter(
                 )
                 kickoff_raw = m.get("date") or m.get("kickoff") or m.get("time")
                 if isinstance(kickoff_raw, (int, float)):
-                    kickoff_iso = _to_iso_utc(
+                    kickoff_iso = to_iso_utc(
                         datetime.fromtimestamp(float(kickoff_raw), tz=timezone.utc)
                     )
                 else:
                     try:
-                        kickoff_iso = _to_iso_utc(
+                        kickoff_iso = to_iso_utc(
                             datetime.fromisoformat(
                                 str(kickoff_raw).replace("Z", "+00:00")
                             )
                         )
                     except Exception:
                         try:
-                            kickoff_iso = _to_iso_utc(
+                            kickoff_iso = to_iso_utc(
                                 datetime.strptime(
                                     str(kickoff_raw)[:10], "%Y-%m-%d"
                                 ).replace(tzinfo=timezone.utc)
                             )
                         except Exception:
-                            kickoff_iso = _to_iso_utc(start_dt)
+                            kickoff_iso = to_iso_utc(start_dt)
 
                 started = m.get("started") or m.get("isLive") or False
                 finished = m.get("finished") or m.get("isFinished") or False
@@ -243,8 +218,8 @@ class FotMobAdapter(
                     raw_status, bool(started), bool(finished)
                 )
 
-                home = _norm_team(m.get("home") or m.get("homeTeam") or {})
-                away = _norm_team(m.get("away") or m.get("awayTeam") or {})
+                home = normalize_team_dict(m.get("home") or m.get("homeTeam") or {})
+                away = normalize_team_dict(m.get("away") or m.get("awayTeam") or {})
 
                 if not match_id:
                     continue
@@ -255,6 +230,7 @@ class FotMobAdapter(
                         "competition": str(league_name),
                         "competition_code": competition_code,
                         "kickoff_iso": kickoff_iso,
+                        "season": season_from_iso(kickoff_iso),
                         "status": status,
                         "minute": minute,
                         "home": home,
