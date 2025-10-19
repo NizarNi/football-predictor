@@ -15,7 +15,6 @@ from typing import Any, Optional
 from types import SimpleNamespace
 
 from .config import setup_logger, API_TIMEOUT_CONTEXT
-from football_predictor.settings import FOTMOB_ENABLED
 
 from .app_utils import make_ok, make_error, legacy_endpoint, update_server_context
 from .logo_resolver import resolve_logo
@@ -55,18 +54,15 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 logger = setup_logger(__name__)
 
-if FOTMOB_ENABLED:
-    try:
-        from football_predictor.routes.fotmob import bp as fotmob_page_bp
-        from football_predictor.routes.fotmob_api import bp as fotmob_api_bp
-
-        app.register_blueprint(fotmob_page_bp)
-        app.register_blueprint(fotmob_api_bp)
-        app.logger.info("fotmob_routes_registered: enabled")
-    except Exception as e:  # pragma: no cover - log blueprint registration errors
-        app.logger.exception("fotmob_routes_register_failed: %s", e)
-else:  # pragma: no cover - informational logging
-    app.logger.info("fotmob_routes_disabled")
+# Always register FotMob blueprints (no feature flag)
+try:
+    from football_predictor.routes.fotmob import bp as fotmob_page_bp
+    from football_predictor.routes.fotmob_api import bp as fotmob_api_bp
+    app.register_blueprint(fotmob_page_bp)
+    app.register_blueprint(fotmob_api_bp)
+    app.logger.info("fotmob_routes_registered: always-on")
+except Exception as e:  # pragma: no cover - log blueprint registration errors
+    app.logger.exception("fotmob_routes_register_failed: %s", e)
 
 # Warm alias resolver at startup to avoid lazy initialization gaps (T37).
 _ALIAS_PROVIDERS = warm_alias_resolver()
