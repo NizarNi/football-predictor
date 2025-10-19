@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}FotMob Explorer{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+  <div class="d-flex align-items-center mb-3">
+    <h4 class="mb-0"><i class="fas fa-compass me-2"></i>FotMob Explorer</h4>
+    <span class="badge bg-info ms-2">Beta</span>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-md-6">
+      <div class="card shadow-sm rounded-3">
+        <div class="card-body">
+          <div class="d-flex align-items-center justify-content-between">
+            <h6 class="card-title mb-0"><i class="fas fa-trophy me-2"></i>Standings</h6>
+            <div class="d-flex gap-2">
+              <select id="competitionSelect" class="form-select form-select-sm" style="width:auto">
+                <option value="CL" {% if default_competition=='CL' %}selected{% endif %}>UCL</option>
+                <option value="EL" {% if default_competition=='EL' %}selected{% endif %}>UEL</option>
+                <option value="PL">PL</option>
+                <option value="PD">LaLiga</option>
+                <option value="BL1">Bundesliga</option>
+                <option value="SA">Serie A</option>
+                <option value="FL1">Ligue 1</option>
+              </select>
+              <button class="btn btn-sm btn-outline-primary" id="btnLoadStandings">
+                <i class="fas fa-sync-alt me-1"></i>Load
+              </button>
+            </div>
+          </div>
+          <div class="mt-2 small text-muted">Data via provider (FotMob/UEFA/FD based on env).</div>
+          <div id="standingsArea" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-6">
+      <div class="card shadow-sm rounded-3">
+        <div class="card-body">
+          <div class="d-flex align-items-center justify-content-between">
+            <h6 class="card-title mb-0"><i class="fas fa-bolt me-2"></i>Live</h6>
+            <div class="d-flex gap-2">
+              <select id="liveLeagueSelect" class="form-select form-select-sm" style="width:auto">
+                <option value="PL" {% if default_league=='PL' %}selected{% endif %}>PL</option>
+                <option value="PD">LaLiga</option>
+                <option value="BL1">Bundesliga</option>
+                <option value="SA">Serie A</option>
+                <option value="FL1">Ligue 1</option>
+                <option value="CL">UCL</option>
+                <option value="EL">UEL</option>
+              </select>
+              <button class="btn btn-sm btn-outline-primary" id="btnLoadLive">
+                <i class="fas fa-sync-alt me-1"></i>Refresh
+              </button>
+            </div>
+          </div>
+          <div class="mt-2 small text-muted">Live badge + clock only (read-only).</div>
+          <div id="liveArea" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div class="card shadow-sm rounded-3">
+        <div class="card-body">
+          <div class="d-flex align-items-center justify-content-between">
+            <h6 class="card-title mb-0"><i class="fas fa-chart-line me-2"></i>League Snapshot (xG/xGA + xGOT, Shots, Possession, Pass%)</h6>
+            <div class="d-flex gap-2">
+              <select id="xgLeagueSelect" class="form-select form-select-sm" style="width:auto">
+                <option value="PL" {% if default_league=='PL' %}selected{% endif %}>PL</option>
+                <option value="PD">LaLiga</option>
+                <option value="BL1">Bundesliga</option>
+                <option value="SA">Serie A</option>
+                <option value="FL1">Ligue 1</option>
+              </select>
+              <button class="btn btn-sm btn-outline-primary" id="btnLoadSnapshot">
+                <i class="fas fa-sync-alt me-1"></i>Load
+              </button>
+            </div>
+          </div>
+          <div class="mt-2 small text-muted">Shows extra fields when provider supports them (e.g., FotMob xGOT, big chances).</div>
+          <div id="snapshotArea" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div class="card shadow-sm rounded-3">
+        <div class="card-body">
+          <div class="d-flex align-items-center justify-content-between">
+            <h6 class="card-title mb-0"><i class="fas fa-crosshairs me-2"></i>Team Rolling (with shot list if available)</h6>
+            <div class="d-flex gap-2">
+              <input id="teamInput" class="form-control form-control-sm" style="width:260px" placeholder="Team name (canonical)">
+              <select id="teamLeagueSelect" class="form-select form-select-sm" style="width:auto">
+                <option value="PL" {% if default_league=='PL' %}selected{% endif %}>PL</option>
+                <option value="PD">LaLiga</option>
+                <option value="BL1">Bundesliga</option>
+                <option value="SA">Serie A</option>
+                <option value="FL1">Ligue 1</option>
+              </select>
+              <button class="btn btn-sm btn-outline-primary" id="btnLoadTeam">
+                <i class="fas fa-search me-1"></i>Fetch
+              </button>
+            </div>
+          </div>
+          <div id="teamArea" class="mt-3"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/fotmob_explorer.js') }}"></script>
+{% endblock %}

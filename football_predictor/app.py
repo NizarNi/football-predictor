@@ -18,6 +18,7 @@ from .config import setup_logger, API_TIMEOUT_CONTEXT
 
 from .app_utils import make_ok, make_error, legacy_endpoint, update_server_context
 from .logo_resolver import resolve_logo
+from football_predictor.blueprints.fotmob_explorer import bp_fotmob
 
 # Import our custom modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -53,6 +54,8 @@ app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="/static")
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 logger = setup_logger(__name__)
+
+app.register_blueprint(bp_fotmob)
 
 # Warm alias resolver at startup to avoid lazy initialization gaps (T37).
 _ALIAS_PROVIDERS = warm_alias_resolver()
