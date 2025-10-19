@@ -5,15 +5,21 @@ import threading
 from datetime import datetime, timezone
 import logging
 
+from ..constants import fotmob_comp_id
 from ..ports.fixtures import FixturesPort, Fixture
 from ..ports.match_stats import MatchStatsPort, MatchStats
 from ..ports.standings import StandingsPort, Standings
 from ..ports.lineups import LineupsPort, Lineups
 from ..ports.events import EventsPort, Events
 from ..settings import FOTMOB_TIMEOUT_MS
+from ..logging_utils import RateLimitedLogger
 from ..constants import fotmob_comp_id
 from ..fotmob_shared import to_iso_utc, season_from_iso, normalize_team_dict
 from ..compat import patch_asyncio_for_py311
+try:
+    import soccerdata as sd
+except Exception:
+    sd = None
 
 log = logging.getLogger(__name__)
 
@@ -124,11 +130,11 @@ class FotMobAdapter(
     ) -> List[Fixture]:
         t0 = time.perf_counter()
         comp_id = fotmob_comp_id(competition_code)
-        key = ("fixtures", comp_id, start_iso, end_iso)
+        key = ("fixtures_mix", comp_id, start_iso, end_iso)
         cached = _cache.get(key, ttl_sec=60.0)
         if cached is not None:
             log.info(
-                "provider=fotmob op=get_fixtures comp=%s window=%s..%s took_ms=%d result=cache count=%d",
+                "provider=mix op=get_fixtures comp=%s window=%s..%s took_ms=%d result=cache count=%d",
                 competition_code,
                 start_iso,
                 end_iso,
@@ -138,121 +144,179 @@ class FotMobAdapter(
             return cached
 
         try:
-            start_dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
-            end_dt = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+            sdt = datetime.fromisoformat(start_iso.replace("Z", "+00:00")).astimezone(
+                timezone.utc
+            )
+            edt = datetime.fromisoformat(end_iso.replace("Z", "+00:00")).astimezone(
+                timezone.utc
+            )
         except Exception:
-            start_dt = datetime.strptime(start_iso[:10], "%Y-%m-%d").replace(
-                tzinfo=timezone.utc
-            )
-            end_dt = datetime.strptime(end_iso[:10], "%Y-%m-%d").replace(
-                tzinfo=timezone.utc
-            )
-
-        date_from = start_dt.strftime("%Y-%m-%d")
-        date_to = end_dt.strftime("%Y-%m-%d")
-
-        last_err: Optional[Exception] = None
-        for backoff in _backoff_attempts():
-            try:
-                client = self._client()
-                raw = client.get_fixtures(
-                    competition_id=comp_id, date_from=date_from, date_to=date_to
-                )
-                break
-            except Exception as e:
-                last_err = e
-                time.sleep(backoff)
-        else:
-            log.warning(
-                "provider=fotmob op=get_fixtures comp=%s window=%s..%s error=%s",
-                competition_code,
-                start_iso,
-                end_iso,
-                last_err,
-            )
+            log.warning("date_parse_failed start=%s end=%s", start_iso, end_iso)
             return []
 
         items: List[Fixture] = []
-        try:
-            for m in (raw or []):
-                match_id = (
-                    m.get("id")
-                    or m.get("matchId")
-                    or m.get("fixtureId")
-                    or m.get("matchID")
-                )
-                league_name = (
-                    m.get("leagueName")
-                    or m.get("competition")
-                    or m.get("tournamentName")
-                    or competition_code
-                )
-                kickoff_raw = m.get("date") or m.get("kickoff") or m.get("time")
-                if isinstance(kickoff_raw, (int, float)):
-                    kickoff_iso = to_iso_utc(
-                        datetime.fromtimestamp(float(kickoff_raw), tz=timezone.utc)
+
+        comp_map_sd = {
+            47: "ENG-Premier League",
+            87: "ESP-La Liga",
+            55: "ITA-Serie A",
+            54: "GER-Bundesliga",
+            53: "FRA-Ligue 1",
+        }
+        league_str = comp_map_sd.get(comp_id)
+
+        if league_str and sd is not None:
+            try:
+                fm = sd.FotMob(leagues=[league_str], no_cache=True, no_store=True)
+                df = fm.matches()
+                for _, row in df.iterrows():
+                    ko = row.get("Date")
+                    if ko is None:
+                        continue
+                    if hasattr(ko, "to_pydatetime"):
+                        ko_dt = ko.to_pydatetime().replace(tzinfo=timezone.utc)
+                    else:
+                        ko_dt = datetime.fromisoformat(str(ko)).replace(tzinfo=timezone.utc)
+                    if not (sdt <= ko_dt <= edt):
+                        continue
+
+                    home = normalize_team_dict(
+                        {
+                            "id": row.get("HomeTeamId"),
+                            "name": row.get("HomeTeam"),
+                            "score": row.get("HomeGoals"),
+                        }
                     )
-                else:
-                    try:
-                        kickoff_iso = to_iso_utc(
-                            datetime.fromisoformat(
-                                str(kickoff_raw).replace("Z", "+00:00")
-                            )
+                    away = normalize_team_dict(
+                        {
+                            "id": row.get("AwayTeamId"),
+                            "name": row.get("AwayTeam"),
+                            "score": row.get("AwayGoals"),
+                        }
+                    )
+                    match_id = row.get("MatchId") or row.get("Id") or row.get("match_id")
+                    if not match_id:
+                        continue
+
+                    items.append(
+                        {
+                            "match_id": str(match_id),
+                            "competition": league_str,
+                            "competition_code": competition_code,
+                            "kickoff_iso": to_iso_utc(ko_dt),
+                            "status": str(row.get("Status") or "").upper() or "NS",
+                            "minute": None,
+                            "home": home,
+                            "away": away,
+                        }
+                    )
+            except Exception as e:
+                log.warning("soccerdata_fetch_failed league=%s error=%s", league_str, e)
+
+        if not league_str:
+            try:
+                patch_asyncio_for_py311()
+                from fotmob_api import FotmobAPI  # type: ignore
+
+                api = FotmobAPI()
+                season = season_from_iso(start_iso)
+                raw = api.get_fixtures(id=comp_id, season=season)
+
+                def iter_matches(r):
+                    if not r:
+                        return
+                    if isinstance(r, list):
+                        for it in r:
+                            if isinstance(it, dict):
+                                ms = (
+                                    it.get("matches")
+                                    or it.get("roundMatches")
+                                    or it.get("fixtures")
+                                )
+                                if isinstance(ms, list):
+                                    for m in ms:
+                                        yield m
+                                    continue
+                            yield it
+                    elif isinstance(r, dict):
+                        ms = (
+                            r.get("matches")
+                            or r.get("roundMatches")
+                            or r.get("fixtures")
+                            or []
                         )
-                    except Exception:
+                        if isinstance(ms, list):
+                            for m in ms:
+                                yield m
+
+                for m in iter_matches(raw):
+                    mid = (
+                        m.get("id")
+                        or m.get("matchId")
+                        or m.get("match_id")
+                        or m.get("idMatch")
+                    )
+                    if not mid:
+                        continue
+
+                    ko_iso = None
+                    if "time" in m:
                         try:
-                            kickoff_iso = to_iso_utc(
-                                datetime.strptime(
-                                    str(kickoff_raw)[:10], "%Y-%m-%d"
-                                ).replace(tzinfo=timezone.utc)
-                            )
+                            ts = float(m["time"])
+                            ts = ts / (1000.0 if ts > 10_000_000_000 else 1.0)
+                            ko_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                            ko_iso = to_iso_utc(ko_dt)
                         except Exception:
-                            kickoff_iso = to_iso_utc(start_dt)
+                            pass
+                    if not ko_iso:
+                        for k in ("date", "kickoff", "kickOffTime"):
+                            v = m.get(k)
+                            if v:
+                                try:
+                                    ko_dt = datetime.fromisoformat(
+                                        str(v).replace("Z", "+00:00")
+                                    ).astimezone(timezone.utc)
+                                    ko_iso = to_iso_utc(ko_dt)
+                                    break
+                                except Exception:
+                                    pass
+                    if not ko_iso:
+                        continue
 
-                started = m.get("started") or m.get("isLive") or False
-                finished = m.get("finished") or m.get("isFinished") or False
-                raw_status = (
-                    m.get("status") or m.get("statusText") or m.get("liveStatus")
+                    ko_dt = datetime.fromisoformat(ko_iso.replace("Z", "+00:00"))
+                    if not (sdt <= ko_dt <= edt):
+                        continue
+
+                    home = normalize_team_dict(m.get("home") or m.get("homeTeam") or {})
+                    away = normalize_team_dict(m.get("away") or m.get("awayTeam") or {})
+
+                    items.append(
+                        {
+                            "match_id": str(mid),
+                            "competition": competition_code,
+                            "competition_code": competition_code,
+                            "kickoff_iso": ko_iso,
+                            "status": (str(m.get("status") or m.get("statusText") or "").upper() or "NS"),
+                            "minute": None,
+                            "home": home,
+                            "away": away,
+                        }
+                    )
+            except Exception as e:
+                log.warning(
+                    "fotmobapi_fetch_failed comp_id=%s code=%s error=%s",
+                    comp_id,
+                    competition_code,
+                    e,
                 )
-                status, minute = _status_from_fotmob(
-                    raw_status, bool(started), bool(finished)
-                )
-
-                home = normalize_team_dict(m.get("home") or m.get("homeTeam") or {})
-                away = normalize_team_dict(m.get("away") or m.get("awayTeam") or {})
-
-                if not match_id:
-                    continue
-
-                items.append(
-                    {
-                        "match_id": str(match_id),
-                        "competition": str(league_name),
-                        "competition_code": competition_code,
-                        "kickoff_iso": kickoff_iso,
-                        "season": season_from_iso(kickoff_iso),
-                        "status": status,
-                        "minute": minute,
-                        "home": home,
-                        "away": away,
-                    }
-                )
-        except Exception as e:
-            log.warning(
-                "provider=fotmob op=get_fixtures normalize_failed comp=%s error=%s",
-                competition_code,
-                e,
-            )
-            items = []
 
         try:
             items.sort(key=lambda it: it["kickoff_iso"])
         except Exception:
             pass
-
         _cache.set(key, items)
         log.info(
-            "provider=fotmob op=get_fixtures comp=%s window=%s..%s took_ms=%d result=ok count=%d",
+            "provider=mix op=get_fixtures comp=%s window=%s..%s took_ms=%d result=ok count=%d",
             competition_code,
             start_iso,
             end_iso,
