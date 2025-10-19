@@ -237,34 +237,35 @@ class FotMobAdapter(
                     return dt.strftime("%Y-%m-%d")
 
                 while cur <= edt:
+                    date_str = _yyyymmdd(cur)
                     try:
-                        # get_matches returns all matches for the date (worldwide); we filter by tournament/league id
-                        res = api.get_matches(date=_yyyymmdd(cur))
+                        # fotmob-api 1.0.0 supports ccode + timezone; pass explicit values to avoid locale/geo issues
+                        res = api.get_matches(date=date_str, timezone="UTC", ccode="ENG")
                     except Exception as e:
-                        log.warning("fotmobapi_get_matches_failed date=%s error=%s", _yyyymmdd(cur), e)
+                        # JSON decode or HTTP error -> warn and continue
+                        log.warning("fotmobapi_get_matches_failed date=%s error=%s", date_str, e)
                         cur += timedelta(days=1)
                         continue
 
-                    # The shape can be nested; look for arrays that hold matches
+                    # Walk the response to find match dicts (shape can vary)
                     def _walk(obj):
                         if isinstance(obj, dict):
                             for v in obj.values():
                                 yield from _walk(v)
                         elif isinstance(obj, list):
                             for v in obj:
-                                # many lists are match arrays already
                                 yield v
 
                     for m in _walk(res):
                         if not isinstance(m, dict):
                             continue
 
-                        # Filter by competition id (tournament/league)
+                        # Filter by competition ID (tournament/league) e.g. UCL=42, UEL=73
                         tid = (
                             m.get("tournamentId")
-                            or m.get("tournament", {}).get("id")
-                            or m.get("league", {}).get("id")
-                            or m.get("competition", {}).get("id")
+                            or (m.get("tournament") or {}).get("id")
+                            or (m.get("league") or {}).get("id")
+                            or (m.get("competition") or {}).get("id")
                         )
                         try:
                             tid = int(tid) if tid is not None else None
@@ -284,7 +285,7 @@ class FotMobAdapter(
                             continue
                         seen_ids.add(mid)
 
-                        # kickoff
+                        # kickoff (epoch or iso-ish)
                         ko_iso = None
                         if "time" in m:
                             try:
@@ -303,7 +304,7 @@ class FotMobAdapter(
                                         ko_iso = to_iso_utc(ko_dt)
                                         break
                                     except Exception:
-                                        # some APIs only return date; assume 00:00Z
+                                        # date-only fallback
                                         try:
                                             ko_dt = datetime.strptime(str(v)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
                                             ko_iso = to_iso_utc(ko_dt)
@@ -317,11 +318,9 @@ class FotMobAdapter(
                         if not (sdt <= ko_dt <= edt):
                             continue
 
-                        # teams
                         home = normalize_team_dict(m.get("home") or m.get("homeTeam") or m.get("homeTeamData") or {})
                         away = normalize_team_dict(m.get("away") or m.get("awayTeam") or m.get("awayTeamData") or {})
 
-                        # status
                         status = (str(m.get("status") or m.get("statusText") or "").upper() or "NS")
 
                         items.append(
