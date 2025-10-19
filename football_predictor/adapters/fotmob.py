@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List, Optional, Dict, Any, Tuple
 import time
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 
 from ..constants import fotmob_comp_id
@@ -228,103 +228,119 @@ class FotMobAdapter(
                 from fotmob_api import FotmobAPI  # type: ignore
 
                 api = FotmobAPI()
-                # FotMob endpoints commonly take the season START YEAR (e.g., "2025"), not "2025/2026"
-                try:
-                    _dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00")).astimezone(
-                        timezone.utc
-                    )
-                except Exception:
-                    _dt = datetime.utcnow().replace(tzinfo=timezone.utc)
-                season_start_year = str(_dt.year if _dt.month >= 7 else _dt.year - 1)
-                raw = api.get_fixtures(id=comp_id, season=season_start_year)
 
-                def iter_matches(r):
-                    if not r:
-                        return
-                    if isinstance(r, list):
-                        for it in r:
-                            if isinstance(it, dict):
-                                ms = (
-                                    it.get("matches")
-                                    or it.get("roundMatches")
-                                    or it.get("fixtures")
-                                )
-                                if isinstance(ms, list):
-                                    for m in ms:
-                                        yield m
-                                    continue
-                            yield it
-                    elif isinstance(r, dict):
-                        ms = (
-                            r.get("matches")
-                            or r.get("roundMatches")
-                            or r.get("fixtures")
-                            or []
+                # Iterate each UTC date in [sdt, edt], call get_matches(date=YYYY-MM-DD)
+                cur = sdt
+                seen_ids = set()
+
+                def _yyyymmdd(dt):
+                    return dt.strftime("%Y-%m-%d")
+
+                while cur <= edt:
+                    try:
+                        # get_matches returns all matches for the date (worldwide); we filter by tournament/league id
+                        res = api.get_matches(date=_yyyymmdd(cur))
+                    except Exception as e:
+                        log.warning("fotmobapi_get_matches_failed date=%s error=%s", _yyyymmdd(cur), e)
+                        cur += timedelta(days=1)
+                        continue
+
+                    # The shape can be nested; look for arrays that hold matches
+                    def _walk(obj):
+                        if isinstance(obj, dict):
+                            for v in obj.values():
+                                yield from _walk(v)
+                        elif isinstance(obj, list):
+                            for v in obj:
+                                # many lists are match arrays already
+                                yield v
+
+                    for m in _walk(res):
+                        if not isinstance(m, dict):
+                            continue
+
+                        # Filter by competition id (tournament/league)
+                        tid = (
+                            m.get("tournamentId")
+                            or m.get("tournament", {}).get("id")
+                            or m.get("league", {}).get("id")
+                            or m.get("competition", {}).get("id")
                         )
-                        if isinstance(ms, list):
-                            for m in ms:
-                                yield m
-
-                for m in iter_matches(raw):
-                    mid = (
-                        m.get("id")
-                        or m.get("matchId")
-                        or m.get("match_id")
-                        or m.get("idMatch")
-                    )
-                    if not mid:
-                        continue
-
-                    ko_iso = None
-                    if "time" in m:
                         try:
-                            ts = float(m["time"])
-                            ts = ts / (1000.0 if ts > 10_000_000_000 else 1.0)
-                            ko_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                            ko_iso = to_iso_utc(ko_dt)
+                            tid = int(tid) if tid is not None else None
                         except Exception:
-                            pass
-                    if not ko_iso:
-                        for k in ("date", "kickoff", "kickOffTime"):
-                            v = m.get(k)
-                            if v:
-                                try:
-                                    ko_dt = datetime.fromisoformat(
-                                        str(v).replace("Z", "+00:00")
-                                    ).astimezone(timezone.utc)
-                                    ko_iso = to_iso_utc(ko_dt)
-                                    break
-                                except Exception:
-                                    pass
-                    if not ko_iso:
-                        continue
+                            tid = None
+                        if tid != comp_id:
+                            continue
 
-                    ko_dt = datetime.fromisoformat(ko_iso.replace("Z", "+00:00"))
-                    if not (sdt <= ko_dt <= edt):
-                        continue
+                        mid = (
+                            m.get("id")
+                            or m.get("matchId")
+                            or m.get("match_id")
+                            or m.get("idMatch")
+                            or m.get("fixtureId")
+                        )
+                        if not mid or mid in seen_ids:
+                            continue
+                        seen_ids.add(mid)
 
-                    home = normalize_team_dict(m.get("home") or m.get("homeTeam") or {})
-                    away = normalize_team_dict(m.get("away") or m.get("awayTeam") or {})
+                        # kickoff
+                        ko_iso = None
+                        if "time" in m:
+                            try:
+                                ts = float(m["time"])
+                                ts = ts / (1000.0 if ts > 10_000_000_000 else 1.0)
+                                ko_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                                ko_iso = to_iso_utc(ko_dt)
+                            except Exception:
+                                pass
+                        if not ko_iso:
+                            for k in ("date", "kickoff", "kickOffTime", "utcDate"):
+                                v = m.get(k)
+                                if v:
+                                    try:
+                                        ko_dt = datetime.fromisoformat(str(v).replace("Z", "+00:00")).astimezone(timezone.utc)
+                                        ko_iso = to_iso_utc(ko_dt)
+                                        break
+                                    except Exception:
+                                        # some APIs only return date; assume 00:00Z
+                                        try:
+                                            ko_dt = datetime.strptime(str(v)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                                            ko_iso = to_iso_utc(ko_dt)
+                                            break
+                                        except Exception:
+                                            pass
+                        if not ko_iso:
+                            continue
 
-                    items.append(
-                        {
-                            "match_id": str(mid),
-                            "competition": competition_code,
-                            "competition_code": competition_code,
-                            "kickoff_iso": ko_iso,
-                            "status": (str(m.get("status") or m.get("statusText") or "").upper() or "NS"),
-                            "minute": None,
-                            "home": home,
-                            "away": away,
-                        }
-                    )
+                        ko_dt = datetime.fromisoformat(ko_iso.replace("Z", "+00:00"))
+                        if not (sdt <= ko_dt <= edt):
+                            continue
+
+                        # teams
+                        home = normalize_team_dict(m.get("home") or m.get("homeTeam") or m.get("homeTeamData") or {})
+                        away = normalize_team_dict(m.get("away") or m.get("awayTeam") or m.get("awayTeamData") or {})
+
+                        # status
+                        status = (str(m.get("status") or m.get("statusText") or "").upper() or "NS")
+
+                        items.append(
+                            {
+                                "match_id": str(mid),
+                                "competition": competition_code,
+                                "competition_code": competition_code,
+                                "kickoff_iso": ko_iso,
+                                "status": status,
+                                "minute": None,
+                                "home": home,
+                                "away": away,
+                            }
+                        )
+
+                    cur += timedelta(days=1)
+
             except Exception as e:
-                log.warning(
-                    "fotmobapi_fetch_failed comp_id=%s code=%s error=%s",
-                    comp_id,
-                    competition_code,
-                    e,
-                )
+                log.warning("fotmobapi_fetch_failed comp_id=%s code=%s error=%s", comp_id, competition_code, e)
 
         try:
             items.sort(key=lambda it: it["kickoff_iso"])
