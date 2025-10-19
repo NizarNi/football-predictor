@@ -1,3 +1,12 @@
+# --- Py3.11 compat (fotmob_api import safety) ---
+try:
+    from football_predictor.compat import patch_asyncio_for_py311
+
+    patch_asyncio_for_py311()
+except Exception:
+    pass
+# -----------------------------------------------
+
 from flask import Flask, render_template, request, url_for, current_app, g
 import os
 from datetime import datetime, timezone
