@@ -158,33 +158,51 @@ class FotMobAdapter(
         if league_str and sd is not None:
             try:
                 fm = sd.FotMob(leagues=[league_str], no_cache=True, no_store=True)
-                df = fm.matches()
+                df = fm.read_schedule()
+
                 for _, row in df.iterrows():
-                    ko = row.get("Date")
+                    # tolerate schema differences across versions
+                    def _first(*keys):
+                        for k in keys:
+                            if k in row and row.get(k) is not None:
+                                return row.get(k)
+                        return None
+
+                    ko = _first("Date", "date", "Kickoff", "kickoff")
                     if ko is None:
                         continue
                     if hasattr(ko, "to_pydatetime"):
                         ko_dt = ko.to_pydatetime().replace(tzinfo=timezone.utc)
                     else:
-                        ko_dt = datetime.fromisoformat(str(ko)).replace(tzinfo=timezone.utc)
+                        # try ISO, then date-only
+                        try:
+                            ko_dt = datetime.fromisoformat(str(ko)).replace(tzinfo=timezone.utc)
+                        except Exception:
+                            try:
+                                ko_dt = datetime.strptime(str(ko)[:10], "%Y-%m-%d").replace(
+                                    tzinfo=timezone.utc
+                                )
+                            except Exception:
+                                continue
+
                     if not (sdt <= ko_dt <= edt):
                         continue
 
                     home = normalize_team_dict(
                         {
-                            "id": row.get("HomeTeamId"),
-                            "name": row.get("HomeTeam"),
-                            "score": row.get("HomeGoals"),
+                            "id": _first("HomeTeamId", "home_id", "HomeId", "homeTeamId"),
+                            "name": _first("HomeTeam", "home_team", "Home", "home"),
+                            "score": _first("HomeGoals", "home_score", "HomeScore", "homeGoals"),
                         }
                     )
                     away = normalize_team_dict(
                         {
-                            "id": row.get("AwayTeamId"),
-                            "name": row.get("AwayTeam"),
-                            "score": row.get("AwayGoals"),
+                            "id": _first("AwayTeamId", "away_id", "AwayId", "awayTeamId"),
+                            "name": _first("AwayTeam", "away_team", "Away", "away"),
+                            "score": _first("AwayGoals", "away_score", "AwayScore", "awayGoals"),
                         }
                     )
-                    match_id = row.get("MatchId") or row.get("Id") or row.get("match_id")
+                    match_id = _first("MatchId", "match_id", "Id", "id", "FixtureId", "fixture_id")
                     if not match_id:
                         continue
 
@@ -194,7 +212,7 @@ class FotMobAdapter(
                             "competition": league_str,
                             "competition_code": competition_code,
                             "kickoff_iso": to_iso_utc(ko_dt),
-                            "status": str(row.get("Status") or "").upper() or "NS",
+                            "status": str(_first("Status", "status") or "").upper() or "NS",
                             "minute": None,
                             "home": home,
                             "away": away,
@@ -209,8 +227,16 @@ class FotMobAdapter(
                 from fotmob_api import FotmobAPI  # type: ignore
 
                 api = FotmobAPI()
-                season = season_from_iso(start_iso)
-                raw = api.get_fixtures(id=comp_id, season=season)
+                # FotMob fixtures often expect the SEASON START YEAR (e.g., "2025"), not "2025/2026"
+                try:
+                    _dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00")).astimezone(
+                        timezone.utc
+                    )
+                except Exception:
+                    _dt = datetime.utcnow().replace(tzinfo=timezone.utc)
+                season_start_year = str(_dt.year if _dt.month >= 7 else _dt.year - 1)
+
+                raw = api.get_fixtures(id=comp_id, season=season_start_year)
 
                 def iter_matches(r):
                     if not r:
@@ -286,7 +312,9 @@ class FotMobAdapter(
                             "competition": competition_code,
                             "competition_code": competition_code,
                             "kickoff_iso": ko_iso,
-                            "status": (str(m.get("status") or m.get("statusText") or "").upper() or "NS"),
+                            "status": (
+                                str(m.get("status") or m.get("statusText") or "").upper() or "NS"
+                            ),
                             "minute": None,
                             "home": home,
                             "away": away,
