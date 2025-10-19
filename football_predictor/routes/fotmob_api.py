@@ -37,3 +37,18 @@ def match(match_id: str):
             "note": "detailed match data will be implemented in T4.x",
         }
     )
+
+
+@bp.get("/__debug_client")
+def _debug_client():
+    try:
+        from football_predictor.compat import patch_asyncio_for_py311
+
+        patch_asyncio_for_py311()
+        from fotmob_api import FotMob
+
+        c = FotMob()
+        methods = [m for m in dir(c) if not m.startswith("_")]
+        return {"ok": True, "methods": methods}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500

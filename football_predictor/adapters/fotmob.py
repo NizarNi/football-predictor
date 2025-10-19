@@ -12,6 +12,7 @@ from ..ports.events import EventsPort, Events
 from ..settings import FOTMOB_TIMEOUT_MS
 from ..logging_utils import RateLimitedLogger
 from ..constants import fotmob_comp_id
+from ..compat import patch_asyncio_for_py311
 
 log = RateLimitedLogger(__name__)
 
@@ -116,6 +117,7 @@ class FotMobAdapter(
         self.timeout_s = (timeout_ms or FOTMOB_TIMEOUT_MS) / 1000.0
         # Defer import so the app doesn’t require the lib unless this adapter is used
         try:
+            patch_asyncio_for_py311()
             from fotmob_api import FotMob  # type: ignore
 
             self._client_cls = FotMob
