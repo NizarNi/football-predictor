@@ -1,0 +1,14 @@
+{% macro match_card(item) -%}
+<a class="card" href="/fotmob/match/{{ item.match_id }}" style="text-decoration:none;color:inherit">
+  <div class="league">{{ item.competition }} • {{ item.kickoff_iso }}</div>
+  <div class="row">
+    <div class="team"><strong>{{ item.home.name }}</strong></div>
+    <div class="status">{{ item.status }}</div>
+    <div class="team"><strong>{{ item.away.name }}</strong></div>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <div class="league">Score</div>
+    <div class="league"><strong>{{ item.home.score|default("–") }} – {{ item.away.score|default("–") }}</strong></div>
+  </div>
+</a>
+{%- endmacro %}
