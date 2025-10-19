@@ -9,4 +9,5 @@ dependencies = [
     "requests==2.31.0",
     "soccerdata>=1.8.2",
     "understat>=0.1.4",
+    "fotmob-api>=0.3.5",
 ]
