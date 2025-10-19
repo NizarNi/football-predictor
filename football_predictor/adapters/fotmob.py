@@ -15,6 +15,7 @@ from ..settings import FOTMOB_TIMEOUT_MS
 from ..logging_utils import RateLimitedLogger
 from ..constants import fotmob_comp_id
 from ..fotmob_shared import to_iso_utc, season_from_iso, normalize_team_dict
+from ..compat import patch_asyncio_for_py311
 try:
     import soccerdata as sd
 except Exception:
