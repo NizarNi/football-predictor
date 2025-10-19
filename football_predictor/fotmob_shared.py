@@ -77,9 +77,19 @@ def normalize_team_dict(raw: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         pass
 
-    score = raw.get("score") or raw.get("HomeGoals") or raw.get("AwayGoals")
+       # score (preserve zeros; avoid NaN)
+    score = None
+    for k in ("score", "HomeGoals", "AwayGoals"):
+        if k in raw and raw[k] is not None:
+            score = raw[k]
+            break
+    # coerce to int if possible; treat NaN as None
     try:
-        score = int(score) if score is not None and score == score else None
+        # float('nan') != float('nan') -> True; catches NaN
+        if score is not None and not (isinstance(score, float) and score != score):
+            score = int(score)
+        else:
+            score = None
     except Exception:
         score = None
 
