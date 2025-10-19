@@ -1,5 +1,42 @@
 """Centralized configuration constants for the Football Predictor platform."""
 
+# ---- FotMob competition codes & IDs for the /fotmob page ----
+# Stable internal codes (provider-agnostic)
+FOTMOB_COMP_CODES = (
+    "EPL",       # Premier League
+    "LLIGA",     # LaLiga
+    "SERIEA",    # Serie A
+    "BUNDES",    # Bundesliga
+    "LIGUE1",    # Ligue 1
+    "UCL",       # UEFA Champions League
+    "UEL",       # UEFA Europa League
+)
+
+# Map internal codes -> FotMob numeric competition IDs.
+# TODO(codex): Confirm each ID from FotMob URLs or the fotmob-api library.
+FOTMOB_COMP_IDS = {
+    "EPL": 47,     # Premier League        (confirm)
+    "LLIGA": 87,   # LaLiga                (confirm)
+    "SERIEA": 55,  # Serie A               (confirm)
+    "BUNDES": 54,  # Bundesliga            (confirm)
+    "LIGUE1": 53,  # Ligue 1               (confirm)
+    "UCL": 42,     # UEFA Champions League (confirm)
+    "UEL": 73,     # UEFA Europa League    (confirm)
+}
+
+
+def is_supported_fotmob_comp(code: str) -> bool:
+    """Return True if the given internal competition code is supported."""
+
+    return code in FOTMOB_COMP_CODES
+
+
+def fotmob_comp_id(code: str) -> int:
+    """Return the FotMob numeric ID for a supported code; KeyError if unknown."""
+
+    return FOTMOB_COMP_IDS[code]
+
+
 # Hybrid Model Weights
 HYBRID_ELO_WEIGHT = 0.60  # Elo ratings contribution to hybrid predictions
 HYBRID_MARKET_WEIGHT = 0.40  # Market odds contribution to hybrid predictions

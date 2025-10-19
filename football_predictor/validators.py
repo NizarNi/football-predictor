@@ -71,3 +71,24 @@ def validate_team_optional(name: Optional[str]):
     """Soft validation for optional team fields. Always returns (normalized_or_None, [])."""
     n = normalize_team_name(name)
     return n, []
+
+
+# FotMob competition validation helpers
+try:
+    from .constants import FOTMOB_COMP_CODES, is_supported_fotmob_comp
+except Exception:
+    # Keep imports safe if constants change
+    FOTMOB_COMP_CODES = tuple()
+
+    def is_supported_fotmob_comp(_: str) -> bool:  # type: ignore
+        return False
+
+
+def validate_fotmob_comp(code: str) -> str:
+    """Normalize and validate FotMob competition code."""
+
+    c = (code or "").strip().upper()
+    if is_supported_fotmob_comp(c):
+        return c
+    allowed = ", ".join(FOTMOB_COMP_CODES) if FOTMOB_COMP_CODES else "<none>"
+    raise ValueError(f"Unsupported competition code: {c}. Allowed: {allowed}")
