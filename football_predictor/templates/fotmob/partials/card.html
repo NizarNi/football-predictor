@@ -2,9 +2,15 @@
 <a class="card" href="/fotmob/match/{{ item.match_id }}" style="text-decoration:none;color:inherit">
   <div class="league">{{ item.competition }} • {{ item.kickoff_iso }}</div>
   <div class="row">
-    <div class="team"><strong>{{ item.home.name }}</strong></div>
+    <div class="team">
+      {% if item.home.logo %}<img src="{{ item.home.logo }}" alt="" style="width:18px;height:18px;border-radius:50%">{% endif %}
+      <strong>{{ item.home.display_name or item.home.name }}</strong>
+    </div>
     <div class="status">{{ item.status }}</div>
-    <div class="team"><strong>{{ item.away.name }}</strong></div>
+    <div class="team">
+      {% if item.away.logo %}<img src="{{ item.away.logo }}" alt="" style="width:18px;height:18px;border-radius:50%">{% endif %}
+      <strong>{{ item.away.display_name or item.away.name }}</strong>
+    </div>
   </div>
   <div class="row" style="margin-top:6px">
     <div class="league">Score</div>

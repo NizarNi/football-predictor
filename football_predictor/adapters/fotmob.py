@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any, Tuple
 import time
 import threading
 from datetime import datetime, timezone
+import logging
 
 from ..constants import fotmob_comp_id
 from ..ports.fixtures import FixturesPort, Fixture
@@ -12,14 +13,15 @@ from ..ports.lineups import LineupsPort, Lineups
 from ..ports.events import EventsPort, Events
 from ..settings import FOTMOB_TIMEOUT_MS
 from ..logging_utils import RateLimitedLogger
-from ..compat import patch_asyncio_for_py311
+from ..constants import fotmob_comp_id
 from ..fotmob_shared import to_iso_utc, season_from_iso, normalize_team_dict
+from ..compat import patch_asyncio_for_py311
 try:
     import soccerdata as sd
 except Exception:
     sd = None
 
-log = RateLimitedLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 # Simple in-process TTL cache to keep Replit happy (stub now; filled in later tasks)
@@ -46,6 +48,37 @@ class _TTLCache:
 
 
 _cache = _TTLCache()
+
+def _status_from_fotmob(
+    raw_status: str | None, started: bool | None, finished: bool | None
+) -> tuple[str, int | None]:
+    """
+    Normalize FotMob-ish status fields to our compact codes:
+    - 'NS' (not started)
+    - 'LIVE' (include minute if we can)
+    - 'FT' (finished)
+    Returns: (status, minute_or_None)
+    """
+
+    raw = (raw_status or "").strip().lower()
+    if finished:
+        return "FT", None
+    if started and not finished:
+        # Try to extract minute e.g. "72'" or "72"
+        m = None
+        for tok in (raw.replace("'", ""), raw.split("+")[0]):
+            try:
+                m = int("".join(ch for ch in tok if ch.isdigit()))
+                break
+            except Exception:
+                pass
+        return "LIVE", m
+    return "NS", None
+def _backoff_attempts():
+    # yields small backoff (ms) with jitter. Keep tiny for Replit free tier.
+    import random
+    for base in (0.0, 0.15, 0.35):
+        yield base + random.uniform(0, 0.15)
 
 
 class FotMobAdapter(
