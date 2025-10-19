@@ -54,7 +54,7 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 logger = setup_logger(__name__)
 
-# Always register FotMob blueprints (no feature flag)
+# --- BEGIN: Always register FotMob blueprints ---
 try:
     from football_predictor.routes.fotmob import bp as fotmob_page_bp
     from football_predictor.routes.fotmob_api import bp as fotmob_api_bp
@@ -63,6 +63,16 @@ try:
     app.logger.info("fotmob_routes_registered: always-on")
 except Exception as e:  # pragma: no cover - log blueprint registration errors
     app.logger.exception("fotmob_routes_register_failed: %s", e)
+# --- END: Always register FotMob blueprints ---
+
+
+# Optional debug to verify at runtime (remove later if you like)
+@app.get("/__debug/routes")
+def __debug_routes():
+    return {
+        "blueprints": list(app.blueprints.keys()),
+        "routes": sorted(str(r) for r in app.url_map.iter_rules()),
+    }
 
 # Warm alias resolver at startup to avoid lazy initialization gaps (T37).
 _ALIAS_PROVIDERS = warm_alias_resolver()
