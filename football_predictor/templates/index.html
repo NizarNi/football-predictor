@@ -1926,6 +1926,7 @@
         }
         
         function loadCareerStats(teamName, leagueCode, side) {
+            // Button resolution via stable IDs
             const btnId = side === 'home' ? 'btn-home-career' : 'btn-away-career';
             const btn = document.getElementById(btnId);
             if (!btn) return;
@@ -1934,16 +1935,26 @@
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Loading…';
 
-            const mappedLeagueCode = mapLeagueCodeForFBref(leagueCode);
-            const url = `/career_xg?team=${encodeURIComponent(teamName)}&league=${encodeURIComponent(mappedLeagueCode)}`;
+            // Use the code provided by the call site (finalLeagueCode). Do not remap here.
+            const url = `/career_xg?team=${encodeURIComponent(teamName)}&league=${encodeURIComponent(leagueCode)}`;
 
             fetch(url)
                 .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-                .then(careerData => {
-                    const career = careerData && (careerData.career_xg ?? careerData);
-                    const hasStats = career && typeof career.career_xg_per_game === 'number';
+                .then(payload => {
+                    // Unwrap legacy/modern shapes
+                    const raw = (payload && (payload.career_xg ?? payload)) || null;
+
+                    // Coerce values to numbers if they arrive as strings
+                    const num = v => (v === null || v === undefined || v === '' ? null : Number(v));
+
+                    const xg   = num(raw?.career_xg_per_game ?? raw?.avg_xg_per_game ?? raw?.xg_per_game);
+                    const xga  = num(raw?.career_xga_per_game ?? raw?.avg_xga_per_game ?? raw?.xga_per_game);
+                    const seas = raw?.seasons_count ?? raw?.seasons ?? null;
+
+                    const hasStats = Number.isFinite(xg) && Number.isFinite(xga);
 
                     if (!hasStats) {
+                        // Graceful empty state; keep button usable
                         btn.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i>Not available';
                         setTimeout(() => {
                             btn.innerHTML = originalHtml;
@@ -1952,13 +1963,24 @@
                         return;
                     }
 
-                    if (side === 'home') {
-                        currentContextData.home_career = career;
-                    } else {
-                        currentContextData.away_career = career;
-                    }
+                    // Store normalized object the renderer already expects
+                    const normalized = {
+                        career_xg_per_game: xg,
+                        career_xga_per_game: xga,
+                        seasons_count: seas
+                    };
 
+                    if (side === 'home') currentContextData.home_career = normalized;
+                    else currentContextData.away_career = normalized;
+
+                    // Re-render the context
                     displayMatchContextData(currentContextData);
+
+                    // Re-enable tooltips after DOM update
+                    setTimeout(() => {
+                        const tooltipEls = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+                        tooltipEls.forEach(el => new bootstrap.Tooltip(el));
+                    }, 100);
                 })
                 .catch(err => {
                     console.error('career_xg fetch error:', err);
@@ -1973,7 +1995,23 @@
         function displayMatchContextData(contextData) {
             const matchContext = document.getElementById('match-context');
             let html = '';
-            
+
+            const normalizeCareer = (career) => {
+                if (!career) return null;
+                const n = v => (v === null || v === undefined || v === '' ? null : Number(v));
+                return {
+                    career_xg_per_game: n(career.career_xg_per_game ?? career.avg_xg_per_game ?? career.xg_per_game),
+                    career_xga_per_game: n(career.career_xga_per_game ?? career.avg_xga_per_game ?? career.xga_per_game),
+                    seasons_count: career.seasons_count ?? career.seasons ?? null,
+                    first_season: career.first_season ?? career.first ?? null,
+                    last_season: career.last_season ?? career.last ?? null,
+                    total_games: career.total_games ?? career.games ?? null
+                };
+            };
+
+            const homeCareer = normalizeCareer(contextData.home_career);
+            const awayCareer = normalizeCareer(contextData.away_career);
+
             if (contextData.narrative) {
                 const alertClass = contextData.has_data ? 'alert-info' : 'alert-warning';
                 const icon = contextData.has_data ? 'fa-info-circle' : 'fa-exclamation-triangle';
@@ -2002,8 +2040,8 @@
                     html += displayTeamStats(contextData.home_team, contextData.xg?.home_stats);
                     
                     // Add "Show Career Stats" button if FBref data exists and career not loaded
-                    if (contextData.xg?.home_stats && !contextData.home_career) {
-                        html += `<div class="text-center mt-2"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.home_team}', '${currentMatchData.league}', 'home')" id="btn-home-career"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></div>`;
+                    if (contextData.xg?.home_stats && !homeCareer) {
+                        html += `<div class="text-center mt-2"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.home_team}', '${finalLeagueCode}', 'home')" id="btn-home-career"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></div>`;
                     }
                 } else {
                     // Show Elo rating even without standings
@@ -2032,8 +2070,8 @@
                     html += displayTeamStats(contextData.away_team, contextData.xg?.away_stats);
                     
                     // Add "Show Career Stats" button if FBref data exists and career not loaded
-                    if (contextData.xg?.away_stats && !contextData.away_career) {
-                        html += `<div class="text-center mt-2"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.away_team}', '${currentMatchData.league}', 'away')" id="btn-away-career"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></div>`;
+                    if (contextData.xg?.away_stats && !awayCareer) {
+                        html += `<div class="text-center mt-2"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.away_team}', '${finalLeagueCode}', 'away')" id="btn-away-career"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></div>`;
                     }
                 } else {
                     // Show Elo rating even without standings
@@ -3318,7 +3356,23 @@
             function displayMatchContextData(contextData) {
                 const matchContext = document.getElementById('match-context');
                 let html = '';
-                
+
+                const normalizeCareer = (career) => {
+                    if (!career) return null;
+                    const n = v => (v === null || v === undefined || v === '' ? null : Number(v));
+                    return {
+                        career_xg_per_game: n(career.career_xg_per_game ?? career.avg_xg_per_game ?? career.xg_per_game),
+                        career_xga_per_game: n(career.career_xga_per_game ?? career.avg_xga_per_game ?? career.xga_per_game),
+                        seasons_count: career.seasons_count ?? career.seasons ?? null,
+                        first_season: career.first_season ?? career.first ?? null,
+                        last_season: career.last_season ?? career.last ?? null,
+                        total_games: career.total_games ?? career.games ?? null
+                    };
+                };
+
+                const homeCareer = normalizeCareer(contextData.home_career);
+                const awayCareer = normalizeCareer(contextData.away_career);
+
                 if (contextData.narrative) {
                     const alertClass = contextData.has_data ? 'alert-info' : 'alert-warning';
                     const icon = contextData.has_data ? 'fa-info-circle' : 'fa-exclamation-triangle';
@@ -3397,14 +3451,14 @@
                             // Form is now displayed above with opponents, no need to duplicate here
                             
                             // Add "Show Career Stats" button if not already loaded
-                            if (!contextData.home_career) {
+                            if (!homeCareer) {
                                 html += `<tr><td colspan="2" class="pt-2 text-center"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.home_team}', '${finalLeagueCode}', 'home')" id="btn-home-career"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></td></tr>`;
                             }
                         }
                         
                         // Add career xG if available
-                        if (contextData.home_career) {
-                            const career = contextData.home_career;
+                        if (homeCareer) {
+                            const career = homeCareer;
                             const seasonXg = contextData.xg && contextData.xg.home_stats ? contextData.xg.home_stats.xg_for_per_game : null;
                             const seasonXga = contextData.xg && contextData.xg.home_stats ? contextData.xg.home_stats.xg_against_per_game : null;
                             
@@ -3487,14 +3541,14 @@
                             // Form is now displayed above with opponents, no need to duplicate here
                             
                             // Add "Show Career Stats" button if not already loaded
-                            if (!contextData.away_career) {
+                            if (!awayCareer) {
                                 html += `<tr><td colspan="2" class="pt-2 text-center"><button class="btn btn-sm btn-outline-primary" onclick="loadCareerStats('${currentMatchData.away_team}', '${finalLeagueCode}', 'away')" id="btn-away-career"><i class="fas fa-history me-1"></i>Show Career Stats (2021-2025)</button></td></tr>`;
                             }
                         }
                         
                         // Add career xG if available
-                        if (contextData.away_career) {
-                            const career = contextData.away_career;
+                        if (awayCareer) {
+                            const career = awayCareer;
                             const seasonXg = contextData.xg && contextData.xg.away_stats ? contextData.xg.away_stats.xg_for_per_game : null;
                             const seasonXga = contextData.xg && contextData.xg.away_stats ? contextData.xg.away_stats.xg_against_per_game : null;
                             
