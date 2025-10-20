@@ -7,8 +7,20 @@ except Exception:
     pass
 # -----------------------------------------------
 
-from flask import Flask, render_template, request, url_for, current_app, g
+import logging
 import os
+
+if not logging.getLogger().handlers:
+    level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, level, logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+
+from flask import Flask, render_template, request, url_for, current_app, g
 from datetime import datetime, timezone
 import base64
 import binascii
