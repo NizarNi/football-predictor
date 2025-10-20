@@ -113,11 +113,21 @@ class FeedService:
         s_dt, e_dt = _clamp_window(s_dt, e_dt, max_days=7)
         start_iso, end_iso = _to_iso(s_dt), _to_iso(e_dt)
 
-        # Load items and slice page
+        # Load items (with small burst-forward to avoid empty screens)
         comps_list = list(comps) if comps is not None else list(FOTMOB_COMP_CODES)
         items = self._load_window(start_iso, end_iso, comps_list)
         has_more_future = True  # optimistic, we paginate by windows not count
         has_more_past = True
+
+        # NEW: if future page is empty, walk forward up to 3 windows
+        if direction == "future" and not items:
+            burst = 3
+            cur_start, cur_end = start_iso, end_iso
+            while burst > 0 and not items:
+                cur_start, cur_end = self.next_window(cur_end)
+                items = self._load_window(cur_start, cur_end, comps_list)
+                burst -= 1
+            start_iso, end_iso = cur_start, cur_end
 
         # Page size is applied client-side by window; to keep it simple now, just cap to ps
         # (Later you can implement finer-grained cursoring by kickoff_iso)

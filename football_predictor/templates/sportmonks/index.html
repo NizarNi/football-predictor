@@ -39,6 +39,7 @@ let doneFuture = false;
 let currentLeagues = [];
 let feedGeneration = 0;
 let emptyBurstsLeft = 3; // auto-advance through empty windows
+let wantsAutoAdvance = false; // NEW: defer the next call until loading is cleared
 
 function getStoredLeagues() {
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -69,6 +70,7 @@ function resetFeedState() {
   doneFuture = false;
   loading = false;
   emptyBurstsLeft = 3;
+  wantsAutoAdvance = false;
   document.getElementById("feed").innerHTML = "";
   document.getElementById("sentinel").textContent = "Loading…";
 }
@@ -112,13 +114,10 @@ async function loadFeed() {
     doneFuture = !data.has_more_future;
     document.getElementById("sentinel").textContent = doneFuture ? "Done." : "Loading…";
 
-    // NEW: if nothing came back, proactively advance to next window a few times
+    // NEW: if nothing came back, mark that we want to auto-advance
     if (got.length === 0 && !doneFuture && emptyBurstsLeft > 0) {
       emptyBurstsLeft -= 1;
-      // Defer to allow state to settle, then fetch next window immediately
-      setTimeout(() => {
-        if (generationAtCall === feedGeneration) loadFeed();
-      }, 0);
+      wantsAutoAdvance = true;
     }
   } catch (e) {
     console.error(e);
@@ -128,6 +127,16 @@ async function loadFeed() {
   } finally {
     if (generationAtCall === feedGeneration) {
       loading = false;
+      // NEW: perform the deferred auto-advance now that loading is cleared
+      if (wantsAutoAdvance) {
+        wantsAutoAdvance = false;
+        // Use microtask to yield UI thread
+        Promise.resolve().then(() => {
+          if (!loading && !doneFuture && generationAtCall === feedGeneration) {
+            loadFeed();
+          }
+        });
+      }
     }
   }
 }
