@@ -284,10 +284,12 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             pass
 
         log.info(
-            "sportmonks_fixtures_built code=%s lid=%s count=%d fallback=%s",
+            "sportmonks_fixtures_built code=%s lid=%s count=%d from=%s to=%s fallback=%s",
             competition_code,
             league_id,
             len(items),
+            _ymd(start_iso),
+            _ymd(end_iso),
             did_fallback,
         )
         _cache.set(cache_key, items)
