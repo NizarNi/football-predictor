@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 def _get_service():
     global _service_singleton
     if _service_singleton is None:
-        # Force Sportmonks for this route regardless of settings.PROVIDER
+        # Force Sportmonks for this route regardless of global settings
         _service_singleton = FeedService(adapter=SportmonksAdapter())
         log.info(
             "smonks_feed service adapter=%s provider=%s",

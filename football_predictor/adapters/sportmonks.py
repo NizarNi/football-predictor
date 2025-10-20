@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 
 
 FIXTURE_INCLUDES_FEED = "participants,scores,state"
+FIXTURE_INCLUDES_FALLBACK = "participants,scores,state,league"
 
 
 class _TTL:
@@ -156,6 +157,36 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
             data = payload.get("data", []) if isinstance(payload, dict) else []
 
+        # Fallback: retry unfiltered and filter client-side by league id
+        did_fallback = False
+        if not data:
+            try:
+                fb_resp = session.get(
+                    url,
+                    params={"include": FIXTURE_INCLUDES_FALLBACK},
+                    timeout=self.timeout,
+                )
+                if fb_resp.ok:
+                    fb_payload = fb_resp.json() or {}
+                    fb_data = fb_payload.get("data", []) if isinstance(fb_payload, dict) else []
+                    data = [
+                        fx
+                        for fx in fb_data
+                        if (
+                            isinstance(fx.get("league"), dict)
+                            and fx["league"].get("id") == league_id
+                        )
+                        or fx.get("league_id") == league_id
+                    ]
+                    did_fallback = True
+                    log.info(
+                        "sportmonks_fallback_unfiltered_used lid=%s kept=%d",
+                        league_id,
+                        len(data),
+                    )
+            except Exception as exc:
+                log.warning("sportmonks_fallback_unfiltered_err lid=%s err=%s", league_id, exc)
+
         for fx in data:
             fixture_id = fx.get("id")
             dt_iso = fx.get("starting_at") or fx.get("starting_at_timestamp")
@@ -195,7 +226,7 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             for p in participants:
                 meta = (p.get("meta") or {})
                 loc = str(meta.get("location", "")).lower()
-                # Some responses nest the team under p['participant']; others have team fields at top-level.
+                # Some responses nest under p['participant']; others keep team fields on p.
                 team = p.get("participant") or p or {}
                 pid = team.get("id")
 
@@ -252,6 +283,13 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
         except Exception:
             pass
 
+        log.info(
+            "sportmonks_fixtures_built code=%s lid=%s count=%d fallback=%s",
+            competition_code,
+            league_id,
+            len(items),
+            did_fallback,
+        )
         _cache.set(cache_key, items)
         return items
 
