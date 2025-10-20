@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import time
 import threading
 import logging
+from urllib.parse import urlparse
 
 import requests
 
@@ -16,6 +17,9 @@ from ..constants import sportmonks_league_id
 from ..fotmob_shared import to_iso_utc, normalize_team_dict
 
 log = logging.getLogger(__name__)
+
+
+FIXTURE_INCLUDES_FEED = "participants,scores,state"
 
 
 class _TTL:
@@ -79,6 +83,13 @@ def _map_status(state: Dict[str, Any]) -> Tuple[str, Optional[int]]:
     return name or "NS", minute
 
 
+def _is_list_404(path: str, status_code: int) -> bool:
+    if status_code != 404:
+        return False
+    normalized = path.rstrip("/")
+    return normalized.endswith("/fixtures") or "/fixtures/between" in normalized
+
+
 class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
     def __init__(self, timeout_ms: Optional[int] = None) -> None:
         self.timeout = (timeout_ms or SPORTMONKS_TIMEOUT_MS) / 1000.0
@@ -111,19 +122,40 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             # participants.meta       -> home/away role
             # scores                  -> fixture-level scores by participant_id
             # state                   -> match status
-            "include": "participants;participants.participant;participants.meta;scores;state",
+            "include": FIXTURE_INCLUDES_FEED,
         }
 
         session = _session()
         items: List[Fixture] = []
+        path = urlparse(url).path
 
         try:
             response = session.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
-            data = response.json().get("data", [])
         except Exception as exc:  # pragma: no cover - network dependent
             log.warning("sportmonks_fixtures_failed lid=%s err=%s", league_id, exc)
-            data = []
+            return []
+
+        if _is_list_404(path, response.status_code):
+            log.warning(
+                "sportmonks_fixtures_empty lid=%s path=%s status=%s",
+                league_id,
+                path,
+                response.status_code,
+            )
+            data: List[Dict[str, Any]] = []
+        else:
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:
+                log.warning("sportmonks_fixtures_failed lid=%s err=%s", league_id, exc)
+                raise
+
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+
+            data = payload.get("data", []) if isinstance(payload, dict) else []
 
         for fx in data:
             fixture_id = fx.get("id")
@@ -222,6 +254,29 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
         _cache.set(cache_key, items)
         return items
+
+    def probe_league(self, league_id: int) -> bool:
+        url = f"{SPORTMONKS_BASE}/leagues/{league_id}"
+        session = _session()
+        try:
+            response = session.get(url, timeout=self.timeout)
+        except Exception as exc:  # pragma: no cover - network dependent
+            log.warning("sportmonks_league_probe_failed lid=%s err=%s", league_id, exc)
+            return False
+
+        if response.status_code == 200:
+            return True
+
+        if response.status_code in {403, 404}:
+            log.warning(
+                "sportmonks_league_invisible lid=%s status=%s",
+                league_id,
+                response.status_code,
+            )
+            return False
+
+        response.raise_for_status()
+        return True
 
     # -------- Stubs (to be implemented later) --------
     def get_lineups(self, match_id: str) -> Lineups:
