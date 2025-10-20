@@ -60,8 +60,13 @@ app.log
 Thumbs.db
 
 # Application specific - Cache files only
-football_predictor/processed_data/xg_cache/*.json
-processed_data/xg_cache/*.json
+football_predictor/processed_data/xg_cache/*
+processed_data/xg_cache/*
 
 # ignore logs inside package dir
-football_predictor/*.log
+football_predictor/*.log*
+
+# local secrets
+secrets/
+.env
+
