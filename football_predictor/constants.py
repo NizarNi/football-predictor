@@ -24,15 +24,15 @@ FOTMOB_COMP_IDS = {
     "UEL": 73,     # UEFA Europa League    (confirm)
 }
 
-# Sportmonks league IDs (TODO: confirm real IDs in your account/coverage)
+# Sportmonks league IDs (confirmed Top-5; fill UCL/UEL via probe below)
 SPORTMONKS_LEAGUE_IDS = {
-    "EPL": 271,    # TODO confirm
-    "LLIGA": 283,  # TODO confirm
-    "SERIEA": 556, # TODO confirm
-    "BUNDES": 82,  # TODO confirm
-    "LIGUE1": 301, # TODO confirm
-    "UCL": 2,      # TODO confirm
-    "UEL": 5,      # TODO confirm
+    "EPL":    8,    # England - Premier League
+    "LLIGA":  564,  # Spain - La Liga
+    "SERIEA": 384,  # Italy - Serie A
+    "BUNDES": 82,   # Germany - Bundesliga
+    "LIGUE1": 301,  # France - Ligue 1
+    "UCL":    2,    # UEFA Champions League
+    "UEL":    5,    # UEFA Europa League
 }
 
 
