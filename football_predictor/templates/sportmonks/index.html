@@ -38,6 +38,7 @@ let loading = false;
 let doneFuture = false;
 let currentLeagues = [];
 let feedGeneration = 0;
+let emptyBurstsLeft = 3; // auto-advance through empty windows
 
 function getStoredLeagues() {
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -67,6 +68,7 @@ function resetFeedState() {
   cursor = null;
   doneFuture = false;
   loading = false;
+  emptyBurstsLeft = 3;
   document.getElementById("feed").innerHTML = "";
   document.getElementById("sentinel").textContent = "Loading…";
 }
@@ -104,10 +106,20 @@ async function loadFeed() {
     const data = await fetchPage();
     if (!data || generationAtCall !== feedGeneration) return;
     const feed = document.getElementById("feed");
-    (data.items || []).forEach(it => feed.appendChild(renderItem(it)));
+    const got = Array.isArray(data.items) ? data.items : [];
+    got.forEach(it => feed.appendChild(renderItem(it)));
     cursor = data.next_cursor || null;
     doneFuture = !data.has_more_future;
     document.getElementById("sentinel").textContent = doneFuture ? "Done." : "Loading…";
+
+    // NEW: if nothing came back, proactively advance to next window a few times
+    if (got.length === 0 && !doneFuture && emptyBurstsLeft > 0) {
+      emptyBurstsLeft -= 1;
+      // Defer to allow state to settle, then fetch next window immediately
+      setTimeout(() => {
+        if (generationAtCall === feedGeneration) loadFeed();
+      }, 0);
+    }
   } catch (e) {
     console.error(e);
     if (generationAtCall === feedGeneration) {
