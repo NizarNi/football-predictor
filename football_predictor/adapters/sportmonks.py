@@ -290,6 +290,7 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             len(items),
             _ymd(start_iso),
             _ymd(end_iso),
+            did_fallback,
         )
         _cache.set(cache_key, items)
         return items
