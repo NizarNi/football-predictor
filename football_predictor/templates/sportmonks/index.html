@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Sportmonks feed (beta)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style> body{font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; padding:16px;}
+    .card{border:1px solid #eee; border-radius:12px; padding:12px; margin:8px 0}
+    .muted{color:#666; font-size:12px}
+    button{padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer}
+  </style>
+</head>
+<body>
+  <h2>Sportmonks feed (beta)</h2>
+  <div class="muted">Endless timeline for Top 5. Click a match to see details (stub).</div>
+
+  <div id="feed"></div>
+  <div id="sentinel" class="muted" style="text-align:center; padding:16px;">Loading…</div>
+
+<script>
+const FEED_URL = "/api/smonks/feed";
+let cursor = null;
+let loading = false;
+let doneFuture = false;
+
+async function fetchPage() {
+  if (loading || doneFuture) return;
+  loading = true;
+  const url = new URL(FEED_URL, location.origin);
+  url.searchParams.set("dir", "future");
+  if (cursor) url.searchParams.set("cursor", cursor);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("feed fetch failed: " + res.status);
+  return res.json();
+}
+
+function renderItem(item) {
+  const div = document.createElement("div");
+  div.className = "card";
+  const h = item.home || {}, a = item.away || {};
+  const when = new Date(item.kickoff_iso).toLocaleString();
+  div.innerHTML = `
+    <div><strong>${h.display_name || h.name || "Home"} vs ${a.display_name || a.name || "Away"}</strong></div>
+    <div class="muted">${item.competition_code} — ${when} — ${item.status || "NS"}</div>
+  `;
+  div.onclick = () => location.href = "/api/smonks/match/" + encodeURIComponent(item.match_id);
+  return div;
+}
+
+async function load() {
+  try {
+    const data = await fetchPage();
+    const feed = document.getElementById("feed");
+    (data.items || []).forEach(it => feed.appendChild(renderItem(it)));
+    cursor = data.next_cursor || null;
+    doneFuture = !data.has_more_future;
+    document.getElementById("sentinel").textContent = doneFuture ? "Done." : "Loading…";
+  } catch (e) {
+    console.error(e);
+    document.getElementById("sentinel").textContent = "Error. Scroll to retry.";
+  } finally {
+    loading = false;
+  }
+}
+
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) load(); });
+});
+io.observe(document.getElementById("sentinel"));
+load();
+</script>
+</body>
+</html>

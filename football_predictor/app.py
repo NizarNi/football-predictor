@@ -74,6 +74,17 @@ except Exception as e:  # pragma: no cover - log blueprint registration errors
     app.logger.exception("fotmob_routes_register_failed: %s", e)
 # --- END: Always register FotMob blueprints ---
 
+# --- BEGIN: Register Sportmonks blueprints ---
+try:
+    from football_predictor.routes.sportmonks import bp as smonks_page_bp
+    from football_predictor.routes.sportmonks_api import bp as smonks_api_bp
+    app.register_blueprint(smonks_page_bp)
+    app.register_blueprint(smonks_api_bp)
+    app.logger.info("sportmonks_routes_registered: beta")
+except Exception as e:  # pragma: no cover - log blueprint registration errors
+    app.logger.exception("sportmonks_routes_register_failed: %s", e)
+# --- END: Register Sportmonks blueprints ---
+
 
 # Optional debug to verify at runtime (remove later if you like)
 @app.get("/__debug/routes")
