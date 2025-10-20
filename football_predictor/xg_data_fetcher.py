@@ -620,8 +620,7 @@ def _refresh_league_async(league_code: str, season: int) -> None:
     _executor.submit(_task)
 
 
-_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("ENG", "GER", "ITA", "ESP", "FRA")
-
+_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("PL", "BL1", "SA", "PD", "FL1")
 
 def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
     """Warm the in-memory cache for a specific league's xG table."""
