@@ -620,7 +620,14 @@ def _refresh_league_async(league_code: str, season: int) -> None:
     _executor.submit(_task)
 
 
-_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("PL", "BL1", "SA", "PD", "FL1")
+_TOP5_PREFETCH_LEAGUES: Tuple[str, ...] = ("ENG", "GER", "ITA", "ESP", "FRA")
+_TOP5_PREFETCH_INTERNAL_ALIAS: Dict[str, str] = {
+    "ENG": "PL",
+    "GER": "BL1",
+    "ITA": "SA",
+    "ESP": "PD",
+    "FRA": "FL1",
+}
 
 def warm_league_xg(league_code: str, *, season: Optional[int] = None) -> bool:
     """Warm the in-memory cache for a specific league's xG table."""
@@ -662,7 +669,11 @@ def warm_top5_leagues(
     executor_fn = warm_fn or warm_league_xg
     results: Dict[str, bool] = {}
     with ThreadPoolExecutor(max_workers=len(target_leagues)) as executor:
-        futures = {executor.submit(executor_fn, league): league for league in target_leagues}
+        futures = {}
+        for league in target_leagues:
+            internal_code = _TOP5_PREFETCH_INTERNAL_ALIAS.get(league, league)
+            call_code = internal_code if warm_fn is None else league
+            futures[executor.submit(executor_fn, call_code)] = league
         for future in as_completed(futures):
             league = futures[future]
             try:
