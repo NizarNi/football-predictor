@@ -117,9 +117,8 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             # v3 expects fixture-level league filter:
             # https://docs.sportmonks.com/football/endpoints-and-entities/entities/fixture
             "filters": f"fixtureLeagues:{league_id}",
-            # Need nested relations so names show up:
-            # participants.participant -> team object
-            # participants.meta       -> home/away role
+            # Includes for feed cards:
+            # participants            -> team objects + meta.location (home/away)
             # scores                  -> fixture-level scores by participant_id
             # state                   -> match status
             "include": FIXTURE_INCLUDES_FEED,
@@ -196,7 +195,8 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             for p in participants:
                 meta = (p.get("meta") or {})
                 loc = str(meta.get("location", "")).lower()
-                team = (p.get("participant") or {})  # <-- actual team object
+                # Some responses nest the team under p['participant']; others have team fields at top-level.
+                team = p.get("participant") or p or {}
                 pid = team.get("id")
 
                 # Attach score if present at participant level or via scores index

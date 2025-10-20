@@ -42,7 +42,7 @@ class FeedService:
     Cursor is an ISO timestamp marking the boundary of the last window sent.
     """
 
-    DEFAULT_WINDOW_HOURS = 36  # initial +/- window around 'now'
+    DEFAULT_WINDOW_HOURS = 48  # initial +/- window around 'now'
     PAGE_SIZE_MIN = 10
     PAGE_SIZE_MAX = 50
 
