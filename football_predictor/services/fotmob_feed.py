@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Protocol, Iterable
 
 from ..constants import FOTMOB_COMP_CODES
-from ..adapters.fotmob import FotMobAdapter
+from ..composition.providers import fixtures_adapter
 
 ISO = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -31,6 +31,11 @@ def _clamp_window(start: datetime, end: datetime, max_days: int = 7) -> Tuple[da
     return start, end
 
 
+class FixturesAdapter(Protocol):
+    def get_fixtures(self, competition_code: str, start_iso: str, end_iso: str) -> List[Dict[str, Any]]:
+        ...
+
+
 class FeedService:
     """
     Builds a time-ordered, multi-competition fixtures feed with cursor pagination.
@@ -41,8 +46,8 @@ class FeedService:
     PAGE_SIZE_MIN = 10
     PAGE_SIZE_MAX = 50
 
-    def __init__(self, adapter: Optional[FotMobAdapter] = None):
-        self.adapter = adapter or FotMobAdapter()
+    def __init__(self, adapter: Optional[FixturesAdapter] = None):
+        self.adapter: FixturesAdapter = adapter or fixtures_adapter()
 
     def initial_window(self) -> Tuple[str, str]:
         now = datetime.now(timezone.utc)
@@ -77,7 +82,13 @@ class FeedService:
         all_items.sort(key=lambda it: it.get("kickoff_iso", ""))
         return all_items
 
-    def load_page(self, direction: str, cursor: Optional[str], page_size_raw: Optional[str]) -> Dict[str, Any]:
+    def load_page(
+        self,
+        direction: str,
+        cursor: Optional[str],
+        page_size_raw: Optional[str],
+        comps: Optional[Iterable[str]] = None,
+    ) -> Dict[str, Any]:
         # Sanitize inputs
         direction = (direction or "future").lower()
         if direction not in ("future", "past"):
@@ -103,7 +114,8 @@ class FeedService:
         start_iso, end_iso = _to_iso(s_dt), _to_iso(e_dt)
 
         # Load items and slice page
-        items = self._load_window(start_iso, end_iso, list(FOTMOB_COMP_CODES))
+        comps_list = list(comps) if comps is not None else list(FOTMOB_COMP_CODES)
+        items = self._load_window(start_iso, end_iso, comps_list)
         has_more_future = True  # optimistic, we paginate by windows not count
         has_more_past = True
 
@@ -125,6 +137,6 @@ class FeedService:
                 "cursor_in": cursor,
                 "window": [start_iso, end_iso],
                 "page_size": ps,
-                "comps": list(FOTMOB_COMP_CODES),
+                "comps": comps_list,
             },
         }
