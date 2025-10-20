@@ -40,9 +40,13 @@ class FeedService:
     """
     Builds a time-ordered, multi-competition fixtures feed with cursor pagination.
     Cursor is an ISO timestamp marking the boundary of the last window sent.
+    Window: forward-looking from 'now' for N days (N = 90 by default).
     """
 
-    DEFAULT_WINDOW_HOURS = 48  # initial +/- window around 'now'
+    # Use a large, forward-looking 90-day window
+    DEFAULT_WINDOW_HOURS = 24 * 90
+    # Safety cap to avoid oversize /fixtures/between calls (Sportmonks max is 100 days)
+    MAX_WINDOW_DAYS = 90
     PAGE_SIZE_MIN = 10
     PAGE_SIZE_MAX = 50
 
@@ -51,19 +55,20 @@ class FeedService:
 
     def initial_window(self) -> Tuple[str, str]:
         now = datetime.now(timezone.utc)
-        start = now - timedelta(hours=self.DEFAULT_WINDOW_HOURS)
+        # Forward-only window: [now, now + 90 days]
+        start = now
         end = now + timedelta(hours=self.DEFAULT_WINDOW_HOURS)
         return _to_iso(start), _to_iso(end)
 
     def next_window(self, cursor_iso: str) -> Tuple[str, str]:
-        # Move forward by DEFAULT_WINDOW_HOURS
+        # Move forward by one full window (90 days)
         c = _parse_iso(cursor_iso)
         start = c
         end = c + timedelta(hours=self.DEFAULT_WINDOW_HOURS)
         return _to_iso(start), _to_iso(end)
 
     def prev_window(self, cursor_iso: str) -> Tuple[str, str]:
-        # Move backward by DEFAULT_WINDOW_HOURS
+        # Move backward by one full window (90 days)
         c = _parse_iso(cursor_iso)
         start = c - timedelta(hours=self.DEFAULT_WINDOW_HOURS)
         end = c
@@ -108,9 +113,9 @@ class FeedService:
         else:
             start_iso, end_iso = self.prev_window(cursor)
 
-        # Clamp safety (<= 7 days)
+        # Clamp safety (<= MAX_WINDOW_DAYS)
         s_dt, e_dt = _parse_iso(start_iso), _parse_iso(end_iso)
-        s_dt, e_dt = _clamp_window(s_dt, e_dt, max_days=7)
+        s_dt, e_dt = _clamp_window(s_dt, e_dt, max_days=self.MAX_WINDOW_DAYS)
         start_iso, end_iso = _to_iso(s_dt), _to_iso(e_dt)
 
         # Load items (with small burst-forward to avoid empty screens)
