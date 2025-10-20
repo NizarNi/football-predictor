@@ -24,6 +24,22 @@ FOTMOB_COMP_IDS = {
     "UEL": 73,     # UEFA Europa League    (confirm)
 }
 
+# Sportmonks league IDs (TODO: confirm real IDs in your account/coverage)
+SPORTMONKS_LEAGUE_IDS = {
+    "EPL": 271,    # TODO confirm
+    "LLIGA": 283,  # TODO confirm
+    "SERIEA": 556, # TODO confirm
+    "BUNDES": 82,  # TODO confirm
+    "LIGUE1": 301, # TODO confirm
+    "UCL": 2,      # TODO confirm
+    "UEL": 5,      # TODO confirm
+}
+
+
+def sportmonks_league_id(code: str) -> int | None:
+    return SPORTMONKS_LEAGUE_IDS.get(code)
+
+
 
 def is_supported_fotmob_comp(code: str) -> bool:
     """Return True if the given internal competition code is supported."""
