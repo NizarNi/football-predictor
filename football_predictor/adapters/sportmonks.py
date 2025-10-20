@@ -99,7 +99,9 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
         url = f"{SPORTMONKS_BASE}/fixtures/between/{date_from}/{date_to}"
         params = {
-            "filters": f"league_id:{league_id}",
+            # v3 expects fixture-level league filter:
+            # https://docs.sportmonks.com/football/endpoints-and-entities/entities/fixture
+            "filters": f"fixtureLeagues:{league_id}",
             "include": "participants;scores;state",
         }
 
