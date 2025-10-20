@@ -106,7 +106,12 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             # v3 expects fixture-level league filter:
             # https://docs.sportmonks.com/football/endpoints-and-entities/entities/fixture
             "filters": f"fixtureLeagues:{league_id}",
-            "include": "participants;scores;state",
+            # Need nested relations so names show up:
+            # participants.participant -> team object
+            # participants.meta       -> home/away role
+            # scores                  -> fixture-level scores by participant_id
+            # state                   -> match status
+            "include": "participants;participants.participant;participants.meta;scores;state",
         }
 
         session = _session()
@@ -141,18 +146,44 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                 continue
 
             participants = fx.get("participants") or []
+            scores = fx.get("scores") or []  # list of {participant_id, score, description/type}
+            score_by_pid: Dict[Any, Any] = {}
+            try:
+                for s in scores:
+                    pid = s.get("participant_id")
+                    sc = s.get("score")
+                    if pid is not None and sc is not None:
+                        # take "total" or last seen; simple for now
+                        score_by_pid[pid] = sc
+            except Exception:
+                pass
+
             home_raw: Dict[str, Any] = {}
             away_raw: Dict[str, Any] = {}
-            for participant in participants:
-                location = str(participant.get("meta", {}).get("location", "")).lower()
-                if location == "home":
-                    home_raw = participant.get("participant", {}) or {}
-                    if "scores" in participant:
-                        home_raw["score"] = (participant.get("scores") or {}).get("total")
-                elif location == "away":
-                    away_raw = participant.get("participant", {}) or {}
-                    if "scores" in participant:
-                        away_raw["score"] = (participant.get("scores") or {}).get("total")
+
+            for p in participants:
+                meta = (p.get("meta") or {})
+                loc = str(meta.get("location", "")).lower()
+                team = (p.get("participant") or {})  # <-- actual team object
+                pid = team.get("id")
+
+                # Attach score if present at participant level or via scores index
+                p_score = None
+                if isinstance(p.get("scores"), dict):
+                    p_score = (p.get("scores") or {}).get("total")
+                if p_score is None and pid in score_by_pid:
+                    p_score = score_by_pid.get(pid)
+
+                enriched = {
+                    "id": pid,
+                    "name": team.get("name"),
+                    "score": p_score,
+                }
+
+                if loc == "home":
+                    home_raw = enriched
+                elif loc == "away":
+                    away_raw = enriched
 
             home = normalize_team_dict(
                 {

@@ -27,15 +27,13 @@ FOTMOB_COMP_IDS = {
 # Sportmonks league IDs (confirmed via /leagues search)
 # Note: IDs can vary if you pick country-variant comps. These are the canonical top tiers.
 SPORTMONKS_LEAGUE_IDS = {
-    "EPL":    8,    # England - Premier League
-    "LLIGA":  564,  # Spain   - La Liga
-    "SERIEA": 384,  # Italy   - Serie A
-    "BUNDES": 82,   # Germany - Bundesliga
-    "LIGUE1": 301,  # France  - Ligue 1
-    # International comps like UCL/UEL may not be visible on your plan.
-    # Leave them unset (None) until your account shows them in /leagues:
-    "UCL":    None,  # UEFA Champions League
-    "UEL":    None,  # UEFA Europa League
+    "EPL":    8,    # Premier League
+    "LLIGA":  564,  # La Liga
+    "SERIEA": 384,  # Serie A
+    "BUNDES": 82,   # Bundesliga
+    "LIGUE1": 301,  # Ligue 1
+    "UCL":    None, # not in current plan
+    "UEL":    None, # not in current plan
 }
 
 
