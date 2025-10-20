@@ -8,27 +8,76 @@
     .card{border:1px solid #eee; border-radius:12px; padding:12px; margin:8px 0}
     .muted{color:#666; font-size:12px}
     button{padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer}
+    #leagues-filter{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:16px 0}
+    #leagues-filter label{display:flex; align-items:center; gap:4px; font-size:14px}
+    #leagues-filter button{font-size:12px; padding:6px 10px}
   </style>
 </head>
 <body>
   <h2>Sportmonks feed (beta)</h2>
   <div class="muted">Endless timeline for Top 5. Click a match to see details (stub).</div>
 
+  <form id="leagues-filter">
+    <label><input type="checkbox" value="EPL"/> EPL</label>
+    <label><input type="checkbox" value="LLIGA"/> LLIGA</label>
+    <label><input type="checkbox" value="SERIEA"/> SERIEA</label>
+    <label><input type="checkbox" value="BUNDES"/> BUNDES</label>
+    <label><input type="checkbox" value="LIGUE1"/> LIGUE1</label>
+    <button type="button" id="reset-leagues">Reset to Top-5</button>
+  </form>
+
   <div id="feed"></div>
   <div id="sentinel" class="muted" style="text-align:center; padding:16px;">Loading…</div>
 
 <script>
 const FEED_URL = "/api/smonks/feed";
+const STORAGE_KEY = "smonks_leagues";
+const ALL_LEAGUES = ["EPL", "LLIGA", "SERIEA", "BUNDES", "LIGUE1"];
 let cursor = null;
 let loading = false;
 let doneFuture = false;
+let currentLeagues = [];
+let feedGeneration = 0;
+
+function getStoredLeagues() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (stored === null) return [...ALL_LEAGUES];
+  if (stored === "") return [];
+  const parts = stored.split(",").map(s => s.trim()).filter(Boolean);
+  const valid = parts.filter(code => ALL_LEAGUES.includes(code));
+  return valid.length ? valid : [...ALL_LEAGUES];
+}
+
+function syncCheckboxes(leagues) {
+  document.querySelectorAll('#leagues-filter input[type="checkbox"]').forEach(cb => {
+    cb.checked = leagues.includes(cb.value);
+  });
+}
+
+function getCheckedLeagues() {
+  return Array.from(document.querySelectorAll('#leagues-filter input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
+function storeLeagues(leagues) {
+  localStorage.setItem(STORAGE_KEY, leagues.join(","));
+}
+
+function resetFeedState() {
+  feedGeneration += 1;
+  cursor = null;
+  doneFuture = false;
+  loading = false;
+  document.getElementById("feed").innerHTML = "";
+  document.getElementById("sentinel").textContent = "Loading…";
+}
 
 async function fetchPage() {
-  if (loading || doneFuture) return;
-  loading = true;
   const url = new URL(FEED_URL, location.origin);
   url.searchParams.set("dir", "future");
   if (cursor) url.searchParams.set("cursor", cursor);
+  if (currentLeagues.length) {
+    url.searchParams.set("leagues", currentLeagues.join(","));
+  }
   const res = await fetch(url);
   if (!res.ok) throw new Error("feed fetch failed: " + res.status);
   return res.json();
@@ -47,9 +96,13 @@ function renderItem(item) {
   return div;
 }
 
-async function load() {
+async function loadFeed() {
+  if (loading || doneFuture) return;
+  const generationAtCall = feedGeneration;
+  loading = true;
   try {
     const data = await fetchPage();
+    if (!data || generationAtCall !== feedGeneration) return;
     const feed = document.getElementById("feed");
     (data.items || []).forEach(it => feed.appendChild(renderItem(it)));
     cursor = data.next_cursor || null;
@@ -57,17 +110,45 @@ async function load() {
     document.getElementById("sentinel").textContent = doneFuture ? "Done." : "Loading…";
   } catch (e) {
     console.error(e);
-    document.getElementById("sentinel").textContent = "Error. Scroll to retry.";
+    if (generationAtCall === feedGeneration) {
+      document.getElementById("sentinel").textContent = "Error. Scroll to retry.";
+    }
   } finally {
-    loading = false;
+    if (generationAtCall === feedGeneration) {
+      loading = false;
+    }
   }
 }
 
 const io = new IntersectionObserver((entries) => {
-  entries.forEach(e => { if (e.isIntersecting) load(); });
+  entries.forEach(e => { if (e.isIntersecting) loadFeed(); });
 });
 io.observe(document.getElementById("sentinel"));
-load();
+
+const filterForm = document.getElementById("leagues-filter");
+filterForm.addEventListener("change", (event) => {
+  if (event.target.matches('input[type="checkbox"]')) {
+    currentLeagues = getCheckedLeagues();
+    storeLeagues(currentLeagues);
+    resetFeedState();
+    loadFeed();
+  }
+});
+
+document.getElementById("reset-leagues").addEventListener("click", (event) => {
+  event.preventDefault();
+  currentLeagues = [...ALL_LEAGUES];
+  syncCheckboxes(currentLeagues);
+  storeLeagues(currentLeagues);
+  resetFeedState();
+  loadFeed();
+});
+
+currentLeagues = getStoredLeagues();
+syncCheckboxes(currentLeagues);
+storeLeagues(currentLeagues);
+resetFeedState();
+loadFeed();
 </script>
 </body>
 </html>
