@@ -21,13 +21,16 @@ FOTMOB_PAGE_SIZE = int(os.getenv("FOTMOB_PAGE_SIZE", "25"))       # feed batch s
 
 # --- Sportmonks settings ---
 PROVIDER = os.getenv("PROVIDER", "auto").strip().lower()
-SPORTMONKS_KEY = (
-    os.getenv("SPORTMONKS_KEY")
-    or (
-        lambda p=os.getenv("SPORTMONKS_KEY_FILE"): open(p).read().strip()
-        if p and os.path.exists(p)
-        else None
-    )()
-)
+
+def _read_secret_file(path: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+SPORTMONKS_KEY = os.getenv("SPORTMONKS_KEY") or _read_secret_file(os.getenv("SPORTMONKS_KEY_FILE"))
 SPORTMONKS_BASE = os.getenv("SPORTMONKS_BASE", "https://api.sportmonks.com/v3/football")
 SPORTMONKS_TIMEOUT_MS = int(os.getenv("SPORTMONKS_TIMEOUT_MS", "7000"))
