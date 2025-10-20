@@ -1,14 +1,17 @@
 import os
+import random
 import re
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from email.utils import parsedate_to_datetime
+from typing import Callable, Optional, Tuple
 
 import requests
 
 from .app_utils import AdaptiveTimeoutController
-from .config import API_MAX_RETRIES, API_TIMEOUT, setup_logger
+from .config import API_TIMEOUT, setup_logger
 from .constants import BASE_URL, LEAGUE_CODE_MAPPING
-from .utils import create_retry_session, request_with_retries
+from . import config as config_module
 from .errors import APIError
 
 API_KEYS = [
@@ -28,14 +31,124 @@ current_key_index = 0
 logger = setup_logger(__name__)
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT, max_timeout=30)
 
-STATUS_FORCELIST = (429, 500, 502, 503, 504)
-BACKOFF_FACTOR = 0.5
+MAX_RETRY_AFTER = 10.0
 
-_session = create_retry_session(
-    max_retries=API_MAX_RETRIES,
-    backoff_factor=BACKOFF_FACTOR,
-    status_forcelist=STATUS_FORCELIST,
-)
+TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+
+
+def _parse_retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    if value is None:
+        return None
+
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        pass
+    else:
+        return max(0.0, min(seconds, MAX_RETRY_AFTER))
+
+    try:
+        dt = parsedate_to_datetime(value)
+    except Exception:
+        return None
+
+    if dt is None:
+        return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    now = datetime.now(dt.tzinfo)
+    delay = (dt - now).total_seconds()
+    if delay > 0:
+        delay = max(delay, 0.1)
+    return max(0.0, min(delay, MAX_RETRY_AFTER))
+
+
+def _get_retry_delay(attempt: int, response: Optional[requests.Response] = None) -> float:
+    if response and "Retry-After" in response.headers:
+        parsed = _parse_retry_after_seconds(response.headers.get("Retry-After"))
+        if parsed is not None:
+            return parsed
+
+    base = config_module.ODDS_BASE_DELAY
+    jitter = random.uniform(0, config_module.ODDS_JITTER)
+    delay = base * (2 ** (attempt - 1)) + jitter
+    return min(delay, MAX_RETRY_AFTER)
+
+
+def fetch_odds_with_backoff(
+    url: str,
+    *,
+    headers: Optional[dict] = None,
+    params: Optional[dict] = None,
+    timeout: Optional[float] = None,
+    max_attempts: Optional[int] = None,
+    request_callable: Optional[Callable[..., requests.Response]] = None,
+) -> Tuple[requests.Response, int]:
+    attempts = max_attempts or config_module.ODDS_MAX_ATTEMPTS
+    timeout = timeout or API_TIMEOUT
+    request_fn = request_callable or requests.get
+
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            response = request_fn(url, headers=headers, params=params, timeout=timeout)
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == attempts:
+                break
+            delay = _get_retry_delay(attempt)
+            logger.warning(
+                "Odds API error %r, retrying in %.1fs (attempt %d/%d)",
+                exc,
+                delay,
+                attempt,
+                attempts,
+            )
+            time.sleep(delay)
+            continue
+
+        if response.status_code == 200:
+            return response, attempt
+
+        if response.status_code in TRANSIENT_STATUS_CODES:
+            if attempt == attempts:
+                break
+            delay = _get_retry_delay(attempt, response)
+            logger.warning(
+                "Odds API transient %s, retrying in %.1fs (attempt %d/%d)",
+                response.status_code,
+                delay,
+                attempt,
+                attempts,
+            )
+            time.sleep(delay)
+            continue
+
+        try:
+            response.raise_for_status()
+        except requests.RequestException as exc:  # pragma: no cover - defensive
+            last_error = exc
+            raise
+
+    error_message = "Odds API retry limit exceeded"
+    if last_error is not None:
+        error_message = f"{error_message}: {last_error}"
+        error_code = "NETWORK_ERROR"
+        if isinstance(last_error, requests.Timeout):
+            error_code = "TIMEOUT"
+        elif isinstance(last_error, requests.ConnectionError):
+            error_code = "NETWORK_ERROR"
+        raise APIError("OddsAPI", error_code, error_message) from last_error
+    raise APIError("OddsAPI", "NETWORK_ERROR", error_message)
+
+
+def request_with_retries(*args, **kwargs):
+    """Temporary shim that delegates to :func:`fetch_odds_with_backoff`."""
+
+    return fetch_odds_with_backoff(*args, **kwargs)[0]
 
 def sanitize_error_message(message):
     """
@@ -68,19 +181,14 @@ def get_available_sports():
 
     timeout = adaptive_timeout.get_timeout()
     try:
-        response = request_with_retries(
-            _session,
-            "GET",
+        response, attempts = fetch_odds_with_backoff(
             url,
             params={"apiKey": api_key},
             timeout=timeout,
-            max_retries=API_MAX_RETRIES,
-            backoff_factor=BACKOFF_FACTOR,
-            status_forcelist=STATUS_FORCELIST,
-            logger=logger,
-            context="Odds API call",
-            sanitize=sanitize_error_message,
         )
+        setattr(response, "_odds_backoff_attempts", attempts)
+        if attempts > 1:
+            logger.info("Odds API backoff done for sports listing after %d attempts", attempts)
         adaptive_timeout.record_success()
     except requests.Timeout as exc:
         adaptive_timeout.record_failure()
@@ -99,6 +207,18 @@ def get_available_sports():
         error_msg = sanitize_error_message(str(e))
         logger.error("Failed to fetch available sports: %s", error_msg)
         raise APIError("OddsAPI", "NETWORK_ERROR", "A network error occurred.", error_msg) from e
+    except APIError as exc:
+        adaptive_timeout.record_failure()
+        sanitized = sanitize_error_message(exc.details or exc.message)
+        if exc.code == "TIMEOUT":
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
+            logger.error("Failed to fetch available sports: request timed out")
+            raise APIError("OddsAPI", "TIMEOUT", "The Odds API did not respond in time.") from exc
+        if exc.code == "NETWORK_ERROR":
+            logger.warning("[Resilience] API timeout or network issue: %s", exc)
+            logger.error("Failed to fetch available sports: %s", sanitized)
+            raise APIError("OddsAPI", "NETWORK_ERROR", "A network error occurred.", sanitized) from exc
+        raise
 
     try:
         data = response.json()
@@ -134,19 +254,18 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
 
         timeout = adaptive_timeout.get_timeout()
         try:
-            response = request_with_retries(
-                _session,
-                "GET",
+            response, attempts = fetch_odds_with_backoff(
                 url,
                 params=params,
                 timeout=timeout,
-                max_retries=API_MAX_RETRIES,
-                backoff_factor=BACKOFF_FACTOR,
-                status_forcelist=STATUS_FORCELIST,
-                logger=logger,
-                context=f"Odds API call for {sport_key}",
-                sanitize=sanitize_error_message,
             )
+            setattr(response, "_odds_backoff_attempts", attempts)
+            if attempts > 1:
+                logger.info(
+                    "Odds API backoff done for %s after %d attempts",
+                    sport_key,
+                    attempts,
+                )
             adaptive_timeout.record_success()
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
@@ -220,6 +339,29 @@ def get_odds_for_sport(sport_key, regions="us,uk,eu", markets="h2h", odds_format
                 "A network error occurred.",
                 sanitized_error,
             )
+            continue
+        except APIError as exc:
+            adaptive_timeout.record_failure()
+            if exc.code not in {"TIMEOUT", "NETWORK_ERROR"}:
+                raise
+            sanitized_error = sanitize_error_message(exc.details or exc.message)
+            logger.warning(
+                "[Resilience] API timeout or network issue: %s",
+                exc,
+            )
+            logger.warning(
+                "Retryable error with key %s for %s: %s",
+                api_key,
+                sport_key,
+                sanitized_error,
+            )
+            message = (
+                "The Odds API did not respond in time."
+                if exc.code == "TIMEOUT"
+                else "A network error occurred."
+            )
+            details = None if exc.code == "TIMEOUT" else sanitized_error
+            last_error = APIError("OddsAPI", exc.code, message, details)
             continue
 
         try:
@@ -337,19 +479,19 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
         
         timeout = adaptive_timeout.get_timeout()
         try:
-            response = request_with_retries(
-                _session,
-                "GET",
+            response, attempts = fetch_odds_with_backoff(
                 url,
                 params=params,
                 timeout=timeout,
-                max_retries=API_MAX_RETRIES,
-                backoff_factor=BACKOFF_FACTOR,
-                status_forcelist=STATUS_FORCELIST,
-                logger=logger,
-                context=f"Event odds call for {sport_key}",
-                sanitize=sanitize_error_message,
             )
+            setattr(response, "_odds_backoff_attempts", attempts)
+            if attempts > 1:
+                logger.info(
+                    "Odds API backoff done for %s event %s after %d attempts",
+                    sport_key,
+                    event_id,
+                    attempts,
+                )
             adaptive_timeout.record_success()
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 401:
@@ -424,6 +566,29 @@ def get_event_odds(sport_key, event_id, regions="us,uk,eu", markets="h2h"):
                 "A network error occurred.",
                 sanitized_error,
             )
+            continue
+        except APIError as exc:
+            adaptive_timeout.record_failure()
+            if exc.code not in {"TIMEOUT", "NETWORK_ERROR"}:
+                raise
+            sanitized_error = sanitize_error_message(exc.details or exc.message)
+            logger.warning(
+                "[Resilience] API timeout or network issue: %s",
+                exc,
+            )
+            logger.warning(
+                "Retryable error retrieving event odds for %s with key %s: %s",
+                sport_key,
+                api_key,
+                sanitized_error,
+            )
+            message = (
+                "The Odds API did not respond in time."
+                if exc.code == "TIMEOUT"
+                else "A network error occurred."
+            )
+            details = None if exc.code == "TIMEOUT" else sanitized_error
+            last_error = APIError("OddsAPI", exc.code, message, details)
             continue
 
         try:

@@ -69,12 +69,12 @@ from football_predictor import elo_client, odds_api_client, understat_client, xg
 
 
 # Odds API client tests
-@patch("football_predictor.odds_api_client.request_with_retries")
-def test_timeout_raises_apierror(mock_request):
+@patch("football_predictor.odds_api_client.fetch_odds_with_backoff")
+def test_timeout_raises_apierror(mock_fetch):
     odds_api_client.API_KEYS = ["test_key"]
     odds_api_client.invalid_keys.clear()
     odds_api_client.current_key_index = 0
-    mock_request.side_effect = requests.Timeout("Simulated timeout")
+    mock_fetch.side_effect = APIError("OddsAPI", "TIMEOUT", "Odds API retry limit exceeded")
 
     with pytest.raises(APIError) as exc:
         odds_api_client.get_odds_for_sport("soccer_epl")
@@ -83,21 +83,27 @@ def test_timeout_raises_apierror(mock_request):
     assert "OddsAPI" in exc.value.source
 
 
-@patch("football_predictor.odds_api_client.request_with_retries")
-def test_network_error_raises_apierror(mock_request):
+@patch("football_predictor.odds_api_client.fetch_odds_with_backoff")
+def test_network_error_raises_apierror(mock_fetch):
     odds_api_client.API_KEYS = ["test_key"]
     odds_api_client.invalid_keys.clear()
     odds_api_client.current_key_index = 0
-    mock_request.side_effect = requests.RequestException("Connection aborted")
+    mock_fetch.side_effect = APIError(
+        "OddsAPI",
+        "NETWORK_ERROR",
+        "Odds API retry limit exceeded",
+        details="apiKey=SECRET",
+    )
 
     with pytest.raises(APIError) as exc:
         odds_api_client.get_odds_for_sport("soccer_epl")
 
     assert exc.value.code == "NETWORK_ERROR"
+    assert exc.value.details == "apiKey=***"
 
 
-@patch("football_predictor.odds_api_client.request_with_retries")
-def test_invalid_json_raises_apierror(mock_request):
+@patch("football_predictor.odds_api_client.fetch_odds_with_backoff")
+def test_invalid_json_raises_apierror(mock_fetch):
     odds_api_client.API_KEYS = ["test_key"]
     odds_api_client.invalid_keys.clear()
     odds_api_client.current_key_index = 0
@@ -105,7 +111,7 @@ def test_invalid_json_raises_apierror(mock_request):
     mock_response = MagicMock()
     mock_response.json.side_effect = ValueError("Invalid JSON")
     mock_response.headers = {}
-    mock_request.return_value = mock_response
+    mock_fetch.return_value = (mock_response, 1)
 
     with pytest.raises(APIError) as exc:
         odds_api_client.get_odds_for_sport("soccer_epl")

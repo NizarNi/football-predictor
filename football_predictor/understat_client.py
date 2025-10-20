@@ -1,5 +1,8 @@
 import asyncio
+import random
+import time
 import aiohttp
+import requests
 from understat import Understat
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
@@ -8,7 +11,14 @@ import statistics
 
 from .app_utils import AdaptiveTimeoutController
 from .utils import get_current_season
-from .config import UNDERSTAT_CACHE_DURATION_MINUTES, API_TIMEOUT_UNDERSTAT, setup_logger
+from .config import (
+    UNDERSTAT_CACHE_DURATION_MINUTES,
+    API_TIMEOUT_UNDERSTAT,
+    UNDERSTAT_BASE_DELAY,
+    UNDERSTAT_JITTER_FACTOR,
+    UNDERSTAT_MAX_RETRIES,
+    setup_logger,
+)
 from .errors import APIError
 
 # Map league codes to Understat league names
@@ -27,6 +37,49 @@ _cache_lock = threading.Lock()
 
 logger = setup_logger(__name__)
 adaptive_timeout = AdaptiveTimeoutController(base_timeout=API_TIMEOUT_UNDERSTAT, max_timeout=30)
+
+MAX_RETRIES = UNDERSTAT_MAX_RETRIES
+BASE_DELAY = UNDERSTAT_BASE_DELAY
+JITTER_FACTOR = UNDERSTAT_JITTER_FACTOR
+
+
+def fetch_with_backoff(url: str, params: Optional[Dict[str, Any]] = None) -> requests.Response:
+    """Perform a resilient HTTP GET with bounded-jitter exponential backoff."""
+
+    last_error: Optional[str] = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = requests.get(url, params=params, timeout=API_TIMEOUT_UNDERSTAT)
+            if response.status_code == 200:
+                if attempt > 1:
+                    logger.info("Understat: success on attempt %d", attempt)
+                return response
+
+            last_error = f"HTTP {response.status_code}"
+        except requests.RequestException as exc:
+            last_error = str(exc)
+
+        if attempt < MAX_RETRIES:
+            delay = BASE_DELAY * (2 ** (attempt - 1))
+            delay += random.uniform(0, JITTER_FACTOR * delay)
+            next_attempt = attempt + 1
+            logger.info(
+                "Understat: retry %d/%d in %.1fs (%s)",
+                next_attempt,
+                MAX_RETRIES,
+                delay,
+                last_error or "unknown error",
+            )
+            time.sleep(delay)
+        else:
+            logger.warning(
+                "Understat: failed after %d attempts (%s)",
+                MAX_RETRIES,
+                last_error or "unknown error",
+            )
+
+    raise RuntimeError(f"Understat failed after {MAX_RETRIES} retries")
 
 def sync_understat_call(async_func, context: str = "Understat API call"):
     """Wrapper to run async Understat functions synchronously with timeout"""
