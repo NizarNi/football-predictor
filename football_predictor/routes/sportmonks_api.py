@@ -7,6 +7,7 @@ from flask import Blueprint, request, jsonify
 from .. import settings
 from ..constants import SPORTMONKS_LEAGUE_IDS
 from ..services.fotmob_feed import FeedService
+from ..adapters.sportmonks import SportmonksAdapter
 
 bp = Blueprint("smonks_api", __name__, url_prefix="/api/smonks")
 _service_singleton = None
@@ -16,7 +17,8 @@ log = logging.getLogger(__name__)
 def _get_service():
     global _service_singleton
     if _service_singleton is None:
-        _service_singleton = FeedService()
+        # Force Sportmonks for this route regardless of settings.PROVIDER
+        _service_singleton = FeedService(adapter=SportmonksAdapter())
         log.info(
             "smonks_feed service adapter=%s provider=%s",
             type(_service_singleton.adapter).__name__,
