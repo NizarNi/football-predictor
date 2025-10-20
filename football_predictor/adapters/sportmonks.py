@@ -284,7 +284,7 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             pass
 
         log.info(
-            "sportmonks_fixtures_built code=%s lid=%s count=%d from=%s to=%s fallback=%s",
+            "sportmonks_fixtures_built code=%s lid=%s count=%d from=%s to=%s",
             competition_code,
             league_id,
             len(items),

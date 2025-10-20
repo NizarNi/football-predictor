@@ -80,6 +80,10 @@ def setup_logger(name: str) -> logging.Logger:
     log_level = getattr(logging, log_level_str, logging.DEBUG)
     logger.setLevel(log_level)
 
+    if logging.getLogger().handlers:
+        logger.propagate = True
+        return logger
+
     if not logger.handlers:
         log_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "football_predictor.log")
         os.makedirs(os.path.dirname(log_file), exist_ok=True)

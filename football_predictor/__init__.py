@@ -1,3 +1,5 @@
+"""Initialize the football_predictor package with default logging."""
+
 import logging
 import os
 
