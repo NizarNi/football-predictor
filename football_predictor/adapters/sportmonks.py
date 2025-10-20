@@ -86,7 +86,11 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
     # -------- FixturesPort --------
     def get_fixtures(self, competition_code: str, start_iso: str, end_iso: str) -> List[Fixture]:
         league_id = sportmonks_league_id(competition_code)
-        if not league_id or not SPORTMONKS_KEY:
+        if not SPORTMONKS_KEY:
+            log.warning("sportmonks_key_missing")
+            return []
+        if not league_id:
+            log.info("sportmonks_league_unmapped_or_unavailable code=%s", competition_code)
             return []
 
         cache_key = ("sportmonks_fixtures", league_id, start_iso, end_iso)
