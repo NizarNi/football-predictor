@@ -16,6 +16,7 @@
 <body>
   <h2>Sportmonks feed (beta)</h2>
   <div class="muted">Endless timeline for Top 5. Click a match to see details (stub).</div>
+  <div id="diag" class="muted" style="margin-top:8px"></div>
 
   <form id="leagues-filter">
     <label><input type="checkbox" value="EPL"/> EPL</label>
@@ -30,6 +31,20 @@
   <div id="sentinel" class="muted" style="text-align:center; padding:16px;">Loading…</div>
 
 <script>
+// Show token/visibility quickly so it's clear what's wrong if items stay empty
+fetch("/api/smonks/health").then(r => r.json()).then(h => {
+  const el = document.getElementById("diag");
+  if (!el) return;
+  const okKey = h.sportmonks_key_loaded ? "✅ Key loaded" : "❌ Key missing";
+  const vis = h.league_visibility || {};
+  const visBad = Object.entries(vis).filter(([, v]) => !v).map(([k]) => k);
+  const counts = h.fixture_counts_90d || {};
+  const sum = Object.values(counts).reduce((acc, v) => acc + (typeof v === "number" ? v : 0), 0);
+  const visibleTotal = Object.keys(vis).length;
+  const visibleOk = visibleTotal - visBad.length;
+  el.textContent = `${okKey} · visible=${visibleOk}/${visibleTotal} · 90d fixtures=${sum}`;
+}).catch(() => {});
+
 const FEED_URL = "/api/smonks/feed";
 const STORAGE_KEY = "smonks_leagues";
 const ALL_LEAGUES = ["EPL", "LLIGA", "SERIEA", "BUNDES", "LIGUE1"];
