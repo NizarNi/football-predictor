@@ -177,19 +177,31 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             _cache.set(cache_key, [])
             return []
 
-        # Extract fixtures from schedules (shape-tolerant)
+        # Extract fixtures from schedules (stage -> rounds -> fixtures), shape-tolerant
         collected: List[Dict[str, Any]] = []
+
+        def _as_list(x):
+            if isinstance(x, list):
+                return x
+            if isinstance(x, dict):
+                # common wrappers: {"data": [...]} or dict-of-dicts
+                return x.get("data") or list(x.values())
+            return []
+
         for row in schedules:
-            fx = row.get("fixtures")
-            if isinstance(fx, list):
-                collected.extend([f for f in fx if isinstance(f, dict)])
-            elif isinstance(fx, dict):
-                # sometimes wrapped; accept .get('data') or dict-of-dicts
-                inner = fx.get("data")
-                if isinstance(inner, list):
-                    collected.extend([f for f in inner if isinstance(f, dict)])
-                else:
-                    collected.extend([v for v in fx.values() if isinstance(v, dict)])
+            # 1) Some comps might (rarely) expose fixtures at stage-level
+            stage_level_fx = row.get("fixtures")
+            for fx in _as_list(stage_level_fx):
+                if isinstance(fx, dict):
+                    collected.append(fx)
+
+            # 2) Canonical: fixtures are under rounds[*].fixtures
+            rounds = _as_list(row.get("rounds"))
+            for rnd in rounds:
+                rnd_fx = _as_list(rnd.get("fixtures") or rnd.get("games"))
+                for fx in rnd_fx:
+                    if isinstance(fx, dict):
+                        collected.append(fx)
 
         # Filter fixtures by our window [date_from, date_to] using starting_at (YYYY-MM-DD)
         def _within(when: str) -> bool:
