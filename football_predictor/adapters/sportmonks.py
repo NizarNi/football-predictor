@@ -21,8 +21,7 @@ log = logging.getLogger(__name__)
 
 # Lean includes for initial attempt
 FIXTURE_INCLUDES_FEED = "participants,scores,state"
-# Fallback includes add 'league' so we can client-filter
-FIXTURE_INCLUDES_FALLBACK = "participants,scores,state,league"
+SCHEDULE_INCLUDES = "fixtures,fixtures.participants,fixtures.scores,fixtures.state"
 
 
 class _TTL:
@@ -112,94 +111,67 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
         if cached is not None:
             return cached
 
+        # ----- Primary path for Standard: SCHEDULES BY SEASON -----
         date_from = _ymd(start_iso)
         date_to = _ymd(end_iso)
-
-        # Attempt A: BETWEEN with league filter (fastest when supported)
-        url = f"{SPORTMONKS_BASE}/fixtures/between/{date_from}/{date_to}"
-        params = {"filters": f"fixtureLeagues:{league_id}", "include": FIXTURE_INCLUDES_FEED}
-
         session = _session()
-        path = urlparse(url).path
 
+        data: List[Dict[str, Any]] = []
+        season_id: Optional[int] = None
         try:
-            response = session.get(url, params=params, timeout=self.timeout)
-        except Exception as exc:  # pragma: no cover - network dependent
-            log.warning("sportmonks_fixtures_failed lid=%s err=%s", league_id, exc)
-            return []
-
-        if _is_list_404(path, response.status_code):
-            log.warning(
-                "sportmonks_fixtures_empty lid=%s path=%s status=%s",
-                league_id,
-                path,
-                response.status_code,
+            lg = session.get(
+                f"{SPORTMONKS_BASE}/leagues/{league_id}",
+                params={"api_token": SPORTMONKS_KEY, "include": "season"},
+                timeout=self.timeout,
             )
-            data: List[Dict[str, Any]] = []
-        else:
+            lg.raise_for_status()
             try:
-                response.raise_for_status()
-            except requests.HTTPError as exc:
-                log.warning("sportmonks_fixtures_failed lid=%s err=%s", league_id, exc)
-                raise
-
-            try:
-                payload = response.json()
+                j = lg.json() or {}
             except ValueError:
-                payload = {}
+                j = {}
+            d = j.get("data") if isinstance(j, dict) else None
+            season = (d or {}).get("season") if isinstance(d, dict) else None
+            if isinstance(season, dict):
+                season_id = season.get("id")
+        except Exception as exc:
+            log.warning("sportmonks_league_season_err lid=%s err=%s", league_id, exc)
 
-            data = payload.get("data", []) if isinstance(payload, dict) else []
-
-        # ---- Attempt B: if A produced nothing or 404, retry unfiltered and filter client-side by league + dates ----
-        did_fallback_unfiltered = False
-        if not data:
+        if season_id:
             try:
-                fb_params = {"include": FIXTURE_INCLUDES_FALLBACK}
-                fb_resp = session.get(url, params=fb_params, timeout=self.timeout)
-                if fb_resp.ok:
-                    fb_payload = {}
-                    try:
-                        fb_payload = fb_resp.json() or {}
-                    except ValueError:
-                        fb_payload = {}
-                    fb_data = fb_payload.get("data", []) if isinstance(fb_payload, dict) else []
+                sch = session.get(
+                    f"{SPORTMONKS_BASE}/schedules/seasons/{season_id}",
+                    params={"api_token": SPORTMONKS_KEY, "include": SCHEDULE_INCLUDES},
+                    timeout=self.timeout,
+                )
+                sch.raise_for_status()
+                try:
+                    sj = sch.json() or {}
+                except ValueError:
+                    sj = {}
+                sd = sj.get("data", [])
+                collected: List[Dict[str, Any]] = []
+                if isinstance(sd, list):
+                    for row in sd:
+                        fxlist = row.get("fixtures") or []
+                        if isinstance(fxlist, dict):
+                            fxlist = fxlist.get("data") or list(fxlist.values())
+                        if isinstance(fxlist, list):
+                            collected.extend([fx for fx in fxlist if isinstance(fx, dict)])
 
-                    # Keep fixtures that match league_id and lie within [date_from, date_to] by starting_at date (YYYY-MM-DD)
-                    def _within_window(starting_at: str) -> bool:
-                        s = str(starting_at or "")
-                        ymd = s[:10]
-                        return (ymd >= date_from) and (ymd <= date_to)
+                def _within(when: str) -> bool:
+                    ymd = str(when or "")[:10]
+                    return date_from <= ymd <= date_to
 
-                    filtered: List[Dict[str, Any]] = []
-                    for fx in (fb_data or []):
-                        fx_lid = None
-                        if isinstance(fx.get("league"), dict):
-                            fx_lid = fx["league"].get("id")
-                        if fx_lid is None:
-                            fx_lid = fx.get("league_id")
-                        if fx_lid == league_id and _within_window(str(fx.get("starting_at") or "")):
-                            filtered.append(fx)
-                    data = filtered
-                    did_fallback_unfiltered = True
-                    log.info(
-                        "sportmonks_fallback_unfiltered_used lid=%s from=%s to=%s kept=%d",
-                        league_id,
-                        date_from,
-                        date_to,
-                        len(data),
-                    )
-                else:
-                    log.warning(
-                        "sportmonks_fallback_unfiltered_failed lid=%s status=%s",
-                        league_id,
-                        fb_resp.status_code,
-                    )
+                data = [fx for fx in collected if _within(str(fx.get("starting_at") or ""))]
+                log.info("sportmonks_schedules_used lid=%s season=%s kept=%d", league_id, season_id, len(data))
             except Exception as exc:
-                log.warning("sportmonks_fallback_unfiltered_err lid=%s err=%s", league_id, exc)
+                log.warning("sportmonks_schedules_err lid=%s err=%s", league_id, exc)
+        else:
+            log.warning("sportmonks_season_missing lid=%s", league_id)
 
         items: List[Fixture] = []
 
-        # ---- Robust mapping (defensive against odd shapes) ----
+        # ---- Robust mapping (defensive) ----
         for fx in (data or []):
             fixture_id = fx.get("id")
             dt_iso = fx.get("starting_at") or fx.get("starting_at_timestamp")
@@ -323,13 +295,12 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             pass
 
         log.info(
-            "sportmonks_fixtures_built code=%s lid=%s from=%s to=%s count=%d fallback=%s",
+            "sportmonks_fixtures_built code=%s lid=%s from=%s to=%s count=%d via_schedules=True",
             competition_code,
             league_id,
             date_from,
             date_to,
             len(items),
-            did_fallback_unfiltered,
         )
         _cache.set(cache_key, items)
         return items
