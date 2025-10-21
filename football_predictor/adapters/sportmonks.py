@@ -111,30 +111,56 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
         if cached is not None:
             return cached
 
-        # ----- Primary path for Standard: SCHEDULES BY SEASON -----
+        # ----- Primary path for Standard: SCHEDULES BY SEASON (resolve season via /seasons) -----
         date_from = _ymd(start_iso)
         date_to = _ymd(end_iso)
         session = _session()
 
         data: List[Dict[str, Any]] = []
         season_id: Optional[int] = None
+        # 1) Find seasons for this league (Standard-friendly)
         try:
-            lg = session.get(
-                f"{SPORTMONKS_BASE}/leagues/{league_id}",
-                params={"api_token": SPORTMONKS_KEY, "include": "season"},
+            sv = session.get(
+                f"{SPORTMONKS_BASE}/seasons",
+                params={"api_token": SPORTMONKS_KEY, "filters": f"seasonLeagues:{league_id}"},
                 timeout=self.timeout,
             )
-            lg.raise_for_status()
+            sv.raise_for_status()
             try:
-                j = lg.json() or {}
+                js = sv.json() or {}
             except ValueError:
-                j = {}
-            d = j.get("data") if isinstance(j, dict) else None
-            season = (d or {}).get("season") if isinstance(d, dict) else None
-            if isinstance(season, dict):
-                season_id = season.get("id")
+                js = {}
+            seasons = js.get("data", [])
+            if not isinstance(seasons, list):
+                seasons = []
+
+            def _is_current(season: Dict[str, Any]) -> bool:
+                v = season.get("is_current")
+                if isinstance(v, bool):
+                    return v
+                return bool(season.get("current")) or bool(season.get("is_active"))
+
+            def _sort_key(season: Dict[str, Any]) -> Tuple[int, int]:
+                year_val = season.get("year")
+                try:
+                    year_int = int(year_val)
+                except Exception:
+                    year_int = 0
+                sid_val = season.get("id")
+                try:
+                    sid_int = int(sid_val)
+                except Exception:
+                    sid_int = 0
+                return (year_int, sid_int)
+
+            current = [s for s in seasons if isinstance(s, dict) and _is_current(s)]
+            candidates = [s for s in seasons if isinstance(s, dict)]
+            chosen: Optional[Dict[str, Any]] = current[0] if current else None
+            if chosen is None and candidates:
+                chosen = max(candidates, key=_sort_key)
+            season_id = chosen.get("id") if isinstance(chosen, dict) else None
         except Exception as exc:
-            log.warning("sportmonks_league_season_err lid=%s err=%s", league_id, exc)
+            log.warning("sportmonks_seasons_lookup_err lid=%s err=%s", league_id, exc)
 
         if season_id:
             try:
