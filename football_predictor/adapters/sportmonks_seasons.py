@@ -23,7 +23,7 @@ def _sm_get(path: str, params: Dict[str, Any] | None = None) -> Dict[str, Any]:
 class SeasonResolver:
     """Resolves current or date-appropriate season_id for a league; caches results."""
 
-    def __init__(self, ttl_sec: int = 6 * 3600):
+    def __init__(self, ttl_sec: int = 30 * 60):
         self.ttl = ttl_sec
         self.cache: Dict[tuple, tuple] = {}  # key=(league_id, anchor_date)->(season_id, expires)
 

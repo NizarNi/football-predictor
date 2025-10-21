@@ -116,7 +116,11 @@ class FotMobAdapter(
         return items
 
     def get_fixtures(
-        self, competition_code: str, start_iso: str, end_iso: str
+        self,
+        competition_code: str,
+        start_iso: str,
+        end_iso: str,
+        include_logos: bool = True,
     ) -> List[Fixture]:
         t0 = time.perf_counter()
         comp_id = fotmob_comp_id(competition_code)

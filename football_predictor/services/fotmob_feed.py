@@ -32,7 +32,13 @@ def _clamp_window(start: datetime, end: datetime, max_days: int = 7) -> Tuple[da
 
 
 class FixturesAdapter(Protocol):
-    def get_fixtures(self, competition_code: str, start_iso: str, end_iso: str) -> List[Dict[str, Any]]:
+    def get_fixtures(
+        self,
+        competition_code: str,
+        start_iso: str,
+        end_iso: str,
+        include_logos: bool = True,
+    ) -> List[Dict[str, Any]]:
         ...
 
 
@@ -74,12 +80,24 @@ class FeedService:
         end = c
         return _to_iso(start), _to_iso(end)
 
-    def _load_window(self, start_iso: str, end_iso: str, comps: List[str]) -> List[Dict[str, Any]]:
+    def _load_window(
+        self,
+        start_iso: str,
+        end_iso: str,
+        comps: List[str],
+        *,
+        include_logos: bool = True,
+    ) -> List[Dict[str, Any]]:
         # Fetch per-competition then merge & sort
         all_items: List[Dict[str, Any]] = []
         for code in comps:
             try:
-                items = self.adapter.get_fixtures(code, start_iso, end_iso)
+                items = self.adapter.get_fixtures(
+                    code,
+                    start_iso,
+                    end_iso,
+                    include_logos=include_logos,
+                )
                 all_items.extend(items or [])
             except Exception:
                 # best-effort: skip failing comp
@@ -93,6 +111,7 @@ class FeedService:
         cursor: Optional[str],
         page_size_raw: Optional[str],
         comps: Optional[Iterable[str]] = None,
+        include_logos: bool = True,
     ) -> Dict[str, Any]:
         # Sanitize inputs
         direction = (direction or "future").lower()
@@ -120,7 +139,7 @@ class FeedService:
 
         # Load items (with small burst-forward to avoid empty screens)
         comps_list = list(comps) if comps is not None else list(FOTMOB_COMP_CODES)
-        items = self._load_window(start_iso, end_iso, comps_list)
+        items = self._load_window(start_iso, end_iso, comps_list, include_logos=include_logos)
         has_more_future = True  # optimistic, we paginate by windows not count
         has_more_past = True
 
@@ -129,7 +148,12 @@ class FeedService:
             cur_start, cur_end = start_iso, end_iso
             while burst > 0 and not items:
                 next_start, next_end = self.next_window(cur_end)
-                candidates = self._load_window(next_start, next_end, comps_list)
+                candidates = self._load_window(
+                    next_start,
+                    next_end,
+                    comps_list,
+                    include_logos=include_logos,
+                )
                 if candidates:
                     start_iso, end_iso = next_start, next_end
                     items = candidates

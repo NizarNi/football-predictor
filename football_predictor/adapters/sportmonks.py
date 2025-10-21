@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
+import copy
 import time
 import threading
 import logging
@@ -18,8 +19,114 @@ from .sportmonks_seasons import SeasonResolver, _sm_get
 log = logging.getLogger(__name__)
 
 
-# Lean includes for initial attempt
-FIXTURE_INCLUDES_FEED = "participants;scores;state"
+
+def _fixture_includes() -> str:
+    return "participants.team;venue;round;tvstations"
+
+
+def _extract_team_logo(team: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(team, dict):
+        return None
+    logo = team.get("image_path")
+    if isinstance(logo, str) and logo.strip():
+        return logo
+    return None
+
+
+def _extract_round_name(fixture: Dict[str, Any]) -> Optional[str]:
+    round_obj: Any = fixture.get("round")
+    if isinstance(round_obj, dict) and "data" in round_obj:
+        round_obj = round_obj.get("data")
+    if isinstance(round_obj, dict):
+        for key in ("name", "name_en", "name_translated"):
+            value = round_obj.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    name = fixture.get("round_name") or fixture.get("round_name_en")
+    if isinstance(name, str) and name.strip():
+        return name
+    return None
+
+
+def _extract_venue(fixture: Dict[str, Any]) -> Optional[Dict[str, Optional[str]]]:
+    venue_obj: Any = fixture.get("venue")
+    if isinstance(venue_obj, dict) and "data" in venue_obj:
+        venue_obj = venue_obj.get("data")
+    if isinstance(venue_obj, dict):
+        name = venue_obj.get("name") or venue_obj.get("name_en")
+        city = (
+            venue_obj.get("city")
+            or venue_obj.get("city_name")
+            or venue_obj.get("city_en")
+            or venue_obj.get("city_translated")
+        )
+        if name or city:
+            return {"name": name, "city": city}
+    name = fixture.get("venue_name")
+    city = fixture.get("venue_city")
+    if name or city:
+        return {"name": name, "city": city}
+    return None
+
+
+def _extract_tv_stations(fixture: Dict[str, Any]) -> List[str]:
+    tv_raw: Any = fixture.get("tvstations") or fixture.get("tvStations")
+    if isinstance(tv_raw, dict):
+        tv_raw = tv_raw.get("data") or list(tv_raw.values())
+    stations: List[str] = []
+    if isinstance(tv_raw, list):
+        for item in tv_raw:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("name_en")
+            else:
+                name = item
+            if isinstance(name, str) and name.strip():
+                stations.append(name)
+    return stations
+
+
+def _extract_referee(fixture: Dict[str, Any]) -> Optional[str]:
+    referee_obj: Any = fixture.get("referee")
+    if isinstance(referee_obj, dict) and "data" in referee_obj:
+        referee_obj = referee_obj.get("data")
+    if isinstance(referee_obj, dict):
+        for key in ("fullname", "full_name", "name"):
+            value = referee_obj.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    name = fixture.get("referee_name")
+    if isinstance(name, str) and name.strip():
+        return name
+    return None
+
+
+def _apply_logo_policy(items: List[Dict[str, Any]], include_logos: bool) -> List[Dict[str, Any]]:
+    sanitized: List[Dict[str, Any]] = []
+    for item in items:
+        clone = copy.deepcopy(item)
+        for key in ("home", "away"):
+            side = clone.get(key)
+            if isinstance(side, dict):
+                if not include_logos:
+                    side["logo"] = None
+                else:
+                    logo_val = side.get("logo")
+                    if not isinstance(logo_val, str) or not logo_val.strip():
+                        side["logo"] = None
+        sanitized.append(clone)
+    return sanitized
+
+
+def _participant_team(participant: Dict[str, Any]) -> Dict[str, Any]:
+    team = participant.get("team")
+    if isinstance(team, dict) and "data" in team:
+        team = team.get("data")
+    if isinstance(team, dict) and team:
+        return team
+    base = participant.get("participant")
+    if isinstance(base, dict) and base:
+        return base
+    return participant
 
 
 class _TTL:
@@ -44,6 +151,9 @@ class _TTL:
     def set(self, key: Tuple[Any, ...], value: Any) -> None:
         with self._l:
             self._d[key] = (time.time(), value)
+
+
+FEED_CACHE_TTL_SEC = 600
 
 
 _cache = _TTL()
@@ -178,7 +288,7 @@ def fetch_league_window(
                 f"/fixtures/between/{start_ymd}/{end_ymd}",
                 params={
                     "filters": f"fixtureLeagues:{league_id}",
-                    "include": FIXTURE_INCLUDES_FEED,
+                    "include": _fixture_includes(),
                 },
             )
             fixtures = [
@@ -217,7 +327,13 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
         self.timeout = (timeout_ms or SPORTMONKS_TIMEOUT_MS) / 1000.0
 
     # -------- FixturesPort --------
-    def get_fixtures(self, competition_code: str, start_iso: str, end_iso: str) -> List[Fixture]:
+    def get_fixtures(
+        self,
+        competition_code: str,
+        start_iso: str,
+        end_iso: str,
+        include_logos: bool = True,
+    ) -> List[Fixture]:
         league_id = sportmonks_league_id(competition_code)
         if not SPORTMONKS_KEY:
             log.warning("sportmonks_key_missing")
@@ -227,12 +343,12 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             return []
 
         cache_key = ("sportmonks_fixtures", league_id, start_iso, end_iso)
-        cached = _cache.get(cache_key, ttl=60.0)
+        cached = _cache.get(cache_key, ttl=FEED_CACHE_TTL_SEC)
         if cached is not None:
-            return cached
+            return _apply_logo_policy(cached, include_logos)
 
         date_from = _ymd(start_iso)
-        date_to   = _ymd(end_iso)
+        date_to = _ymd(end_iso)
         data, season_id, fallback_used = fetch_league_window(league_id, date_from, date_to)
 
         # ---- Map to feed items (defensive) ----
@@ -258,17 +374,13 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                 continue
 
             participants = fx.get("participants") or []
-            # Coerce participants to a list
             if isinstance(participants, dict):
-                # common shapes: {"data": [...]} or plain id->object map
                 participants = participants.get("data") or list(participants.values())
             if not isinstance(participants, list):
                 participants = []
 
-            scores = fx.get("scores") or []  # list of {participant_id, score, description/type}
-            # Coerce scores to a list of dicts
+            scores = fx.get("scores") or []
             if isinstance(scores, dict):
-                # if participant keyed or has nested totals, flatten best-effort
                 scores = list(scores.values())
             if not isinstance(scores, list):
                 scores = []
@@ -280,7 +392,6 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                     pid = s.get("participant_id")
                     sc = s.get("score")
                     if pid is not None and sc is not None:
-                        # take "total" or last seen; simple for now
                         score_by_pid[pid] = sc
             except Exception:
                 pass
@@ -293,11 +404,10 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                     continue
                 meta = (p.get("meta") or {})
                 loc = str(meta.get("location", "")).lower()
-                # Some responses nest the team under p['participant']; others keep team fields at top-level.
-                team = p.get("participant") or p or {}
-                pid = team.get("id")
+                team_data = _participant_team(p)
+                pid = team_data.get("id") or (p.get("participant") or {}).get("id")
+                name = team_data.get("name") or (p.get("participant") or {}).get("name")
 
-                # Attach score if present at participant level or via scores index
                 p_score = None
                 if isinstance(p.get("scores"), dict):
                     p_score = (p.get("scores") or {}).get("total")
@@ -306,8 +416,9 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
                 enriched = {
                     "id": pid,
-                    "name": team.get("name"),
+                    "name": name,
                     "score": p_score,
+                    "logo": _extract_team_logo(team_data) or _extract_team_logo(p),
                 }
 
                 if loc == "home":
@@ -315,11 +426,11 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                 elif loc == "away":
                     away_raw = enriched
 
-            # Heuristic fallback: if no meta.location, take first two as home/away
             if not home_raw and not away_raw and len(participants) >= 2:
+
                 def _team_dict(pp: Any) -> Dict[str, Any]:
-                    t = (pp.get("participant") or pp or {}) if isinstance(pp, dict) else {}
-                    return {"id": t.get("id"), "name": t.get("name"), "score": None}
+                    t = _participant_team(pp) if isinstance(pp, dict) else {}
+                    return {"id": t.get("id"), "name": t.get("name"), "score": None, "logo": _extract_team_logo(t)}
 
                 home_raw = _team_dict(participants[0])
                 away_raw = _team_dict(participants[1])
@@ -339,20 +450,54 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                 }
             )
 
-            status, minute = _map_status(fx.get("state") or {})
+            home_logo = home_raw.get("logo")
+            away_logo = away_raw.get("logo")
+            if isinstance(home_logo, str) and home_logo.strip():
+                home["logo"] = home_logo
+            else:
+                home["logo"] = home.get("logo") or None
+            if isinstance(away_logo, str) and away_logo.strip():
+                away["logo"] = away_logo
+            else:
+                away["logo"] = away.get("logo") or None
 
-            items.append(
-                {
-                    "match_id": str(fixture_id),
-                    "competition": competition_code,
-                    "competition_code": competition_code,
-                    "kickoff_iso": kickoff_iso,
-                    "status": status,
-                    "minute": minute,
-                    "home": home,
-                    "away": away,
-                }
-            )
+            status, minute = _map_status(fx.get("state") or {})
+            round_name = _extract_round_name(fx)
+            venue_info = _extract_venue(fx) or {"name": None, "city": None}
+            tv_stations = _extract_tv_stations(fx)
+            referee = _extract_referee(fx)
+
+            try:
+                fixture_int = int(fixture_id)
+            except Exception:
+                fixture_int = None
+
+            league_val = fx.get("league_id") or league_id
+            season_val = fx.get("season_id") or season_id
+
+            item: Fixture = {
+                "match_id": str(fixture_id),
+                "competition": competition_code,
+                "competition_code": competition_code,
+                "kickoff_iso": kickoff_iso,
+                "kickoff_utc": kickoff_iso,
+                "status": status,
+                "minute": minute,
+                "home": home,
+                "away": away,
+                "league_id": int(league_val) if isinstance(league_val, int) else league_val,
+                "season_id": int(season_val) if isinstance(season_val, int) else season_val,
+                "round": round_name,
+                "venue": venue_info,
+            }
+            if fixture_int is not None:
+                item["fixture_id"] = fixture_int
+            if tv_stations:
+                item["tv_stations"] = tv_stations
+            if referee:
+                item["referee"] = referee
+
+            items.append(item)
 
         try:
             items.sort(key=lambda item: item["kickoff_iso"])
@@ -369,7 +514,7 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             not fallback_used,
         )
         _cache.set(cache_key, items)
-        return items
+        return _apply_logo_policy(items, include_logos)
 
     def probe_league(self, league_id: int) -> bool:
         url = f"{SPORTMONKS_BASE}/leagues/{league_id}"

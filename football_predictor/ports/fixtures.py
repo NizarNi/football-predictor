@@ -1,9 +1,13 @@
-from typing import List, Optional, TypedDict
+from typing import Dict, List, Optional, TypedDict, NotRequired
 
 
 class TeamSide(TypedDict):
     id: int
     name: str
+    display_name: NotRequired[str]
+    slug: NotRequired[Optional[str]]
+    score: NotRequired[Optional[int]]
+    logo: NotRequired[Optional[str]]
 
 
 class Fixture(TypedDict):
@@ -15,6 +19,14 @@ class Fixture(TypedDict):
     minute: Optional[int]      # live minute when LIVE, else None
     home: TeamSide
     away: TeamSide
+    fixture_id: NotRequired[int]
+    league_id: NotRequired[int]
+    season_id: NotRequired[int]
+    round: NotRequired[Optional[str]]
+    venue: NotRequired[Dict[str, Optional[str]]]
+    kickoff_utc: NotRequired[str]
+    tv_stations: NotRequired[List[str]]
+    referee: NotRequired[Optional[str]]
 
 
 class FixturesPort:
