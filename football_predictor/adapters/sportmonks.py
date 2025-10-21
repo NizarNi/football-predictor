@@ -18,8 +18,13 @@ from .sportmonks_seasons import SeasonResolver, _sm_get
 log = logging.getLogger(__name__)
 
 
-# Lean includes for initial attempt
-FIXTURE_INCLUDES_FEED = "participants;scores;state"
+SM_INCLUDES_STANDARD = [
+    "participants",
+    "participants.team",
+    "participants.team.logo",
+    "scores",
+    "state",
+]
 
 
 class _TTL:
@@ -154,7 +159,11 @@ def fetch_league_window(
 
     if season_id:
         try:
-            data = _sm_get(f"/schedules/seasons/{season_id}")
+            params = {"include": ",".join(SM_INCLUDES_STANDARD)}
+            try:
+                data = _sm_get(f"/schedules/seasons/{season_id}", params=params)
+            except Exception:
+                data = _sm_get(f"/schedules/seasons/{season_id}")
             stages = _as_list(data.get("data"))
             for stage in stages:
                 for rnd in _as_list(stage.get("rounds")):
@@ -174,13 +183,20 @@ def fetch_league_window(
     if not fixtures:
         fallback_used = True
         try:
-            between = _sm_get(
-                f"/fixtures/between/{start_ymd}/{end_ymd}",
-                params={
-                    "filters": f"fixtureLeagues:{league_id}",
-                    "include": FIXTURE_INCLUDES_FEED,
-                },
-            )
+            params = {
+                "filters": f"fixtureLeagues:{league_id}",
+                "include": ",".join(SM_INCLUDES_STANDARD),
+            }
+            try:
+                between = _sm_get(
+                    f"/fixtures/between/{start_ymd}/{end_ymd}",
+                    params=params,
+                )
+            except Exception:
+                between = _sm_get(
+                    f"/fixtures/between/{start_ymd}/{end_ymd}",
+                    params={"filters": f"fixtureLeagues:{league_id}"},
+                )
             fixtures = [
                 fx
                 for fx in (between.get("data") or [])
@@ -214,12 +230,45 @@ def fetch_league_window(
 
 class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
     def __init__(self, timeout_ms: Optional[int] = None) -> None:
-        self.timeout = (timeout_ms or SPORTMONKS_TIMEOUT_MS) / 1000.0
+        self.key = SPORTMONKS_KEY or ""
+        self._timeout = (timeout_ms or SPORTMONKS_TIMEOUT_MS) / 1000.0
+        self.timeout = self._timeout
+        self._session = _session()
+
+    def _get_logo_from_team_node(self, team: dict) -> str | None:
+        # Support both historical and current shapes
+        # preferred (v3 relation):
+        path = ((((team or {}).get("logo") or {}).get("data") or {}).get("path"))
+        if path:
+            return path
+        # common fallback:
+        return (team or {}).get("image_path")
+
+    def _get_logo_from_participant(self, p: dict) -> str | None:
+        team = ((p or {}).get("team") or {}).get("data") or {}
+        return self._get_logo_from_team_node(team)
+
+    def _fetch_team_logo(self, team_id: int) -> str | None:
+        if not self.key:
+            return None
+        url = f"{SPORTMONKS_BASE}/teams/{team_id}"
+        params = {"api_token": self.key, "include": "logo"}
+        try:
+            r = self._session.get(url, params=params, timeout=self._timeout)
+        except Exception:
+            return None
+        if r.status_code != 200:
+            return None
+        try:
+            data = (r.json() or {}).get("data") or {}
+        except Exception:
+            return None
+        return self._get_logo_from_team_node(data)
 
     # -------- FixturesPort --------
     def get_fixtures(self, competition_code: str, start_iso: str, end_iso: str) -> List[Fixture]:
         league_id = sportmonks_league_id(competition_code)
-        if not SPORTMONKS_KEY:
+        if not self.key:
             log.warning("sportmonks_key_missing")
             return []
         if not league_id:
@@ -287,6 +336,8 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
             home_raw: Dict[str, Any] = {}
             away_raw: Dict[str, Any] = {}
+            home_p = None
+            away_p = None
 
             for p in participants:
                 if not isinstance(p, dict):
@@ -312,8 +363,10 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
                 if loc == "home":
                     home_raw = enriched
+                    home_p = p
                 elif loc == "away":
                     away_raw = enriched
+                    away_p = p
 
             # Heuristic fallback: if no meta.location, take first two as home/away
             if not home_raw and not away_raw and len(participants) >= 2:
@@ -321,8 +374,35 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                     t = (pp.get("participant") or pp or {}) if isinstance(pp, dict) else {}
                     return {"id": t.get("id"), "name": t.get("name"), "score": None}
 
-                home_raw = _team_dict(participants[0])
-                away_raw = _team_dict(participants[1])
+                first = participants[0] if isinstance(participants[0], dict) else {}
+                second = participants[1] if isinstance(participants[1], dict) else {}
+                home_raw = _team_dict(first)
+                away_raw = _team_dict(second)
+                home_p = first if isinstance(first, dict) else None
+                away_p = second if isinstance(second, dict) else None
+            else:
+                if not home_raw:
+                    for candidate in participants:
+                        if isinstance(candidate, dict):
+                            t = (candidate.get("participant") or candidate or {})
+                            home_raw = {
+                                "id": t.get("id"),
+                                "name": t.get("name"),
+                                "score": None,
+                            }
+                            home_p = candidate
+                            break
+                if not away_raw:
+                    for candidate in reversed(participants):
+                        if isinstance(candidate, dict):
+                            t = (candidate.get("participant") or candidate or {})
+                            away_raw = {
+                                "id": t.get("id"),
+                                "name": t.get("name"),
+                                "score": None,
+                            }
+                            away_p = candidate
+                            break
 
             home = normalize_team_dict(
                 {
@@ -341,18 +421,51 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
             status, minute = _map_status(fx.get("state") or {})
 
-            items.append(
-                {
-                    "match_id": str(fixture_id),
-                    "competition": competition_code,
-                    "competition_code": competition_code,
-                    "kickoff_iso": kickoff_iso,
-                    "status": status,
-                    "minute": minute,
-                    "home": home,
-                    "away": away,
-                }
-            )
+            fixture = {
+                "match_id": str(fixture_id),
+                "competition": competition_code,
+                "competition_code": competition_code,
+                "kickoff_iso": kickoff_iso,
+                "status": status,
+                "minute": minute,
+                "home": home,
+                "away": away,
+            }
+
+            home_team = ((home_p or {}).get("team") or {}).get("data") or {}
+            away_team = ((away_p or {}).get("team") or {}).get("data") or {}
+
+            home_logo = self._get_logo_from_participant(home_p or {})
+            away_logo = self._get_logo_from_participant(away_p or {})
+
+            home_id = home_team.get("id") if isinstance(home_team, dict) else None
+            away_id = away_team.get("id") if isinstance(away_team, dict) else None
+
+            if not isinstance(home_id, int):
+                maybe_home = home.get("id")
+                if isinstance(maybe_home, int):
+                    home_id = maybe_home
+            if not isinstance(away_id, int):
+                maybe_away = away.get("id")
+                if isinstance(maybe_away, int):
+                    away_id = maybe_away
+
+            if not home_logo and home_id:
+                fetched = self._fetch_team_logo(home_id)
+                home_logo = fetched or home_logo
+            if not away_logo and away_id:
+                fetched = self._fetch_team_logo(away_id)
+                away_logo = fetched or away_logo
+
+            if home_logo:
+                fixture["home"]["logo"] = home_logo
+            if away_logo:
+                fixture["away"]["logo"] = away_logo
+
+            fixture["home"]["logo_url"] = home_logo or fixture["home"].get("logo")
+            fixture["away"]["logo_url"] = away_logo or fixture["away"].get("logo")
+
+            items.append(fixture)
 
         try:
             items.sort(key=lambda item: item["kickoff_iso"])

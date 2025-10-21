@@ -9,6 +9,7 @@ if "SPORTMONKS_KEY" not in os.environ:
     os.environ["SPORTMONKS_KEY"] = ""
 TOKEN = os.environ["SPORTMONKS_KEY"]
 TIMEOUT = float(os.getenv("SPORTMONKS_TIMEOUT_MS", "5000")) / 1000.0
+MIN_SEASON_ID = 1
 
 
 def _sm_get(path: str, params: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -60,7 +61,7 @@ class SeasonResolver:
                         maybe_id = nested.get("id")
                         if isinstance(maybe_id, int):
                             sid_candidate = maybe_id
-            if isinstance(sid_candidate, int) and sid_candidate >= 10000:
+            if isinstance(sid_candidate, int) and sid_candidate >= MIN_SEASON_ID:
                 self._put(key, sid_candidate)
                 return sid_candidate
         except Exception:
@@ -80,7 +81,7 @@ class SeasonResolver:
                 if not isinstance(row, dict):
                     continue
                 row_id = row.get("id")
-                if not isinstance(row_id, int) or row_id < 10000:
+                if not isinstance(row_id, int) or row_id < MIN_SEASON_ID:
                     continue
                 if row.get("is_current") or row.get("active") or row.get("is_active"):
                     self._put(key, row_id)
@@ -89,7 +90,7 @@ class SeasonResolver:
                 if not isinstance(row, dict):
                     continue
                 row_id = row.get("id")
-                if isinstance(row_id, int) and row_id >= 10000:
+                if isinstance(row_id, int) and row_id >= MIN_SEASON_ID:
                     self._put(key, row_id)
                     return row_id
         except Exception:
@@ -115,7 +116,7 @@ class SeasonResolver:
                 row_id = row.get("id")
                 if (
                     isinstance(row_id, int)
-                    and row_id >= 10000
+                    and row_id >= MIN_SEASON_ID
                     and start
                     and end
                     and (start <= yyyy_mm_dd <= end)
@@ -126,7 +127,7 @@ class SeasonResolver:
                 if not isinstance(row, dict):
                     continue
                 row_id = row.get("id")
-                if isinstance(row_id, int) and row_id >= 10000:
+                if isinstance(row_id, int) and row_id >= MIN_SEASON_ID:
                     self._put(key, row_id)
                     return row_id
         except Exception:
