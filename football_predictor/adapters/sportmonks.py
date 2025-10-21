@@ -21,7 +21,6 @@ log = logging.getLogger(__name__)
 
 # Lean includes for initial attempt
 FIXTURE_INCLUDES_FEED = "participants,scores,state"
-SCHEDULE_INCLUDES = "fixtures,fixtures.participants,fixtures.scores,fixtures.state"
 
 
 class _TTL:
@@ -111,14 +110,16 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
         if cached is not None:
             return cached
 
-        # ----- Primary path for Standard: SCHEDULES BY SEASON (resolve season via /seasons) -----
         date_from = _ymd(start_iso)
-        date_to = _ymd(end_iso)
-        session = _session()
+        date_to   = _ymd(end_iso)
+        session   = _session()
 
-        data: List[Dict[str, Any]] = []
-        season_id: Optional[int] = None
-        # 1) Find seasons for this league (Standard-friendly)
+        # Doc-faithful Standard path:
+        # 1) /seasons?filters=seasonLeagues:{lid}
+        # 2) /schedules/seasons/{season_id}  (Include options: NONE)
+
+        seasons: List[Dict[str, Any]] = []
+        season_id = None
         try:
             sv = session.get(
                 f"{SPORTMONKS_BASE}/seasons",
@@ -126,79 +127,81 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                 timeout=self.timeout,
             )
             sv.raise_for_status()
-            try:
-                js = sv.json() or {}
-            except ValueError:
-                js = {}
+            js = sv.json() or {}
             seasons = js.get("data", [])
             if not isinstance(seasons, list):
                 seasons = []
-
-            def _is_current(season: Dict[str, Any]) -> bool:
-                v = season.get("is_current")
-                if isinstance(v, bool):
-                    return v
-                return bool(season.get("current")) or bool(season.get("is_active"))
-
-            def _sort_key(season: Dict[str, Any]) -> Tuple[int, int]:
-                year_val = season.get("year")
-                try:
-                    year_int = int(year_val)
-                except Exception:
-                    year_int = 0
-                sid_val = season.get("id")
-                try:
-                    sid_int = int(sid_val)
-                except Exception:
-                    sid_int = 0
-                return (year_int, sid_int)
-
-            current = [s for s in seasons if isinstance(s, dict) and _is_current(s)]
-            candidates = [s for s in seasons if isinstance(s, dict)]
-            chosen: Optional[Dict[str, Any]] = current[0] if current else None
-            if chosen is None and candidates:
-                chosen = max(candidates, key=_sort_key)
-            season_id = chosen.get("id") if isinstance(chosen, dict) else None
         except Exception as exc:
             log.warning("sportmonks_seasons_lookup_err lid=%s err=%s", league_id, exc)
 
-        if season_id:
-            try:
-                sch = session.get(
-                    f"{SPORTMONKS_BASE}/schedules/seasons/{season_id}",
-                    params={"api_token": SPORTMONKS_KEY, "include": SCHEDULE_INCLUDES},
-                    timeout=self.timeout,
-                )
-                sch.raise_for_status()
-                try:
-                    sj = sch.json() or {}
-                except ValueError:
-                    sj = {}
-                sd = sj.get("data", [])
-                collected: List[Dict[str, Any]] = []
-                if isinstance(sd, list):
-                    for row in sd:
-                        fxlist = row.get("fixtures") or []
-                        if isinstance(fxlist, dict):
-                            fxlist = fxlist.get("data") or list(fxlist.values())
-                        if isinstance(fxlist, list):
-                            collected.extend([fx for fx in fxlist if isinstance(fx, dict)])
+        def _pick_season(rows: List[Dict[str, Any]]) -> Optional[int]:
+            cand = [r for r in rows if isinstance(r, dict)]
+            if not cand:
+                return None
+            def is_current(s: Dict[str, Any]) -> bool:
+                v = s.get("is_current")
+                if isinstance(v, bool):
+                    return v
+                # other flags sometimes used
+                return bool(s.get("current")) or bool(s.get("is_active"))
+            cur = [s for s in cand if is_current(s)]
+            if cur:
+                return cur[0].get("id")
+            # fallback: latest by (year, id)
+            cand.sort(key=lambda s: (s.get("year") or 0, s.get("id") or 0), reverse=True)
+            return cand[0].get("id")
 
-                def _within(when: str) -> bool:
-                    ymd = str(when or "")[:10]
-                    return date_from <= ymd <= date_to
-
-                data = [fx for fx in collected if _within(str(fx.get("starting_at") or ""))]
-                log.info("sportmonks_schedules_used lid=%s season=%s kept=%d", league_id, season_id, len(data))
-            except Exception as exc:
-                log.warning("sportmonks_schedules_err lid=%s err=%s", league_id, exc)
-        else:
+        season_id = _pick_season(seasons)
+        if not season_id:
             log.warning("sportmonks_season_missing lid=%s", league_id)
+            _cache.set(cache_key, [])
+            return []
 
+        # 2) Schedules by Season (NO includes per doc)
+        schedules: List[Dict[str, Any]] = []
+        try:
+            sch = session.get(
+                f"{SPORTMONKS_BASE}/schedules/seasons/{season_id}",
+                params={"api_token": SPORTMONKS_KEY},
+                timeout=self.timeout,
+            )
+            sch.raise_for_status()
+            sj = sch.json() or {}
+            sd = sj.get("data", [])
+            if isinstance(sd, list):
+                schedules = [row for row in sd if isinstance(row, dict)]
+            else:
+                schedules = []
+        except Exception as exc:
+            log.warning("sportmonks_schedules_err lid=%s season=%s err=%s", league_id, season_id, exc)
+            _cache.set(cache_key, [])
+            return []
+
+        # Extract fixtures from schedules (shape-tolerant)
+        collected: List[Dict[str, Any]] = []
+        for row in schedules:
+            fx = row.get("fixtures")
+            if isinstance(fx, list):
+                collected.extend([f for f in fx if isinstance(f, dict)])
+            elif isinstance(fx, dict):
+                # sometimes wrapped; accept .get('data') or dict-of-dicts
+                inner = fx.get("data")
+                if isinstance(inner, list):
+                    collected.extend([f for f in inner if isinstance(f, dict)])
+                else:
+                    collected.extend([v for v in fx.values() if isinstance(v, dict)])
+
+        # Filter fixtures by our window [date_from, date_to] using starting_at (YYYY-MM-DD)
+        def _within(when: str) -> bool:
+            ymd = str(when or "")[:10]
+            return date_from <= ymd <= date_to
+
+        data = [f for f in collected if _within(str(f.get("starting_at") or ""))]
+        log.info("sportmonks_schedules_used lid=%s season=%s kept=%d", league_id, season_id, len(data))
+
+        # ---- Map to feed items (defensive) ----
         items: List[Fixture] = []
-
-        # ---- Robust mapping (defensive) ----
-        for fx in (data or []):
+        for fx in data:
             fixture_id = fx.get("id")
             dt_iso = fx.get("starting_at") or fx.get("starting_at_timestamp")
             kickoff_iso: Optional[str] = None
@@ -320,14 +323,8 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
         except Exception:
             pass
 
-        log.info(
-            "sportmonks_fixtures_built code=%s lid=%s from=%s to=%s count=%d via_schedules=True",
-            competition_code,
-            league_id,
-            date_from,
-            date_to,
-            len(items),
-        )
+        log.info("sportmonks_fixtures_built code=%s lid=%s from=%s to=%s count=%d via_schedules=True",
+                 competition_code, league_id, date_from, date_to, len(items))
         _cache.set(cache_key, items)
         return items
 
