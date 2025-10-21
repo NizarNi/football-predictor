@@ -9,9 +9,11 @@ from .. import settings
 from ..constants import SPORTMONKS_LEAGUE_IDS
 from ..services.fotmob_feed import FeedService
 from ..adapters.sportmonks import SportmonksAdapter
+from ..adapters.sportmonks_odds import SportmonksOddsAdapter
 
 bp = Blueprint("smonks_api", __name__, url_prefix="/api/smonks")
 _service_singleton = None
+_odds_service_singleton = None
 log = logging.getLogger(__name__)
 
 
@@ -26,6 +28,16 @@ def _get_service():
             settings.PROVIDER,
         )
     return _service_singleton
+
+
+def _get_odds_service():
+    global _odds_service_singleton
+    if _odds_service_singleton is None:
+        _odds_service_singleton = FeedService(adapter=SportmonksOddsAdapter())
+        log.info(
+            "smonks_odds_feed service adapter=%s", type(_odds_service_singleton.adapter).__name__
+        )
+    return _odds_service_singleton
 
 
 @bp.get("/feed")
@@ -55,6 +67,46 @@ def feed():
     payload = srv.load_page(direction=direction, cursor=cursor, page_size_raw=page_size_raw, comps=comp_codes)
     log.info(
         "smonks_feed items=%d window=%s",
+        len(payload.get("items", [])),
+        payload.get("_debug", {}).get("window"),
+    )
+    return jsonify(payload)
+
+
+@bp.get("/odds-feed")
+def odds_feed():
+    direction = request.args.get("dir", "future")
+    cursor = request.args.get("cursor")
+    page_size_raw = request.args.get("page_size")
+
+    default_codes = [c for c, lid in SPORTMONKS_LEAGUE_IDS.items() if lid]
+
+    raw = (request.args.get("leagues") or "").strip().upper()
+    if raw:
+        wanted = []
+        for tok in raw.split(","):
+            code = tok.strip().upper()
+            if SPORTMONKS_LEAGUE_IDS.get(code):
+                wanted.append(code)
+        comp_codes = wanted or default_codes
+    else:
+        comp_codes = default_codes
+
+    srv = _get_odds_service()
+    log.info(
+        "smonks_odds_feed comps=%s dir=%s cursor=%s",
+        comp_codes,
+        direction,
+        cursor,
+    )
+    payload = srv.load_page(
+        direction=direction,
+        cursor=cursor,
+        page_size_raw=page_size_raw,
+        comps=comp_codes,
+    )
+    log.info(
+        "smonks_odds_feed items=%d window=%s",
         len(payload.get("items", [])),
         payload.get("_debug", {}).get("window"),
     )
