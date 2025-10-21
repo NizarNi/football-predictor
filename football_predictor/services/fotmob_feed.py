@@ -124,22 +124,54 @@ class FeedService:
         has_more_future = True  # optimistic, we paginate by windows not count
         has_more_past = True
 
-        # NEW: if future page is empty, walk forward up to 3 windows
         if direction == "future" and not items:
             burst = 3
             cur_start, cur_end = start_iso, end_iso
             while burst > 0 and not items:
-                cur_start, cur_end = self.next_window(cur_end)
-                items = self._load_window(cur_start, cur_end, comps_list)
+                next_start, next_end = self.next_window(cur_end)
+                candidates = self._load_window(next_start, next_end, comps_list)
+                if candidates:
+                    start_iso, end_iso = next_start, next_end
+                    items = candidates
+                    break
+                cur_start, cur_end = next_start, next_end
                 burst -= 1
-            start_iso, end_iso = cur_start, cur_end
+
+        if not items:
+            if direction == "future":
+                has_more_future = False
+                next_cursor = None
+                prev_cursor = cursor
+            else:
+                has_more_past = False
+                prev_cursor = None
+                next_cursor = cursor
+            return {
+                "items": [],
+                "next_cursor": next_cursor,
+                "prev_cursor": prev_cursor,
+                "has_more_future": has_more_future,
+                "has_more_past": has_more_past,
+                "_debug": {
+                    "direction": direction,
+                    "cursor_in": cursor,
+                    "window": [start_iso, end_iso],
+                    "page_size": ps,
+                    "comps": comps_list,
+                },
+            }
 
         # Page size is applied client-side by window; to keep it simple now, just cap to ps
         # (Later you can implement finer-grained cursoring by kickoff_iso)
         items = items[:ps] if direction == "future" else items[-ps:]
 
-        next_cursor = end_iso if direction == "future" else cursor or end_iso
-        prev_cursor = start_iso if direction == "past" else cursor or start_iso
+        kickoffs = [it.get("kickoff_iso") for it in items if it.get("kickoff_iso")]
+        if direction == "future":
+            next_cursor = max(kickoffs) if kickoffs else None
+            prev_cursor = cursor
+        else:
+            prev_cursor = min(kickoffs) if kickoffs else None
+            next_cursor = cursor
 
         return {
             "items": items,

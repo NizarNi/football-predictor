@@ -5,8 +5,6 @@ from datetime import datetime, timezone
 import time
 import threading
 import logging
-from urllib.parse import urlparse
-
 import requests
 
 from ..ports.fixtures import FixturesPort, Fixture
@@ -15,6 +13,7 @@ from ..ports.standings import StandingsPort, Standings  # stubs for later
 from ..settings import SPORTMONKS_KEY, SPORTMONKS_BASE, SPORTMONKS_TIMEOUT_MS
 from ..constants import sportmonks_league_id
 from ..fotmob_shared import to_iso_utc, normalize_team_dict
+from .sportmonks_seasons import SeasonResolver, _sm_get
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +47,7 @@ class _TTL:
 
 
 _cache = _TTL()
+resolver = SeasonResolver()
 
 
 def _session() -> requests.Session:
@@ -91,6 +91,98 @@ def _is_list_404(path: str, status_code: int) -> bool:
     return normalized.endswith("/fixtures") or "/fixtures/between" in normalized
 
 
+def _as_list(x):
+    if isinstance(x, list):
+        return x
+    if isinstance(x, dict):
+        return x.get("data") or list(x.values())
+    return []
+
+
+def season_id_for_window(league_id: int, start_ymd: str, end_ymd: str) -> Optional[int]:
+    sid = resolver.get_for_date(league_id, start_ymd)
+    if sid:
+        return sid
+    return resolver.get_current(league_id)
+
+
+def _log_season_resolution(league_id: int, season_id: Optional[int], start_ymd: str, end_ymd: str) -> None:
+    msg = f"smonks_season_resolved lid={league_id} season={season_id} start={start_ymd} end={end_ymd}"
+    log.info(msg)
+    app_logger = globals().get("app_logger")
+    if not app_logger:
+        app = globals().get("app")
+        if app is not None:
+            app_logger = getattr(app, "logger", None)
+    if app_logger and hasattr(app_logger, "info"):
+        try:
+            app_logger.info(msg)
+        except Exception:
+            pass
+
+
+def fetch_league_window(
+    league_id: int, start_ymd: str, end_ymd: str
+) -> Tuple[List[Dict[str, Any]], Optional[int], bool]:
+    fixtures: List[Dict[str, Any]] = []
+    fallback_used = False
+    season_id = season_id_for_window(league_id, start_ymd, end_ymd)
+    _log_season_resolution(league_id, season_id, start_ymd, end_ymd)
+
+    if season_id:
+        try:
+            data = _sm_get(
+                f"/schedules/seasons/{season_id}",
+                params={"include": "rounds.fixtures.participants;scores;state"},
+            )
+            stages = data.get("data") or []
+            for stage in stages:
+                for rnd in _as_list(stage.get("rounds")):
+                    for fx in _as_list(rnd.get("fixtures") or rnd.get("games")):
+                        if isinstance(fx, dict):
+                            when = str(fx.get("starting_at") or "")[:10]
+                            if start_ymd <= when <= end_ymd:
+                                fixtures.append(fx)
+        except Exception as exc:
+            log.warning(
+                "sportmonks_schedules_err lid=%s season=%s err=%s",
+                league_id,
+                season_id,
+                exc,
+            )
+
+    if not fixtures:
+        fallback_used = True
+        try:
+            between = _sm_get(
+                f"/fixtures/between/{start_ymd}/{end_ymd}",
+                params={
+                    "filters": f"league_id:{league_id}",
+                    "include": "participants;scores;state",
+                },
+            )
+            fixtures = [
+                fx
+                for fx in (between.get("data") or [])
+                if isinstance(fx, dict)
+                and start_ymd <= str(fx.get("starting_at") or "")[:10] <= end_ymd
+            ]
+        except Exception as exc:
+            log.warning(
+                "sportmonks_between_err lid=%s err=%s", league_id, exc
+            )
+            fixtures = []
+
+    log.info(
+        "sportmonks_schedules_used lid=%s season=%s kept=%d fallback=%s",
+        league_id,
+        season_id,
+        len(fixtures),
+        fallback_used,
+    )
+    return fixtures, season_id, fallback_used
+
+
 class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
     def __init__(self, timeout_ms: Optional[int] = None) -> None:
         self.timeout = (timeout_ms or SPORTMONKS_TIMEOUT_MS) / 1000.0
@@ -112,104 +204,7 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
         date_from = _ymd(start_iso)
         date_to   = _ymd(end_iso)
-        session   = _session()
-
-        # Doc-faithful Standard path:
-        # 1) /seasons?filters=seasonLeagues:{lid}
-        # 2) /schedules/seasons/{season_id}  (Include options: NONE)
-
-        seasons: List[Dict[str, Any]] = []
-        season_id = None
-        try:
-            sv = session.get(
-                f"{SPORTMONKS_BASE}/seasons",
-                params={"api_token": SPORTMONKS_KEY, "filters": f"seasonLeagues:{league_id}"},
-                timeout=self.timeout,
-            )
-            sv.raise_for_status()
-            js = sv.json() or {}
-            seasons = js.get("data", [])
-            if not isinstance(seasons, list):
-                seasons = []
-        except Exception as exc:
-            log.warning("sportmonks_seasons_lookup_err lid=%s err=%s", league_id, exc)
-
-        def _pick_season(rows: List[Dict[str, Any]]) -> Optional[int]:
-            cand = [r for r in rows if isinstance(r, dict)]
-            if not cand:
-                return None
-            def is_current(s: Dict[str, Any]) -> bool:
-                v = s.get("is_current")
-                if isinstance(v, bool):
-                    return v
-                # other flags sometimes used
-                return bool(s.get("current")) or bool(s.get("is_active"))
-            cur = [s for s in cand if is_current(s)]
-            if cur:
-                return cur[0].get("id")
-            # fallback: latest by (year, id)
-            cand.sort(key=lambda s: (s.get("year") or 0, s.get("id") or 0), reverse=True)
-            return cand[0].get("id")
-
-        season_id = _pick_season(seasons)
-        if not season_id:
-            log.warning("sportmonks_season_missing lid=%s", league_id)
-            _cache.set(cache_key, [])
-            return []
-
-        # 2) Schedules by Season (NO includes per doc)
-        schedules: List[Dict[str, Any]] = []
-        try:
-            sch = session.get(
-                f"{SPORTMONKS_BASE}/schedules/seasons/{season_id}",
-                params={"api_token": SPORTMONKS_KEY},
-                timeout=self.timeout,
-            )
-            sch.raise_for_status()
-            sj = sch.json() or {}
-            sd = sj.get("data", [])
-            if isinstance(sd, list):
-                schedules = [row for row in sd if isinstance(row, dict)]
-            else:
-                schedules = []
-        except Exception as exc:
-            log.warning("sportmonks_schedules_err lid=%s season=%s err=%s", league_id, season_id, exc)
-            _cache.set(cache_key, [])
-            return []
-
-        # Extract fixtures from schedules (stage -> rounds -> fixtures), shape-tolerant
-        collected: List[Dict[str, Any]] = []
-
-        def _as_list(x):
-            if isinstance(x, list):
-                return x
-            if isinstance(x, dict):
-                # common wrappers: {"data": [...]} or dict-of-dicts
-                return x.get("data") or list(x.values())
-            return []
-
-        for row in schedules:
-            # 1) Some comps might (rarely) expose fixtures at stage-level
-            stage_level_fx = row.get("fixtures")
-            for fx in _as_list(stage_level_fx):
-                if isinstance(fx, dict):
-                    collected.append(fx)
-
-            # 2) Canonical: fixtures are under rounds[*].fixtures
-            rounds = _as_list(row.get("rounds"))
-            for rnd in rounds:
-                rnd_fx = _as_list(rnd.get("fixtures") or rnd.get("games"))
-                for fx in rnd_fx:
-                    if isinstance(fx, dict):
-                        collected.append(fx)
-
-        # Filter fixtures by our window [date_from, date_to] using starting_at (YYYY-MM-DD)
-        def _within(when: str) -> bool:
-            ymd = str(when or "")[:10]
-            return date_from <= ymd <= date_to
-
-        data = [f for f in collected if _within(str(f.get("starting_at") or ""))]
-        log.info("sportmonks_schedules_used lid=%s season=%s kept=%d", league_id, season_id, len(data))
+        data, season_id, fallback_used = fetch_league_window(league_id, date_from, date_to)
 
         # ---- Map to feed items (defensive) ----
         items: List[Fixture] = []
@@ -335,8 +330,15 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
         except Exception:
             pass
 
-        log.info("sportmonks_fixtures_built code=%s lid=%s from=%s to=%s count=%d via_schedules=True",
-                 competition_code, league_id, date_from, date_to, len(items))
+        log.info(
+            "sportmonks_fixtures_built code=%s lid=%s from=%s to=%s count=%d via_schedules=%s",
+            competition_code,
+            league_id,
+            date_from,
+            date_to,
+            len(items),
+            not fallback_used,
+        )
         _cache.set(cache_key, items)
         return items
 
