@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone, timedelta
 
 from flask import Blueprint, request, jsonify
 
@@ -64,3 +65,48 @@ def feed():
 def match_stub(match_id: str):
     # Will fill in later phases with lineups/standings/events
     return jsonify({"match_id": str(match_id), "detail": "stub"})
+
+
+@bp.get("/health")
+def health():
+    """
+    Lightweight diagnostics:
+      - verifies SPORTMONKS_KEY is present
+      - probes league visibility for Top-5
+      - counts fixtures per league in the current 90d window
+    """
+
+    key_loaded = bool(settings.SPORTMONKS_KEY)
+    base = settings.SPORTMONKS_BASE
+    leagues = [c for c, lid in SPORTMONKS_LEAGUE_IDS.items() if lid]
+
+    adapter = SportmonksAdapter(timeout_ms=settings.SPORTMONKS_TIMEOUT_MS)
+
+    visibility = {}
+    for code in leagues:
+        lid = SPORTMONKS_LEAGUE_IDS.get(code)
+        try:
+            ok = adapter.probe_league(int(lid)) if lid else False
+        except Exception:
+            ok = False
+        visibility[code] = bool(ok)
+
+    now = datetime.now(timezone.utc)
+    start_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_iso = (now + timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    counts = {}
+    for code in leagues:
+        try:
+            items = adapter.get_fixtures(code, start_iso, end_iso)
+            counts[code] = len(items or [])
+        except Exception as exc:  # pragma: no cover - network dependent
+            counts[code] = f"error:{type(exc).__name__}"
+
+    return jsonify(
+        {
+            "sportmonks_base": base,
+            "sportmonks_key_loaded": key_loaded,
+            "league_visibility": visibility,
+            "fixture_counts_90d": counts,
+        }
+    )
