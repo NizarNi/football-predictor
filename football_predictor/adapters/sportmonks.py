@@ -19,7 +19,9 @@ from ..fotmob_shared import to_iso_utc, normalize_team_dict
 log = logging.getLogger(__name__)
 
 
+# Lean includes for initial attempt
 FIXTURE_INCLUDES_FEED = "participants,scores,state"
+# Fallback includes add 'league' so we can client-filter
 FIXTURE_INCLUDES_FALLBACK = "participants,scores,state,league"
 
 
@@ -113,20 +115,11 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
         date_from = _ymd(start_iso)
         date_to = _ymd(end_iso)
 
+        # Attempt A: BETWEEN with league filter (fastest when supported)
         url = f"{SPORTMONKS_BASE}/fixtures/between/{date_from}/{date_to}"
-        params = {
-            # v3 expects fixture-level league filter:
-            # https://docs.sportmonks.com/football/endpoints-and-entities/entities/fixture
-            "filters": f"fixtureLeagues:{league_id}",
-            # Includes for feed cards:
-            # participants            -> team objects + meta.location (home/away)
-            # scores                  -> fixture-level scores by participant_id
-            # state                   -> match status
-            "include": FIXTURE_INCLUDES_FEED,
-        }
+        params = {"filters": f"fixtureLeagues:{league_id}", "include": FIXTURE_INCLUDES_FEED}
 
         session = _session()
-        items: List[Fixture] = []
         path = urlparse(url).path
 
         try:
@@ -157,37 +150,57 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
 
             data = payload.get("data", []) if isinstance(payload, dict) else []
 
-        # Fallback: retry unfiltered and filter client-side by league id
-        did_fallback = False
+        # ---- Attempt B: if A produced nothing or 404, retry unfiltered and filter client-side by league + dates ----
+        did_fallback_unfiltered = False
         if not data:
             try:
-                fb_resp = session.get(
-                    url,
-                    params={"include": FIXTURE_INCLUDES_FALLBACK},
-                    timeout=self.timeout,
-                )
+                fb_params = {"include": FIXTURE_INCLUDES_FALLBACK}
+                fb_resp = session.get(url, params=fb_params, timeout=self.timeout)
                 if fb_resp.ok:
-                    fb_payload = fb_resp.json() or {}
+                    fb_payload = {}
+                    try:
+                        fb_payload = fb_resp.json() or {}
+                    except ValueError:
+                        fb_payload = {}
                     fb_data = fb_payload.get("data", []) if isinstance(fb_payload, dict) else []
-                    data = [
-                        fx
-                        for fx in fb_data
-                        if (
-                            isinstance(fx.get("league"), dict)
-                            and fx["league"].get("id") == league_id
-                        )
-                        or fx.get("league_id") == league_id
-                    ]
-                    did_fallback = True
+
+                    # Keep fixtures that match league_id and lie within [date_from, date_to] by starting_at date (YYYY-MM-DD)
+                    def _within_window(starting_at: str) -> bool:
+                        s = str(starting_at or "")
+                        ymd = s[:10]
+                        return (ymd >= date_from) and (ymd <= date_to)
+
+                    filtered: List[Dict[str, Any]] = []
+                    for fx in (fb_data or []):
+                        fx_lid = None
+                        if isinstance(fx.get("league"), dict):
+                            fx_lid = fx["league"].get("id")
+                        if fx_lid is None:
+                            fx_lid = fx.get("league_id")
+                        if fx_lid == league_id and _within_window(str(fx.get("starting_at") or "")):
+                            filtered.append(fx)
+                    data = filtered
+                    did_fallback_unfiltered = True
                     log.info(
-                        "sportmonks_fallback_unfiltered_used lid=%s kept=%d",
+                        "sportmonks_fallback_unfiltered_used lid=%s from=%s to=%s kept=%d",
                         league_id,
+                        date_from,
+                        date_to,
                         len(data),
+                    )
+                else:
+                    log.warning(
+                        "sportmonks_fallback_unfiltered_failed lid=%s status=%s",
+                        league_id,
+                        fb_resp.status_code,
                     )
             except Exception as exc:
                 log.warning("sportmonks_fallback_unfiltered_err lid=%s err=%s", league_id, exc)
 
-        for fx in data:
+        items: List[Fixture] = []
+
+        # ---- Robust mapping (defensive against odd shapes) ----
+        for fx in (data or []):
             fixture_id = fx.get("id")
             dt_iso = fx.get("starting_at") or fx.get("starting_at_timestamp")
             kickoff_iso: Optional[str] = None
@@ -208,10 +221,25 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                 continue
 
             participants = fx.get("participants") or []
+            # Coerce participants to a list
+            if isinstance(participants, dict):
+                # common shapes: {"data": [...]} or plain id->object map
+                participants = participants.get("data") or list(participants.values())
+            if not isinstance(participants, list):
+                participants = []
+
             scores = fx.get("scores") or []  # list of {participant_id, score, description/type}
+            # Coerce scores to a list of dicts
+            if isinstance(scores, dict):
+                # if participant keyed or has nested totals, flatten best-effort
+                scores = list(scores.values())
+            if not isinstance(scores, list):
+                scores = []
             score_by_pid: Dict[Any, Any] = {}
             try:
                 for s in scores:
+                    if not isinstance(s, dict):
+                        continue
                     pid = s.get("participant_id")
                     sc = s.get("score")
                     if pid is not None and sc is not None:
@@ -224,9 +252,11 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             away_raw: Dict[str, Any] = {}
 
             for p in participants:
+                if not isinstance(p, dict):
+                    continue
                 meta = (p.get("meta") or {})
                 loc = str(meta.get("location", "")).lower()
-                # Some responses nest under p['participant']; others keep team fields on p.
+                # Some responses nest the team under p['participant']; others keep team fields at top-level.
                 team = p.get("participant") or p or {}
                 pid = team.get("id")
 
@@ -247,6 +277,15 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
                     home_raw = enriched
                 elif loc == "away":
                     away_raw = enriched
+
+            # Heuristic fallback: if no meta.location, take first two as home/away
+            if not home_raw and not away_raw and len(participants) >= 2:
+                def _team_dict(pp: Any) -> Dict[str, Any]:
+                    t = (pp.get("participant") or pp or {}) if isinstance(pp, dict) else {}
+                    return {"id": t.get("id"), "name": t.get("name"), "score": None}
+
+                home_raw = _team_dict(participants[0])
+                away_raw = _team_dict(participants[1])
 
             home = normalize_team_dict(
                 {
@@ -284,13 +323,13 @@ class SportmonksAdapter(FixturesPort, LineupsPort, StandingsPort):
             pass
 
         log.info(
-            "sportmonks_fixtures_built code=%s lid=%s count=%d from=%s to=%s",
+            "sportmonks_fixtures_built code=%s lid=%s from=%s to=%s count=%d fallback=%s",
             competition_code,
             league_id,
+            date_from,
+            date_to,
             len(items),
-            _ymd(start_iso),
-            _ymd(end_iso),
-            did_fallback,
+            did_fallback_unfiltered,
         )
         _cache.set(cache_key, items)
         return items
