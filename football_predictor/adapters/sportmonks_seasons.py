@@ -49,27 +49,49 @@ class SeasonResolver:
         try:
             data = _sm_get(f"/leagues/{league_id}", params={"include": "currentSeason"})
             current = (data.get("data") or {}).get("currentSeason")
+            sid_candidate: Optional[int] = None
             if isinstance(current, dict):
-                sid = current.get("id") or (current.get("data") or {}).get("id")
-                if isinstance(sid, int):
-                    self._put(key, sid)
-                    return sid
+                maybe_id = current.get("id")
+                if isinstance(maybe_id, int):
+                    sid_candidate = maybe_id
+                else:
+                    nested = current.get("data")
+                    if isinstance(nested, dict):
+                        maybe_id = nested.get("id")
+                        if isinstance(maybe_id, int):
+                            sid_candidate = maybe_id
+            if isinstance(sid_candidate, int) and sid_candidate >= 10000:
+                self._put(key, sid_candidate)
+                return sid_candidate
         except Exception:
             pass
         # Fallback: newest season for league
         try:
             data = _sm_get(
                 "/seasons",
-                params={"filters": f"seasonLeagues:{league_id}", "sort": "-id", "page": 1},
+                params={
+                    "filters": f"seasonLeagues:{league_id}",
+                    "sort": "-id",
+                    "per_page": 50,
+                },
             )
             rows: List[Dict[str, Any]] = data.get("data") or []
             for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                row_id = row.get("id")
+                if not isinstance(row_id, int) or row_id < 10000:
+                    continue
                 if row.get("is_current") or row.get("active") or row.get("is_active"):
-                    self._put(key, row["id"])
-                    return row["id"]
-            if rows:
-                self._put(key, rows[0]["id"])
-                return rows[0]["id"]
+                    self._put(key, row_id)
+                    return row_id
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                row_id = row.get("id")
+                if isinstance(row_id, int) and row_id >= 10000:
+                    self._put(key, row_id)
+                    return row_id
         except Exception:
             pass
         return None
@@ -86,14 +108,27 @@ class SeasonResolver:
             )
             rows: List[Dict[str, Any]] = data.get("data") or []
             for row in rows:
+                if not isinstance(row, dict):
+                    continue
                 start = (row.get("starting_at") or "")[:10]
                 end = (row.get("ending_at") or "")[:10]
-                if start and end and (start <= yyyy_mm_dd <= end):
-                    self._put(key, row["id"])
-                    return row["id"]
-            if rows:
-                self._put(key, rows[0]["id"])
-                return rows[0]["id"]
+                row_id = row.get("id")
+                if (
+                    isinstance(row_id, int)
+                    and row_id >= 10000
+                    and start
+                    and end
+                    and (start <= yyyy_mm_dd <= end)
+                ):
+                    self._put(key, row_id)
+                    return row_id
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                row_id = row.get("id")
+                if isinstance(row_id, int) and row_id >= 10000:
+                    self._put(key, row_id)
+                    return row_id
         except Exception:
             pass
         return None

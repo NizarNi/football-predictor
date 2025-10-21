@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 
 # Lean includes for initial attempt
-FIXTURE_INCLUDES_FEED = "participants,scores,state"
+FIXTURE_INCLUDES_FEED = "participants;scores;state"
 
 
 class _TTL:
@@ -99,11 +99,34 @@ def _as_list(x):
     return []
 
 
+def _log_invalid_season(league_id: int, sid: Any, source: str) -> None:
+    try:
+        log.info("sportmonks_season_invalid lid=%s sid=%s source=%s", league_id, sid, source)
+    except Exception:
+        pass
+
+
+def _valid_season_id(sid: Any) -> Optional[int]:
+    if isinstance(sid, int) and sid >= 10000:
+        return sid
+    return None
+
+
 def season_id_for_window(league_id: int, start_ymd: str, end_ymd: str) -> Optional[int]:
     sid = resolver.get_for_date(league_id, start_ymd)
-    if sid:
-        return sid
-    return resolver.get_current(league_id)
+    valid = _valid_season_id(sid)
+    if valid is not None:
+        return valid
+    if sid is not None and valid is None:
+        _log_invalid_season(league_id, sid, "by_date")
+
+    sid = resolver.get_current(league_id)
+    valid = _valid_season_id(sid)
+    if valid is not None:
+        return valid
+    if sid is not None and valid is None:
+        _log_invalid_season(league_id, sid, "current")
+    return None
 
 
 def _log_season_resolution(league_id: int, season_id: Optional[int], start_ymd: str, end_ymd: str) -> None:
@@ -131,11 +154,8 @@ def fetch_league_window(
 
     if season_id:
         try:
-            data = _sm_get(
-                f"/schedules/seasons/{season_id}",
-                params={"include": "rounds.fixtures.participants;scores;state"},
-            )
-            stages = data.get("data") or []
+            data = _sm_get(f"/schedules/seasons/{season_id}")
+            stages = _as_list(data.get("data"))
             for stage in stages:
                 for rnd in _as_list(stage.get("rounds")):
                     for fx in _as_list(rnd.get("fixtures") or rnd.get("games")):
@@ -157,8 +177,8 @@ def fetch_league_window(
             between = _sm_get(
                 f"/fixtures/between/{start_ymd}/{end_ymd}",
                 params={
-                    "filters": f"league_id:{league_id}",
-                    "include": "participants;scores;state",
+                    "filters": f"fixtureLeagues:{league_id}",
+                    "include": FIXTURE_INCLUDES_FEED,
                 },
             )
             fixtures = [
@@ -173,13 +193,22 @@ def fetch_league_window(
             )
             fixtures = []
 
-    log.info(
-        "sportmonks_schedules_used lid=%s season=%s kept=%d fallback=%s",
-        league_id,
-        season_id,
-        len(fixtures),
-        fallback_used,
-    )
+    used_between = bool(fallback_used)
+    try:
+        msg = (
+            f"sportmonks_schedules_used lid={league_id} season={season_id} "
+            f"kept={len(fixtures)} fallback={used_between}"
+        )
+        log.info(msg)
+        app_logger = globals().get("app_logger")
+        if not app_logger:
+            app = globals().get("app")
+            if app is not None:
+                app_logger = getattr(app, "logger", None)
+        if app_logger and hasattr(app_logger, "info"):
+            app_logger.info(msg)
+    except Exception:
+        pass
     return fixtures, season_id, fallback_used
 
 
