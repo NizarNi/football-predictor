@@ -1901,6 +1901,20 @@ def get_match_xg_prediction(
     resolved_season = season or get_xg_season()
     table = fetch_league_xg_stats(effective_league, season=season, cache_only=True)
     if not table:
+        league_supported = effective_league in LEAGUE_MAPPING
+        if not league_supported:
+            league_label = (
+                LEAGUE_MAPPING.get(league_code)
+                or LEAGUE_MAPPING.get(effective_league)
+                or effective_league
+            )
+            response = _build_unavailable_response(
+                f"xG data unavailable for {league_label}",
+                reason="Unsupported competition",
+                refresh_status="ready",
+            )
+            response["message"] = f"xG data unavailable for {league_label}"
+            return response
         return _build_unavailable_response(
             'xG data not available right now (warming). Try again in a moment.',
             refresh_status="warming",
