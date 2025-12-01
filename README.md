@@ -3,8 +3,6 @@
 ## Overview
 This Flask-based web application provides football match predictions using real bookmaker odds. It fetches upcoming matches and live odds, converts odds to implied probabilities, detects arbitrage opportunities, and offers consensus predictions based on market data. The project aims to empower users with data-driven insights for sports betting, covering key European leagues and competitions. The business vision is to provide a robust, user-friendly platform for data-driven sports betting analysis, leveraging market potential in the growing sports analytics sector.
 
-## User Preferences
-I prefer detailed explanations. Ask before making major changes. I want iterative development. I prefer simple language.
 
 ## System Architecture
 
